@@ -16,7 +16,8 @@ whether any of them actually affect that particular trip, and explains why.
 ## Running the app
 
 ```bash
-cd code
+git clone https://github.com/KeithTohx/cs203-project.git
+cd cs203-project
 ./mvnw spring-boot:run
 ```
 
@@ -60,7 +61,7 @@ request. This means you can work on the rest of the app without installing a mod
 ## Project structure
 
 ```
-code/
+cs203-project/
   pom.xml                          dependencies and build configuration
   mvnw, mvnw.cmd, .mvn/            Maven wrapper, so everyone builds the same way
   data/                            SQLite database file, created at runtime, not committed
