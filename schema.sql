@@ -11,4 +11,14 @@
 -- To see the schema the database actually has:
 --     sqlite3 data/tripsense.db ".schema"
 
--- No tables yet. The first one arrives with the Itinerary entity.
+-- News table for transit disruption updates and news articles.
+-- Corresponds to the News entity in csd/tripsense/news/News.java
+CREATE TABLE IF NOT EXISTS news (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT,
+    source TEXT,
+    url TEXT,
+    published_at TIMESTAMP
+);
+
