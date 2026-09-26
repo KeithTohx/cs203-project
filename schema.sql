@@ -11,7 +11,6 @@
 -- To see the schema the database actually has:
 --     sqlite3 data/tripsense.db ".schema"
 
--- No tables yet. The first one arrives with the Itinerary entity.
 
 create table user {
     id integer primary key,
@@ -58,16 +57,16 @@ create table activity {
     foreign key (itinerary_id) references itinerary(id)
 }
 
-
-create table news {
-    id integer primary key,
-    title varchar not null,
-    body varchar,
-    date_published timestamp,
-    source varchar,
-    created_at timestamp,
-    modified_at timestamp,
-}
+-- News table for transit disruption updates and news articles.
+-- Corresponds to the News entity in csd/tripsense/news/News.java
+CREATE TABLE IF NOT EXISTS news (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT,
+    source TEXT,
+    url TEXT,
+    published_at TIMESTAMP
+);
 
 create table impact {
     id integer primary key,
