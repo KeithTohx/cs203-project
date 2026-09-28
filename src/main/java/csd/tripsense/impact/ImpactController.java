@@ -25,7 +25,7 @@ public class ImpactController {
      *
      * @return list of all impacts
      */
-    @GetMapping("/impacts")
+    @GetMapping("/impact")
     public List<Impact> getImpacts() {
         return impactService.listImpacts();
     }
@@ -36,7 +36,7 @@ public class ImpactController {
      * @param id
      * @return impact with the given id
      */
-    @GetMapping("/impacts/{id}")
+    @GetMapping("/impact/{id}")
     public Impact getImpact(@PathVariable Long id){
         return impactService.getImpact(id);
 
@@ -48,7 +48,7 @@ public class ImpactController {
      * @param id
      * @return list of impacts belonging to user
      */
-    @GetMapping("/impacts/user/{userId}")
+    @GetMapping("/impact/user/{userId}")
     public List<Impact> getImpactsByUser(@PathVariable Long userId) {
         return impactService.getImpactsByUser(userId);
 
@@ -60,7 +60,7 @@ public class ImpactController {
      * @param id
      * @return list of impacts belonging to itinerary
      */
-    @GetMapping("/impacts/itinerary/{itineraryId}")
+    @GetMapping("/impact/itinerary/{itineraryId}")
     public List<Impact> getImpactsByItinerary(@PathVariable Long itineraryId) {
         return impactService.getImpactsByItinerary(itineraryId);
 
@@ -72,7 +72,7 @@ public class ImpactController {
      * @param id
      * @return list of impacts belonging to activity
      */
-    @GetMapping("/impacts/activity/{activityId}")
+    @GetMapping("/impact/activity/{activityId}")
     public List<Impact> getImpactsByActivity(@PathVariable Long activityId) {
         return impactService.getImpactsByActivity(activityId);
 
@@ -85,7 +85,7 @@ public class ImpactController {
      * @return list of all impacts
      */
     @ResponseStatus(HttpStatus.CREATED)
-    @PostMapping("/impacts")
+    @PostMapping("/impact")
     public Impact addImpact(@RequestBody Impact impact){
         return impactService.addImpact(impact);
     }
@@ -96,7 +96,7 @@ public class ImpactController {
      * @param newImpactInfo
      * @return the updated, or newly added impact
      */
-    @PutMapping("/impacts/{id}")
+    @PutMapping("/impact/{id}")
     public Impact updateImpact(@PathVariable Long id, @RequestBody Impact newImpactInfo){
         return impactService.updateImpact(id, newImpactInfo);
     }
@@ -106,7 +106,7 @@ public class ImpactController {
      * If there is no impact with the given "id", throw a ImpactNotFoundException
      * @param id
      */
-    @DeleteMapping("/impacts/{id}")
+    @DeleteMapping("/impact/{id}")
     public void deleteImpact(@PathVariable Long id){
         impactService.deleteImpact(id);
     }
