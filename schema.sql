@@ -11,4 +11,75 @@
 -- To see the schema the database actually has:
 --     sqlite3 data/tripsense.db ".schema"
 
--- No tables yet. The first one arrives with the Itinerary entity.
+
+create table user {
+    id integer primary key,
+    username varchar not null,
+    email varchar not null, 
+    password varchar not null, 
+    role varchar not null, 
+    created_at timestamp,
+    modified_at timestamp
+}
+
+create table country {
+    id integer primary key,
+    name varchar not null,
+    created_at timestamp,
+    modified_at timestamp
+}
+
+create table itinerary {
+    id integer primary key,
+    user_id integer not null,
+    country_id integer not null,
+    name varchar,
+    date_start timestamp,
+    date_end timestamp,
+    created_at timestamp,
+    modified_at timestamp,
+
+    foreign key (user_id) references user(id),
+    foreign key (country_id) references country(id)
+}
+
+
+create table activity {
+    id integer primary key,
+    itinerary_id integer not null,
+    name varchar not null,
+    address varchar,
+    date_start timestamp,
+    date_end timestamp,
+    created_at timestamp,
+    modified_at timestamp,
+
+    foreign key (itinerary_id) references itinerary(id)
+}
+
+-- News table for transit disruption updates and news articles.
+-- Corresponds to the News entity in csd/tripsense/news/News.java
+CREATE TABLE IF NOT EXISTS news (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT,
+    source TEXT,
+    url TEXT,
+    published_at TIMESTAMP
+);
+
+create table impact {
+    id integer primary key,
+    user_id integer not null,
+    news_id integer not null,
+    itinerary_id integer,
+    activity_id integer,
+    impacted boolean,
+    created_at timestamp,
+    modified_at timestamp,
+
+    foreign key (user_id) references user(id),
+    foreign key (news_id) references news(id),
+    foreign key (itinerary_id) references itinerary(id),
+    foreign key (activity_id) references activity(id)
+}
