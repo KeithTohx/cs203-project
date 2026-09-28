@@ -1,5 +1,6 @@
 package csd.tripsense.itinerary;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import org.springframework.stereotype.Service;
@@ -26,16 +27,30 @@ public class ItineraryServiceImpl implements ItineraryService {
 
     @Override
     public List<Itinerary> getItinerariesByUser(Long userId){
-        return (List<Itinerary>) itineraries.findById(userId).map(userItineraries -> {
-            return userItineraries;
-        }).orElseThrow(() -> new ItineraryNotFoundException("User (ID: " + userId + ") has no existing itineraries."));
+        List<Itinerary> itinerariesByUser = new ArrayList<>();
+        List<Itinerary> itineraryList = getAllItineraries();
+
+        if (itineraryList.isEmpty()) throw new ItineraryNotFoundException("User (ID: " + userId + ") has no existing itineraries.");
+        for (Itinerary itinerary : itineraryList) {
+            if (itinerary.getUser().getId().equals(userId)) {
+                itinerariesByUser.add(itinerary);
+            }
+        }
+        return itinerariesByUser;
     }
 
     @Override
     public List<Itinerary> getItinerariesByCountry(Long countryId){
-        return (List<Itinerary>) itineraries.findById(countryId).map(countryItineraries -> {
-            return countryItineraries;
-        }).orElseThrow(() -> new ItineraryNotFoundException("No existing itineraries for Country (ID: " + countryId + " )."));
+        List<Itinerary> itinerariesByCountry = new ArrayList<>();
+        List<Itinerary> itineraryList = getAllItineraries();
+
+        if (itineraryList.isEmpty()) throw new ItineraryNotFoundException("No existing itineraries for Country (ID: " + countryId + " ).");
+        for (Itinerary itinerary : itineraryList) {
+            if (itinerary.getCountry().getId().equals(countryId)) {
+                itinerariesByCountry.add(itinerary);
+            }
+        }
+        return itinerariesByCountry;
     }
 
     @Override 
