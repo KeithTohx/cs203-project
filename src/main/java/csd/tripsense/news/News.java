@@ -27,12 +27,18 @@ import lombok.Setter;
 public class News {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+
+    //Configures primary key auto-incrementing handled directly by the underlying database auto-increment feature.
+    @GeneratedValue(strategy = GenerationType.IDENTITY) 
+    
     private Long id;
 
     private String title;
 
+    //Overrides default database column configuration, allowing description to store up to 2,000 characters instead 
+    // of the standard default (usually 255).
     @Column(length = 2000)
+
     private String description;
 
     private String source;

@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 */
 
 
-@ResponseStatus(HttpStatus.NOT_FOUND)
+@ResponseStatus(HttpStatus.NOT_FOUND) // automatically default to an HTTP 404 status
 public class NewsNotFoundException extends RuntimeException {
 
     public NewsNotFoundException(Long id) {
