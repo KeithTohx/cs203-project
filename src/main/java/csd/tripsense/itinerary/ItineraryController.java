@@ -2,11 +2,13 @@ package csd.tripsense.itinerary;
 
 import java.util.List;
 
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
-
-
 
 @RestController
 public class ItineraryController {
@@ -16,12 +18,12 @@ public class ItineraryController {
         this.itineraryService = itineraryService;
     }
 
-    @GetMapping("/itineraries")
+    @GetMapping("/api/itinerary")
     public List<Itinerary> getAllItineraries() {
         return itineraryService.getAllItineraries();
     }
 
-    @GetMapping("/itineraries/(id)")
+    @GetMapping("/api/itinerary/{id}")
     public Itinerary getItineraryById(@PathVariable Long id) {
         try {
             return itineraryService.getItineraryById(id);
@@ -30,7 +32,7 @@ public class ItineraryController {
         }
     }
 
-    @GetMapping("/users/{id}/itineraries")
+    @GetMapping("/api/user/{userId}/itinerary")
     public List<Itinerary> getItinerariesByUser(@PathVariable Long userId) {
         try {
             return itineraryService.getItinerariesByUser(userId);
@@ -39,7 +41,7 @@ public class ItineraryController {
         }
     }
     
-    @GetMapping("/countries/{id}/itineraries")
+    @GetMapping("/api/country/{countryId}/itinerary")
     public List<Itinerary> getItinerariesByCountry(@PathVariable Long countryId) {
         try {
             return itineraryService.getItinerariesByCountry(countryId);
@@ -47,5 +49,19 @@ public class ItineraryController {
             return null;
         }
     }
+
+    @PostMapping("/api/itinerary")
+    public Itinerary addItinerary(@RequestBody Itinerary itinerary) {
+        return itineraryService.addItinerary(itinerary);
+    }
     
+    @PutMapping("/api/itinerary/{id}")
+    public Itinerary updateItinerary(@PathVariable Long id, @RequestBody Itinerary newItineraryInfo) {
+        return itineraryService.updateItinerary(id, newItineraryInfo);
+    }
+    
+    @DeleteMapping("/api/itinerary/{id}")
+    public void deleteItinerary(@PathVariable Long id){
+        itineraryService.deleteItinerary(id);
+    }
 }

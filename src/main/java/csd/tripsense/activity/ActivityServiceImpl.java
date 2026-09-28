@@ -1,5 +1,6 @@
 package csd.tripsense.activity;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import org.springframework.stereotype.Service;
@@ -26,9 +27,16 @@ public class ActivityServiceImpl implements ActivityService {
 
     @Override 
     public List<Activity> getActivitiesByItinerary(long itineraryId) {
-        return (List<Activity>) activities.findById(itineraryId).map(itineraryActivities -> {
-            return itineraryActivities;
-        }).orElseThrow(() -> new ActivityNotFoundException("Itinerary (ID: " + itineraryId + " has no activities."));
+        List<Activity> activitiesByItinerary = new ArrayList<>();
+        List<Activity> activityList = getAllActivities();
+
+        if (activityList.isEmpty()) throw new ActivityNotFoundException("Itinerary (ID: " + itineraryId + ") has no activities.");
+        for (Activity activity : activityList) {
+            if (activity.getItinerary().getId().equals(itineraryId)) {
+                activitiesByItinerary.add(activity);
+            }
+        }
+        return activitiesByItinerary;
     }
 
     @Override 
