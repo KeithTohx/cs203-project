@@ -28,7 +28,7 @@ public class Activity {
     @JoinColumn(name = "itinerary_id", nullable = false)
     private Itinerary itinerary;
 
-    @Column(nullable = false)
+    @Column(name = "name", nullable = false)
     private String name;
 
     @Column(name = "address")

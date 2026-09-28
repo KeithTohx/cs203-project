@@ -25,7 +25,7 @@ public class Itinerary {
     @JoinColumn(name = "country_id", nullable = false)
     private Country country;
 
-    @Column(nullable = false)
+    @Column(name = "name", nullable = false)
     private String name;
 
     @Column(name = "date_start")
