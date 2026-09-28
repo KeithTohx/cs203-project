@@ -1,0 +1,45 @@
+# TripSense API requests
+#
+# open this file in VS Code with the REST Client extension and click Send Request
+# above any block, or in IntelliJ click the green arrow
+#
+# the app must be running first
+#   ./mvnw spring-boot:run
+#
+# add a new section here whenever you add an endpoint
+
+
+### ---------------------------------------------------------------------------
+### chat - CS203-20
+### needs ollama running, use + instead of spaces in the prompt
+### ---------------------------------------------------------------------------
+
+### default prompt, no parameters
+GET http://localhost:8080/chat
+
+### simple question to check the model answers
+GET http://localhost:8080/chat?prompt=name+three+cities+in+japan
+
+### something closer to what we actually need it for
+GET http://localhost:8080/chat?prompt=a+magnitude+6+earthquake+hit+hokkaido+today.+would+that+affect+a+ski+trip+to+niseko+next+week?+answer+yes+or+no+and+why
+
+### one word answer, useful for checking how fast the model is
+GET http://localhost:8080/chat?prompt=reply+with+only+the+word+ready
+
+### long answer, this one is slow
+GET http://localhost:8080/chat?prompt=explain+what+a+typhoon+is+in+three+paragraphs
+
+### failure path
+### stop ollama first, this should return a readable message and not a stack trace
+GET http://localhost:8080/chat?prompt=hello
+
+
+### ---------------------------------------------------------------------------
+### api docs
+### ---------------------------------------------------------------------------
+
+### the generated openapi document
+GET http://localhost:8080/v3/api-docs
+
+### swagger ui is a page, open it in a browser instead
+### http://localhost:8080/swagger-ui.html
