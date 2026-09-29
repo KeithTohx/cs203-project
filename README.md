@@ -85,8 +85,8 @@ Everything below that is ours to organise.
 
 ## How the code is organised
 
-Each feature gets its own package under `csd/tripsense/`, and every package holds
-the same six classes. Taking `itinerary` as the example:
+Each feature gets its own package under `csd/tripsense/`, built from the same six
+classes. Taking `itinerary` as the example:
 
 | Class | Job |
 |---|---|
@@ -98,7 +98,13 @@ the same six classes. Taking `itinerary` as the example:
 | `ItineraryNotFoundException.java` | annotated `@ResponseStatus(HttpStatus.NOT_FOUND)` so Spring returns a 404 |
 
 Every other feature package looks the same with its own name in place of
-`Itinerary`. The packages in this project are `itinerary`, `event` and `check`.
+`Itinerary`. The feature packages are `activity`, `country`, `impact`, `itinerary`,
+`news` and `user`.
+
+A package only has the classes it actually needs. `country` has no exception class
+because nothing looks a country up by id and fails. `chat` is not a feature at all:
+it is an adapter holding `ChatService` and `ChatServiceImpl`, with no entity,
+repository or controller, because it only talks to the AI model and stores nothing.
 
 Requests flow one way:
 
