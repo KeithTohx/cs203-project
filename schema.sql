@@ -17,16 +17,12 @@ create table user {
     username varchar not null,
     email varchar not null, 
     password varchar not null, 
-    role varchar not null, 
-    created_at timestamp,
-    modified_at timestamp
+    role varchar not null
 }
 
 create table country {
     id integer primary key,
-    name varchar not null,
-    created_at timestamp,
-    modified_at timestamp
+    name varchar not null
 }
 
 create table itinerary {
@@ -36,8 +32,6 @@ create table itinerary {
     name varchar,
     date_start timestamp,
     date_end timestamp,
-    created_at timestamp,
-    modified_at timestamp,
 
     foreign key (user_id) references user(id),
     foreign key (country_id) references country(id)
@@ -51,8 +45,6 @@ create table activity {
     address varchar,
     date_start timestamp,
     date_end timestamp,
-    created_at timestamp,
-    modified_at timestamp,
 
     foreign key (itinerary_id) references itinerary(id)
 }
@@ -75,8 +67,7 @@ create table impact {
     itinerary_id integer,
     activity_id integer,
     impacted boolean,
-    created_at timestamp,
-    modified_at timestamp,
+    reason varchar(500),
 
     foreign key (user_id) references user(id),
     foreign key (news_id) references news(id),

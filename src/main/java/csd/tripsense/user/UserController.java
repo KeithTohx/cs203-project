@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.net.URI;
 
 @RestController
-@RequestMapping("/api/users")
+@RequestMapping("/api")
 public class UserController {
 
     private final UserService userService;
@@ -26,7 +26,7 @@ public class UserController {
     @ApiResponse(responseCode = "201", description = "Account created")
     @ApiResponse(responseCode = "400", description = "Validation failed")
     @ApiResponse(responseCode = "409", description = "Email or username already taken")
-    @PostMapping("/register")
+    @PostMapping("/users/register")
     public ResponseEntity<User> register(@Valid @RequestBody User user) {
         User created = userService.register(user);
         return ResponseEntity.created(URI.create("/api/users/" + created.getId())).body(created);

@@ -26,7 +26,7 @@ public class UserServiceImpl implements UserService {
                     "username '" + request.getUsername() + "' is already taken");
         }
 
-        // Build a fresh entity so a client can't set id/createdAt, and force role to USER
+        // build a fresh entity so a client cant set the id, and force role to USER
         // so there is no self-service path to ADMIN.
         User user = new User(request.getEmail(), request.getUsername(), request.getPassword(), "USER");
         return userRepository.save(user);

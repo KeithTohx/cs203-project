@@ -8,9 +8,11 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@RequestMapping("/api")
 public class ItineraryController {
     private ItineraryService itineraryService;
 
@@ -18,49 +20,49 @@ public class ItineraryController {
         this.itineraryService = itineraryService;
     }
 
-    @GetMapping("/api/itinerary")
-    public List<Itinerary> getAllItineraries() {
-        return itineraryService.getAllItineraries();
+    @GetMapping("/itinerary")
+    public List<ItineraryResponse> getAllItineraries() {
+        return itineraryService.getAllItineraries().stream().map(ItineraryResponse::from).toList();
     }
 
-    @GetMapping("/api/itinerary/{id}")
-    public Itinerary getItineraryById(@PathVariable Long id) {
+    @GetMapping("/itinerary/{id}")
+    public ItineraryResponse getItineraryById(@PathVariable Long id) {
         try {
-            return itineraryService.getItineraryById(id);
+            return ItineraryResponse.from(itineraryService.getItineraryById(id));
         } catch (ItineraryNotFoundException e) {
             return null;
         }
     }
 
-    @GetMapping("/api/user/{userId}/itinerary")
-    public List<Itinerary> getItinerariesByUser(@PathVariable Long userId) {
+    @GetMapping("/user/{userId}/itinerary")
+    public List<ItineraryResponse> getItinerariesByUser(@PathVariable Long userId) {
         try {
-            return itineraryService.getItinerariesByUser(userId);
+            return itineraryService.getItinerariesByUser(userId).stream().map(ItineraryResponse::from).toList();
         } catch (ItineraryNotFoundException e) {
             return null;
         }
     }
     
-    @GetMapping("/api/country/{countryId}/itinerary")
-    public List<Itinerary> getItinerariesByCountry(@PathVariable Long countryId) {
+    @GetMapping("/country/{countryId}/itinerary")
+    public List<ItineraryResponse> getItinerariesByCountry(@PathVariable Long countryId) {
         try {
-            return itineraryService.getItinerariesByCountry(countryId);
+            return itineraryService.getItinerariesByCountry(countryId).stream().map(ItineraryResponse::from).toList();
         } catch (ItineraryNotFoundException e) {
             return null;
         }
     }
 
-    @PostMapping("/api/itinerary")
-    public Itinerary addItinerary(@RequestBody Itinerary itinerary) {
-        return itineraryService.addItinerary(itinerary);
+    @PostMapping("/itinerary")
+    public ItineraryResponse addItinerary(@RequestBody Itinerary itinerary) {
+        return ItineraryResponse.from(itineraryService.addItinerary(itinerary));
     }
     
-    @PutMapping("/api/itinerary/{id}")
-    public Itinerary updateItinerary(@PathVariable Long id, @RequestBody Itinerary newItineraryInfo) {
-        return itineraryService.updateItinerary(id, newItineraryInfo);
+    @PutMapping("/itinerary/{id}")
+    public ItineraryResponse updateItinerary(@PathVariable Long id, @RequestBody Itinerary newItineraryInfo) {
+        return ItineraryResponse.from(itineraryService.updateItinerary(id, newItineraryInfo));
     }
     
-    @DeleteMapping("/api/itinerary/{id}")
+    @DeleteMapping("/itinerary/{id}")
     public void deleteItinerary(@PathVariable Long id){
         itineraryService.deleteItinerary(id);
     }

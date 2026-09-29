@@ -45,22 +45,19 @@ public interface ImpactService {
     List<Impact> getImpactsByActivity(Long activityId);
 
     /**
-     * Creates a new impact in the system.
-     * 
-     * @param impact the impact to be added
-     * @return the newly created impact with assigned ID
+     * Checks every activity in an itinerary against one news article and saves the result.
+     *
+     * Each activity is assessed on its own, so a failure on one still leaves the others usable.
+     * Re-running for the same itinerary and news updates the existing records rather than
+     * adding duplicates.
+     *
+     * @param itineraryId the itinerary to check
+     * @param newsId the news article to check it against
+     * @return the verdict for each activity, plus whether any of them is impacted
+     * @throws csd.tripsense.itinerary.ItineraryNotFoundException if the itinerary does not exist
+     * @throws csd.tripsense.news.NewsNotFoundException if the news article does not exist
      */
-    Impact addImpact(Impact impact);
-    
-    /**
-     * Updates an existing impact with new information.
-     * 
-     * @param id the unique identifier of the impact to update
-     * @param newImpactInfo the updated impact information
-     * @return the updated impact with all changes applied
-     * @throws ImpactNotFoundException if no impact exists with the given ID
-     */
-    Impact updateImpact(Long id, Impact newImpactInfo);
+    EvaluateResponse evaluate(Long itineraryId, Long newsId);
 
     /**
      * Removes a impact from the system permanently.
