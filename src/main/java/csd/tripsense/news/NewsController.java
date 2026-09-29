@@ -13,7 +13,7 @@ import java.util.List;
  * Note: Uses local SQLite database instead of external API calls.
  */
 @RestController //Marks this class as a Web REST Controller, meaning returned object instances will automatically be serialized to JSON/XML in the HTTP response body.
-@RequestMapping("/api/news")
+@RequestMapping("/api")
 public class NewsController {
 
     private final NewsService newsService;
@@ -32,7 +32,7 @@ public class NewsController {
        *
        * @return List of all news articles
        */
-     @GetMapping
+     @GetMapping("/news")
     public ResponseEntity<List<News>> getAllNews() {
         List<News> newsList = newsService.getAllNews();
         return ResponseEntity.ok(newsList);
@@ -44,7 +44,7 @@ public class NewsController {
        * @param id The unique identifier of the news article
        * @return The news article if found
        */
-     @GetMapping("/{id}")
+     @GetMapping("/news/{id}")
     public ResponseEntity<News> getNewsById(@PathVariable Long id) {
         try {
             News news = newsService.getNewsById(id);

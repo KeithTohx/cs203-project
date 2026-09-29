@@ -8,10 +8,12 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 
 @RestController 
+@RequestMapping("/api")
 public class ActivityController {
     private ActivityService activityService;
 
@@ -19,40 +21,40 @@ public class ActivityController {
         this.activityService = activityService;
     }
 
-    @GetMapping("/api/activity")
-    public List<Activity> getAllActivities() {
-        return activityService.getAllActivities();
+    @GetMapping("/activity")
+    public List<ActivityResponse> getAllActivities() {
+        return activityService.getAllActivities().stream().map(ActivityResponse::from).toList();
     }
 
-    @GetMapping("/api/activity/{id}")
-    public Activity getActivityById(@PathVariable Long id) {
+    @GetMapping("/activity/{id}")
+    public ActivityResponse getActivityById(@PathVariable Long id) {
         try {
-            return activityService.getActivityById(id);
+            return ActivityResponse.from(activityService.getActivityById(id));
         } catch (ActivityNotFoundException e) {
             return null;
         }
     }
     
-    @GetMapping("/api/itinerary/{itineraryId}/activity")
-    public List<Activity> getActivitiesByItinerary(@PathVariable Long itineraryId) {
+    @GetMapping("/itinerary/{itineraryId}/activity")
+    public List<ActivityResponse> getActivitiesByItinerary(@PathVariable Long itineraryId) {
         try {
-            return activityService.getActivitiesByItinerary(itineraryId);
+            return activityService.getActivitiesByItinerary(itineraryId).stream().map(ActivityResponse::from).toList();
         } catch (ActivityNotFoundException e) {
             return null;
         }
     }
 
-    @PostMapping("/api/activity")
-    public Activity addActivity(@RequestBody Activity activity) {
-        return activityService.addActivity(activity);
+    @PostMapping("/activity")
+    public ActivityResponse addActivity(@RequestBody Activity activity) {
+        return ActivityResponse.from(activityService.addActivity(activity));
     }
     
-    @PutMapping("/api/activity/{id}")
-    public Activity updateActivity(@PathVariable Long id, @RequestBody Activity newActivityInfo) {
-        return activityService.updateActivity(id, newActivityInfo);
+    @PutMapping("/activity/{id}")
+    public ActivityResponse updateActivity(@PathVariable Long id, @RequestBody Activity newActivityInfo) {
+        return ActivityResponse.from(activityService.updateActivity(id, newActivityInfo));
     }
     
-    @DeleteMapping("/api/activity/{id}")
+    @DeleteMapping("/activity/{id}")
     public void deleteActivity(@PathVariable Long id){
         activityService.deleteActivity(id);
     }
