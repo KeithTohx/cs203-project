@@ -1,8 +1,8 @@
 package csd.tripsense.user;
 
-import org.springframework.data.jpa.repository.JpaRepository;
-
 import java.util.Optional;
+
+import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface UserRepository extends JpaRepository<User, Long> {
 
@@ -11,4 +11,6 @@ public interface UserRepository extends JpaRepository<User, Long> {
     boolean existsByUsernameIgnoreCase(String username);
 
     Optional<User> findByEmailIgnoreCase(String email);
+
+    Optional<User> findByUsernameIgnoreCase(String username);
 }

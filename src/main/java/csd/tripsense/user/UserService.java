@@ -7,4 +7,10 @@ public interface UserService {
      * Throws ResponseStatusException (409) if the email or username is already taken.
      */
     User register(User user);
+
+    /**
+     * Looks up a user by username.
+     * @throws UserNotFoundException if no user has that username
+     */
+    User getByUsername(String username);
 }
