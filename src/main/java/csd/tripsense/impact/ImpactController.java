@@ -53,7 +53,7 @@ public class ImpactController {
      * @param id
      * @return list of impacts belonging to user
      */
-    @GetMapping("/impact/user/{userId}")
+    @GetMapping("/user/{userId}/impact")
     public List<ImpactResponse> getImpactsByUser(@PathVariable Long userId) {
         return impactService.getImpactsByUser(userId).stream().map(ImpactResponse::from).toList();
 
@@ -65,7 +65,7 @@ public class ImpactController {
      * @param id
      * @return list of impacts belonging to itinerary
      */
-    @GetMapping("/impact/itinerary/{itineraryId}")
+    @GetMapping("/itinerary/{itineraryId}/impact")
     public List<ImpactResponse> getImpactsByItinerary(@PathVariable Long itineraryId) {
         return impactService.getImpactsByItinerary(itineraryId).stream().map(ImpactResponse::from).toList();
 
@@ -77,7 +77,7 @@ public class ImpactController {
      * @param id
      * @return list of impacts belonging to activity
      */
-    @GetMapping("/impact/activity/{activityId}")
+    @GetMapping("/activity/{activityId}/impact")
     public List<ImpactResponse> getImpactsByActivity(@PathVariable Long activityId) {
         return impactService.getImpactsByActivity(activityId).stream().map(ImpactResponse::from).toList();
 

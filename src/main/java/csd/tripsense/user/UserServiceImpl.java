@@ -31,4 +31,10 @@ public class UserServiceImpl implements UserService {
         User user = new User(request.getEmail(), request.getUsername(), request.getPassword(), "USER");
         return userRepository.save(user);
     }
+
+    @Override
+    public User getByUsername(String username) {
+        return userRepository.findByUsernameIgnoreCase(username)
+                .orElseThrow(() -> new UserNotFoundException("No user found with username " + username));
+    }
 }
