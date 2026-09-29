@@ -75,6 +75,7 @@ create table impact {
     itinerary_id integer,
     activity_id integer,
     impacted boolean,
+    reason varchar(500),
     created_at timestamp,
     modified_at timestamp,
 
