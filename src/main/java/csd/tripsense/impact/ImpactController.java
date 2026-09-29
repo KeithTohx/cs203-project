@@ -2,22 +2,27 @@ package csd.tripsense.impact;
 
 import java.util.List;
 
-import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import csd.tripsense.chat.ChatService;
+import jakarta.validation.Valid;
+
 @RestController 
+@RequestMapping("/api")
 public class ImpactController {
     private ImpactService impactService;
+    private ChatService chatService;
 
-    public ImpactController(ImpactService impactService) {
+    public ImpactController(ImpactService impactService, ChatService chatService) {
         this.impactService = impactService;
+        this.chatService = chatService;
     }
 
     /**
@@ -26,8 +31,8 @@ public class ImpactController {
      * @return list of all impacts
      */
     @GetMapping("/impact")
-    public List<Impact> getImpacts() {
-        return impactService.listImpacts();
+    public List<ImpactResponse> getImpacts() {
+        return impactService.listImpacts().stream().map(ImpactResponse::from).toList();
     }
 
     /**
@@ -37,8 +42,8 @@ public class ImpactController {
      * @return impact with the given id
      */
     @GetMapping("/impact/{id}")
-    public Impact getImpact(@PathVariable Long id){
-        return impactService.getImpact(id);
+    public ImpactResponse getImpact(@PathVariable Long id){
+        return ImpactResponse.from(impactService.getImpact(id));
 
     }
 
@@ -49,8 +54,8 @@ public class ImpactController {
      * @return list of impacts belonging to user
      */
     @GetMapping("/impact/user/{userId}")
-    public List<Impact> getImpactsByUser(@PathVariable Long userId) {
-        return impactService.getImpactsByUser(userId);
+    public List<ImpactResponse> getImpactsByUser(@PathVariable Long userId) {
+        return impactService.getImpactsByUser(userId).stream().map(ImpactResponse::from).toList();
 
     }
 
@@ -61,8 +66,8 @@ public class ImpactController {
      * @return list of impacts belonging to itinerary
      */
     @GetMapping("/impact/itinerary/{itineraryId}")
-    public List<Impact> getImpactsByItinerary(@PathVariable Long itineraryId) {
-        return impactService.getImpactsByItinerary(itineraryId);
+    public List<ImpactResponse> getImpactsByItinerary(@PathVariable Long itineraryId) {
+        return impactService.getImpactsByItinerary(itineraryId).stream().map(ImpactResponse::from).toList();
 
     }
 
@@ -73,32 +78,9 @@ public class ImpactController {
      * @return list of impacts belonging to activity
      */
     @GetMapping("/impact/activity/{activityId}")
-    public List<Impact> getImpactsByActivity(@PathVariable Long activityId) {
-        return impactService.getImpactsByActivity(activityId);
+    public List<ImpactResponse> getImpactsByActivity(@PathVariable Long activityId) {
+        return impactService.getImpactsByActivity(activityId).stream().map(ImpactResponse::from).toList();
 
-    }
-
-    /**
-     * Add a new impact with POST request to "/impacts"
-     * Note the use of @RequestBody
-     * @param impact
-     * @return list of all impacts
-     */
-    @ResponseStatus(HttpStatus.CREATED)
-    @PostMapping("/impact")
-    public Impact addImpact(@RequestBody Impact impact){
-        return impactService.addImpact(impact);
-    }
-
-    /**
-     * If there is no impact with the given "id", throw a ImpactNotFoundException
-     * @param id
-     * @param newImpactInfo
-     * @return the updated, or newly added impact
-     */
-    @PutMapping("/impact/{id}")
-    public Impact updateImpact(@PathVariable Long id, @RequestBody Impact newImpactInfo){
-        return impactService.updateImpact(id, newImpactInfo);
     }
 
     /**
@@ -109,6 +91,31 @@ public class ImpactController {
     @DeleteMapping("/impact/{id}")
     public void deleteImpact(@PathVariable Long id){
         impactService.deleteImpact(id);
+    }
+
+
+    /**
+     * Check every activity in an itinerary against one news article
+     * Saves an impact record per activity and returns the verdicts
+     *
+     * @param request the itinerary and news to check
+     * @return the verdict per activity, plus whether any of them is impacted
+     */
+    @PostMapping("/impact/evaluate")
+    public EvaluateResponse evaluate(@Valid @RequestBody EvaluateRequest request) {
+        return impactService.evaluate(request.itineraryId(), request.newsId());
+    }
+
+    /**
+     * Quick check that the AI model is reachable
+     * Useful before running an evaluation, which takes a few seconds per activity
+     *
+     * @param prompt anything to send the model
+     * @return the model reply, or a readable message if it could not be reached
+     */
+    @GetMapping("/impact/ping")
+    public String ping(@RequestParam(defaultValue = "Say hello in one short sentence") String prompt) {
+        return chatService.ask(prompt);
     }
 
 }
