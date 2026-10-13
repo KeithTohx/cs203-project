@@ -52,7 +52,7 @@ public class SecurityConfig {
 
             // POST /api/user/login  (form fields: email, password)  ->  200 + JSESSIONID cookie
             .formLogin(form -> form
-                .loginProcessingUrl("/api/user/login")
+                .loginProcessingUrl("/api/auth/login")
                 .usernameParameter("email")
                 .passwordParameter("password")
                 .successHandler((request, response, authentication) -> {
@@ -77,7 +77,7 @@ public class SecurityConfig {
 
             // POST /api/user/logout  ->  204, session invalidated, cookie cleared
             .logout(logout -> logout
-                .logoutUrl("/api/user/logout")
+                .logoutUrl("/api/auth/logout")
                 .logoutSuccessHandler(new HttpStatusReturningLogoutSuccessHandler(HttpStatus.NO_CONTENT))
                 .invalidateHttpSession(true)
                 .deleteCookies("JSESSIONID")
