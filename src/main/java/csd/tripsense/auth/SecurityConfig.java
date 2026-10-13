@@ -1,4 +1,4 @@
-package csd.tripsense;
+package csd.tripsense.auth;
 
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
@@ -49,7 +49,7 @@ public class SecurityConfig {
                 .anyRequest().authenticated()
             )
 
-            // POST /api/users/login  (form fields: email, password)  ->  200 + JSESSIONID cookie
+            // POST /api/user/login  (form fields: email, password)  ->  200 + JSESSIONID cookie
             .formLogin(form -> form
                 .loginProcessingUrl("/api/user/login")
                 .usernameParameter("email")
@@ -74,7 +74,7 @@ public class SecurityConfig {
                 .permitAll()
             )
 
-            // POST /api/users/logout  ->  204, session invalidated, cookie cleared
+            // POST /api/user/logout  ->  204, session invalidated, cookie cleared
             .logout(logout -> logout
                 .logoutUrl("/api/user/logout")
                 .logoutSuccessHandler(new HttpStatusReturningLogoutSuccessHandler(HttpStatus.NO_CONTENT))

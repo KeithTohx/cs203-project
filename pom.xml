@@ -77,6 +77,13 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
+        <!-- Security: login/logout and BCrypt password hashing -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+
         <!-- Database: SQLite, stored as a single file under data/ -->
         <dependency>
             <groupId>org.xerial</groupId>

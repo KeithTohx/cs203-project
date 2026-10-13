@@ -9,13 +9,15 @@ INSERT OR IGNORE INTO country (id, name) VALUES
     (5, 'Indonesia'),
     (6, 'Vietnam');
 
+-- Passwords are BCrypt hashes (login compares against the hash, so plaintext would never match).
+-- Plain-text values for local testing: john/alice/bob/carol/dave = password123, admin = admin123.
 INSERT OR IGNORE INTO user (id, username, email, password, role) VALUES
-    (1, 'john',  'john@example.com',  'password123', 'USER'),
-    (2, 'alice', 'alice@example.com', 'password123', 'USER'),
-    (3, 'admin', 'admin@example.com', 'admin123',    'ADMIN'),
-    (4, 'bob',   'bob@example.com',   'password123', 'USER'),
-    (5, 'carol', 'carol@example.com', 'password123', 'USER'),
-    (6, 'dave',  'dave@example.com',  'password123', 'USER');
+    (1, 'john',  'john@example.com',  '$2a$10$xENb5lsk8eHErfInbr4fKufkjwD8wZ.ua1emb/IuDbj9..08xomHC', 'USER'),
+    (2, 'alice', 'alice@example.com', '$2a$10$xENb5lsk8eHErfInbr4fKufkjwD8wZ.ua1emb/IuDbj9..08xomHC', 'USER'),
+    (3, 'admin', 'admin@example.com', '$2a$10$Uk.hzssxOu6YLesmUIlmZOdebzEd3D4XmOSGiWUIJqJ8ihGE92Kjm', 'ADMIN'),
+    (4, 'bob',   'bob@example.com',   '$2a$10$xENb5lsk8eHErfInbr4fKufkjwD8wZ.ua1emb/IuDbj9..08xomHC', 'USER'),
+    (5, 'carol', 'carol@example.com', '$2a$10$xENb5lsk8eHErfInbr4fKufkjwD8wZ.ua1emb/IuDbj9..08xomHC', 'USER'),
+    (6, 'dave',  'dave@example.com',  '$2a$10$xENb5lsk8eHErfInbr4fKufkjwD8wZ.ua1emb/IuDbj9..08xomHC', 'USER');
 
 INSERT OR IGNORE INTO itinerary (id, user_id, country_id, name, date_start, date_end) VALUES
     (1, 1, 1, 'Japan Ski Trip',          '2026-12-15 00:00:00', '2026-12-22 00:00:00'),

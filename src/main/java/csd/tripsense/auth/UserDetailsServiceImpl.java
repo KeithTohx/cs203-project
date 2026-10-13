@@ -1,5 +1,7 @@
-package csd.tripsense.user;
+package csd.tripsense.auth;
 
+import csd.tripsense.user.User;
+import csd.tripsense.user.UserRepository;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
@@ -23,12 +25,6 @@ public class UserDetailsServiceImpl implements UserDetailsService {
     public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
         User user = userRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new UsernameNotFoundException("No account for that email"));
-
-        // Fully qualified: our entity is also called User.
-        return org.springframework.security.core.userdetails.User
-                .withUsername(user.getEmail())
-                .password(user.getPassword())   // the BCrypt hash
-                .roles(user.getRole())          // "USER" -> authority ROLE_USER
-                .build();
+        return CurrentUser.from(user);
     }
 }
