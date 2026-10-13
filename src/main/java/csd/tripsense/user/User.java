@@ -6,9 +6,13 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+
+import java.time.Instant;
 
 // No @Table: Hibernate names the table "user", matching schema.sql and the other entities.
 @Entity
@@ -28,9 +32,9 @@ public class User {
     @Column(nullable = false, unique = true)
     private String email;
 
-    // Plaintext to match data.sql. WRITE_ONLY: accepted in requests, never returned in responses.
+    // Stored as a BCrypt hash (see UserServiceImpl). WRITE_ONLY: accepted in requests, never returned in responses.
     @NotBlank(message = "password must not be blank")
-    @Size(min = 8, max = 100, message = "password must be at least 8 characters")
+    @Size(min = 8, max = 72, message = "password must be between 8 and 72 characters")
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @Column(nullable = false)
     private String password;
@@ -38,6 +42,13 @@ public class User {
     // "USER" or "ADMIN". Always forced to "USER" on registration (see UserServiceImpl).
     @Column(nullable = false)
     private String role = "USER";
+
+    // Nullable, as in schema.sql, so seed rows in data.sql that omit them still load.
+    @Column(name = "created_at", updatable = false)
+    private Instant createdAt;
+
+    @Column(name = "modified_at")
+    private Instant modifiedAt;
 
     protected User() {
     }
@@ -47,6 +58,17 @@ public class User {
         this.username = username;
         this.password = password;
         this.role = role;
+    }
+
+    @PrePersist
+    void onCreate() {
+        createdAt = Instant.now();
+        modifiedAt = createdAt;
+    }
+
+    @PreUpdate
+    void onUpdate() {
+        modifiedAt = Instant.now();
     }
 
     public Long getId() { return id; }
@@ -62,4 +84,7 @@ public class User {
 
     public String getRole() { return role; }
 
+    public Instant getCreatedAt() { return createdAt; }
+
+    public Instant getModifiedAt() { return modifiedAt; }
 }

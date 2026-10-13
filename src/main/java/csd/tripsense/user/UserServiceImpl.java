@@ -1,6 +1,7 @@
 package csd.tripsense.user;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -9,9 +10,11 @@ import org.springframework.web.server.ResponseStatusException;
 public class UserServiceImpl implements UserService {
 
     private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
 
-    public UserServiceImpl(UserRepository userRepository) {
+    public UserServiceImpl(UserRepository userRepository, PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
+        this.passwordEncoder = passwordEncoder;
     }
 
     @Override
@@ -26,9 +29,9 @@ public class UserServiceImpl implements UserService {
                     "username '" + request.getUsername() + "' is already taken");
         }
 
-        // build a fresh entity so a client cant set the id, and force role to USER
-        // so there is no self-service path to ADMIN.
-        User user = new User(request.getEmail(), request.getUsername(), request.getPassword(), "USER");
+        // Fresh entity: the client can't set id/createdAt, role is always USER, password is hashed.
+        User user = new User(request.getEmail(), request.getUsername(),
+                passwordEncoder.encode(request.getPassword()), "USER");
         return userRepository.save(user);
     }
 
