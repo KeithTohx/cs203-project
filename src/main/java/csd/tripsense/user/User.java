@@ -53,16 +53,6 @@ public class User {
         this.role = role;
     }
 
-    @PrePersist
-    void onCreate() {
-        createdAt = Instant.now();
-        modifiedAt = createdAt;
-    }
-
-    @PreUpdate
-    void onUpdate() {
-        modifiedAt = Instant.now();
-    }
 
     public Long getId() { return id; }
 
@@ -77,7 +67,4 @@ public class User {
 
     public String getRole() { return role; }
 
-    public Instant getCreatedAt() { return createdAt; }
-
-    public Instant getModifiedAt() { return modifiedAt; }
 }
