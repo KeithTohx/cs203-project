@@ -43,13 +43,6 @@ public class User {
     @Column(nullable = false)
     private String role = "USER";
 
-    // Nullable, as in schema.sql, so seed rows in data.sql that omit them still load.
-    @Column(name = "created_at", updatable = false)
-    private Instant createdAt;
-
-    @Column(name = "modified_at")
-    private Instant modifiedAt;
-
     protected User() {
     }
 
