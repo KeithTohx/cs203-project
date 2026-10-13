@@ -44,6 +44,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/api/user/register").permitAll()
                 .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
                 .requestMatchers("/error").permitAll()   // else error bodies (409, 400...) turn into 401
+                .requestMatchers("/", "/index.html", "/js/**", "/css/**", "/favicon.ico").permitAll()   // the frontend has to load before anyone logs in
                 // Everything else needs a logged-in session. To keep teammates' endpoints open while
                 // they integrate, temporarily change this one line to .permitAll().
                 .anyRequest().authenticated()
