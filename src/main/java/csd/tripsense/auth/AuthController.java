@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * Login (POST /api/user/login) and logout (POST /api/user/logout) are handled by Spring Security
+ * Login (POST /api/auth/login) and logout (POST /api/auth/logout) are handled by Spring Security
  * itself - see SecurityConfig. This controller adds "who am I".
  */
 @RestController

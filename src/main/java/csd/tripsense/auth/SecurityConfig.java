@@ -12,11 +12,14 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.session.SessionRegistry;
+import org.springframework.security.core.session.SessionRegistryImpl;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.logout.HttpStatusReturningLogoutSuccessHandler;
+import org.springframework.security.web.session.HttpSessionEventPublisher;
 
 /**
  * Session-based authentication using Spring Security's built-in form login and logout.
@@ -29,16 +32,32 @@ public class SecurityConfig {
     private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
 
     @Bean
+    public SessionRegistry sessionRegistry() {
+        return new SessionRegistryImpl();
+    }
+
+    @Bean
+    public HttpSessionEventPublisher httpSessionEventPublisher() {
+        return new HttpSessionEventPublisher();   // removes sessions from the registry when they end
+    }
+
+    @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http, SessionRegistry sessionRegistry) throws Exception {
         http
             // NOTE: CSRF protection is off so plain curl/Swagger clients can POST. With cookie sessions
             // a browser front end (E8-01) should turn it back on - see the notes that came with this code.
             .csrf(AbstractHttpConfigurer::disable)
+
+            .sessionManagement(s -> s
+                .maximumSessions(-1)                       // -1 = no limit; this only turns on tracking
+                .sessionRegistry(sessionRegistry)
+                .expiredSessionStrategy(event ->
+                    event.getResponse().setStatus(HttpServletResponse.SC_UNAUTHORIZED)))
 
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.POST, "/api/user/register").permitAll()
@@ -50,7 +69,7 @@ public class SecurityConfig {
                 .anyRequest().authenticated()
             )
 
-            // POST /api/user/login  (form fields: email, password)  ->  200 + JSESSIONID cookie
+            // POST /api/auth/login  (form fields: email, password)  ->  200 + JSESSIONID cookie
             .formLogin(form -> form
                 .loginProcessingUrl("/api/auth/login")
                 .usernameParameter("email")
@@ -75,7 +94,7 @@ public class SecurityConfig {
                 .permitAll()
             )
 
-            // POST /api/user/logout  ->  204, session invalidated, cookie cleared
+            // POST /api/auth/logout  ->  204, session invalidated, cookie cleared
             .logout(logout -> logout
                 .logoutUrl("/api/auth/logout")
                 .logoutSuccessHandler(new HttpStatusReturningLogoutSuccessHandler(HttpStatus.NO_CONTENT))

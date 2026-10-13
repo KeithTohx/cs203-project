@@ -6,13 +6,12 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.PrePersist;
-import jakarta.persistence.PreUpdate;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
-import java.time.Instant;
+
 
 // No @Table: Hibernate names the table "user", matching schema.sql and the other entities.
 @Entity
@@ -20,9 +19,12 @@ public class User {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @JsonProperty(access = JsonProperty.Access.READ_ONLY)
     private Long id;
 
     @NotBlank(message = "username must not be blank")
+    @Pattern(regexp = "^[A-Za-z0-9_.-]+$",
+            message = "username may only contain letters, digits, '.', '_' and '-'")
     @Size(min = 3, max = 30, message = "username must be between 3 and 30 characters")
     @Column(nullable = false, unique = true)
     private String username;
@@ -41,7 +43,14 @@ public class User {
 
     // "USER" or "ADMIN". Always forced to "USER" on registration (see UserServiceImpl).
     @Column(nullable = false)
+    @JsonProperty(access = JsonProperty.Access.READ_ONLY)
     private String role = "USER";
+
+    // null (rows seeded by data.sql, or created before this column existed) counts as enabled.
+    @Column
+    @JsonProperty(access = JsonProperty.Access.READ_ONLY)
+    private Boolean enabled = true;
+
 
     protected User() {
     }
@@ -66,5 +75,8 @@ public class User {
     public void setPassword(String password) { this.password = password; }
 
     public String getRole() { return role; }
+
+    public boolean isEnabled() { return enabled == null || enabled; }
+    public void setEnabled(boolean enabled) { this.enabled = enabled; }
 
 }

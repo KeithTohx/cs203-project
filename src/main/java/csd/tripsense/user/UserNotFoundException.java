@@ -9,4 +9,9 @@ public class UserNotFoundException extends RuntimeException {
     public UserNotFoundException(String message) {
         super(message);
     }
+
+    public static UserNotFoundException forUsername(String username) {
+        return new UserNotFoundException("No user found with username " + username);
+    }
 }
+

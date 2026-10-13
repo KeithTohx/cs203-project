@@ -26,18 +26,25 @@ public class CurrentUser implements UserDetails, CredentialsContainer {
     private final String accountUsername;
     private String password;          // BCrypt hash; needed for the login check, wiped right after
     private final String role;        // "USER" or "ADMIN"
+    private final boolean enabled;    // false = Spring Security refuses to log this account in
 
     public CurrentUser(Long id, String email, String accountUsername, String password, String role) {
+        this(id, email, accountUsername, password, role, true);
+    }
+
+    public CurrentUser(Long id, String email, String accountUsername, String password, String role,
+                       boolean enabled) {
         this.id = id;
         this.email = email;
         this.accountUsername = accountUsername;
         this.password = password;
         this.role = role;
+        this.enabled = enabled;
     }
 
     public static CurrentUser from(User user) {
         return new CurrentUser(user.getId(), user.getEmail(), user.getUsername(),
-                user.getPassword(), user.getRole());
+                user.getPassword(), user.getRole(), user.isEnabled());
     }
 
     public Long getId() { return id; }
@@ -69,7 +76,7 @@ public class CurrentUser implements UserDetails, CredentialsContainer {
     public boolean isCredentialsNonExpired() { return true; }
 
     @Override
-    public boolean isEnabled() { return true; }
+    public boolean isEnabled() { return enabled; }
 
     /** Spring calls this after a successful login so the hash is not kept in the session. */
     @Override
