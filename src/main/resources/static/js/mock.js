@@ -1,0 +1,140 @@
+// DEV ONLY: fake backend that runs in the browser. Enabled by opening /?mock on localhost.
+// Answers after a short pause, with a copy so views can't change the mock data by accident.
+const respondWith = value => new Promise(resolve => setTimeout(() => resolve(structuredClone(value)), 250));
+const fail = (status, message) => Promise.reject(Object.assign(new Error(message), { status }));
+
+const USERS = [
+    { id: 1, username: "john", email: "john@example.com", password: "password123", role: "USER" },
+    { id: 2, username: "alice", email: "alice@example.com", password: "password123", role: "USER" },
+    { id: 3, username: "admin", email: "admin@example.com", password: "admin123", role: "ADMIN" },
+    { id: 4, username: "bob", email: "bob@example.com", password: "password123", role: "USER" },
+    { id: 5, username: "carol", email: "carol@example.com", password: "password123", role: "USER" },
+    { id: 6, username: "dave", email: "dave@example.com", password: "password123", role: "USER" },
+];
+const withoutPassword = ({ password, ...user }) => user;
+let me = USERS.find(user => user.id === Number(sessionStorage.getItem("mockUserId"))) || null;
+// Returns a rejected promise when nobody is logged in, otherwise null.
+const requireLogin = () => me ? null : fail(401, "Not logged in");
+
+const COUNTRIES = [{ id: 1, name: "Japan" }, { id: 2, name: "Singapore" }, { id: 3, name: "Thailand" }];
+const makeItinerary = (id, userId, name, countryName, dateStart, dateEnd) =>
+    ({ id, userId, name, countryId: COUNTRIES.find(country => country.name === countryName).id, countryName, dateStart, dateEnd });
+const ITINERARIES = [
+    makeItinerary(1, 1, "Japan Ski Trip", "Japan", "2026-12-15T00:00:00", "2026-12-22T00:00:00"),
+    makeItinerary(3, 1, "Singapore Weekend", "Singapore", "2027-01-08T00:00:00", "2027-01-10T00:00:00"),
+    makeItinerary(9, 1, "Kyoto Autumn (past)", "Japan", "2026-03-01T00:00:00", "2026-03-08T00:00:00"),
+    makeItinerary(2, 2, "Thailand Beach Holiday", "Thailand", "2026-11-05T00:00:00", "2026-11-12T00:00:00"),
+    makeItinerary(6, 2, "Tokyo Cherry Blossoms", "Japan", "2027-03-25T00:00:00", "2027-04-02T00:00:00"),
+];
+// Same flat shape as ActivityResponse on the backend.
+const makeActivity = (id, itineraryId, name, address, dateStart, dateEnd) => ({ id, itineraryId, name, address, dateStart, dateEnd });
+const ACTIVITIES = [
+    makeActivity(1, 1, "Ski at Niseko", "Niseko, Hokkaido", "2026-12-16T09:00:00", "2026-12-18T17:00:00"),
+    makeActivity(2, 1, "Onsen visit", "Noboribetsu, Hokkaido", "2026-12-19T15:00:00", "2026-12-19T20:00:00"),
+    makeActivity(3, 1, "Sapporo food tour", "Sapporo", "2026-12-21T11:00:00", "2026-12-21T16:00:00"),
+    makeActivity(4, 3, "Universal Studios Singapore", "Sentosa", "2027-01-09T10:00:00", "2027-01-09T19:00:00"),
+    makeActivity(5, 3, "Gardens by the Bay", "Marina Bay", "2027-01-08T18:00:00", "2027-01-08T21:00:00"),
+    makeActivity(6, 9, "Fushimi Inari hike", "Kyoto", "2026-03-02T08:00:00", "2026-03-02T12:00:00"),
+    makeActivity(7, 2, "Grand Palace visit", "Bangkok", "2026-11-06T09:00:00", "2026-11-06T12:00:00"),
+    makeActivity(8, 2, "Island hopping", "Phi Phi Islands", "2026-11-09T08:00:00", "2026-11-09T17:00:00"),
+    // itinerary 6 has no activities, to test the empty state
+];
+// Same flat shape as ImpactResponse on the backend.
+const makeImpact = (id, impacted, newsId, newsTitle, activityId, activityName, reason) =>
+    ({ id, impacted, newsId, newsTitle, activityId, activityName, reason });
+const QUAKE = "Magnitude 6.8 earthquake strikes near Hokkaido";
+const IMPACTS = {
+    1: [makeImpact(1, true, 1, QUAKE, 1, "Ski at Niseko", "Some ski resorts suspending lifts."),
+    makeImpact(2, true, 1, QUAKE, 2, "Onsen visit", null),
+    makeImpact(3, true, 1, QUAKE, null, null, "Flights into Sapporo may be delayed.")],
+    3: [makeImpact(6, true, 2, "Universal Studios Singapore to close for maintenance", 4, "Universal Studios Singapore", "Dates to be confirmed.")],
+    6: [makeImpact(11, true, 3, "Cherry blossom forecast: early bloom & record crowds", null, null, "Expect queues at popular parks in late March.")],
+    2: [makeImpact(4, true, 4, "Flooding closes Bangkok tourist areas", 7, "Grand Palace visit", "Some attractions closed."),
+    makeImpact(5, false, 5, "Grand Palace closed for royal ceremony", 7, "Grand Palace visit", "Closure is before your visit.")],
+    // itinerary 9 has no impacts, to test the empty state
+};
+
+const myItinerary = id => ITINERARIES.find(itinerary => itinerary.id === Number(id) && itinerary.userId === me?.id);
+const myActivity = id => ACTIVITIES.find(activity => activity.id === Number(id) && myItinerary(activity.itineraryId));
+
+export const mockApi = {
+    login: (email, password) => {
+        const user = USERS.find(candidate => candidate.email.toLowerCase() === email.toLowerCase() && candidate.password === password);
+        if (!user) return fail(401, "Invalid email or password.");
+        me = user; sessionStorage.setItem("mockUserId", user.id); return respondWith(null);
+    },
+    register: details => {
+        const taken = field => USERS.some(user => user[field].toLowerCase() === details[field].toLowerCase());
+        if (taken("email")) return fail(409, `email '${details.email}' is already taken`);
+        if (taken("username")) return fail(409, `username '${details.username}' is already taken`);
+        const user = { id: Math.max(...USERS.map(user => user.id)) + 1, ...details, role: "USER" };
+        USERS.push(user);
+        return respondWith(withoutPassword(user));
+    },
+    logout: () => { me = null; sessionStorage.removeItem("mockUserId"); return respondWith(null); },
+    me: () => requireLogin() || respondWith(withoutPassword(me)),
+    updateMe: details => requireLogin() || (Object.assign(me, { username: details.username, email: details.email }), respondWith(withoutPassword(me))),
+    changePassword: passwords => requireLogin() || (passwords.currentPassword !== me.password
+        ? fail(400, "Current password is incorrect.")
+        : (me.password = passwords.newPassword, respondWith(null))),
+    itineraries: () => requireLogin() || respondWith(ITINERARIES.filter(itinerary => itinerary.userId === me.id)),
+    countries: () => requireLogin() || respondWith(COUNTRIES),
+    itinerary: id => requireLogin() || respondWith(myItinerary(id) ?? null),
+    addItinerary: newItinerary => {
+        if (requireLogin()) return requireLogin();
+        const country = COUNTRIES.find(candidate => candidate.id === newItinerary.country.id);
+        if (!country) return fail(400, "Unknown country.");
+        const nextId = Math.max(0, ...ITINERARIES.map(itinerary => itinerary.id)) + 1;
+        const itinerary = makeItinerary(nextId, me.id, newItinerary.name, country.name, newItinerary.dateStart, newItinerary.dateEnd);
+        ITINERARIES.push(itinerary);
+        return respondWith(itinerary);
+    },
+    // Removes the itinerary's activities and impacts with it.
+    deleteItinerary: id => {
+        const itinerary = myItinerary(id);
+        if (requireLogin() || !itinerary) return requireLogin() || fail(404, "Itinerary not found.");
+        ITINERARIES.splice(ITINERARIES.indexOf(itinerary), 1);
+        for (let index = ACTIVITIES.length - 1; index >= 0; index--) {
+            if (ACTIVITIES[index].itineraryId === itinerary.id) ACTIVITIES.splice(index, 1);
+        }
+        delete IMPACTS[itinerary.id];
+        return respondWith(null);
+    },
+    updateItinerary: (id, changes) => {
+        const itinerary = myItinerary(id);
+        if (requireLogin() || !itinerary) return requireLogin() || fail(404, "Itinerary not found.");
+        const country = COUNTRIES.find(candidate => candidate.id === changes.country.id);
+        Object.assign(itinerary, { name: changes.name, dateStart: changes.dateStart, dateEnd: changes.dateEnd, countryId: country.id, countryName: country.name });
+        return respondWith(itinerary);
+    },
+    itineraryActivities: id => requireLogin() || respondWith(ACTIVITIES.filter(activity => activity.itineraryId === Number(id))),
+    activity: id => requireLogin() || respondWith(myActivity(id) ?? null),
+    addActivity: newActivity => {
+        if (requireLogin() || !myItinerary(newActivity.itinerary.id)) return requireLogin() || fail(404, "Itinerary not found.");
+        const nextId = Math.max(0, ...ACTIVITIES.map(activity => activity.id)) + 1;
+        const activity = makeActivity(nextId, newActivity.itinerary.id, newActivity.name, newActivity.address, newActivity.dateStart, newActivity.dateEnd);
+        ACTIVITIES.push(activity);
+        return respondWith(activity);
+    },
+    updateActivity: (id, changes) => {
+        const activity = myActivity(id);
+        if (requireLogin() || !activity) return requireLogin() || fail(404, "Activity not found.");
+        Object.assign(activity, { name: changes.name, address: changes.address, dateStart: changes.dateStart, dateEnd: changes.dateEnd });
+        return respondWith(activity);
+    },
+    deleteActivity: id => {
+        const activity = myActivity(id);
+        if (requireLogin() || !activity) return requireLogin() || fail(404, "Activity not found.");
+        ACTIVITIES.splice(ACTIVITIES.indexOf(activity), 1);
+        return respondWith(null);
+    },
+    adminUsers: () => requireLogin() || (me.role !== "ADMIN"
+        ? fail(403, "Admins only.")
+        : respondWith(USERS.map(withoutPassword))),
+    itineraryImpacts: id => requireLogin() || respondWith(IMPACTS[id] || []),
+    chat: (itineraryId, message) => requireLogin() || new Promise(resolve => setTimeout(() =>
+        resolve({ reply: `(mock reply) You asked about itinerary ${itineraryId}: "${message}". I would check the affected activities and suggest alternatives.` }), 700)),
+};
+
+export const showMockBanner = () => document.body.insertAdjacentHTML("afterbegin",
+    `<div style="background:#ae86f7;color:#fff;padding:6px 12px;font:600 14px system-ui">MOCK MODE: fake data, no real backend. Logins: john@example.com / password123, admin@example.com / admin123</div>`);
