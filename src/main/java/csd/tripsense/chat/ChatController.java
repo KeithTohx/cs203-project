@@ -8,15 +8,16 @@ import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
 @RestController
-@RequestMapping("/itinerary/{itineraryId}/chatbot")
+@RequestMapping("/api/itinerary/{itineraryId}/chat")
 @RequiredArgsConstructor
 public class ChatController {
 
     private final ChatbotService chatbotService;
 
-    @PostMapping
-    public String chat(@PathVariable Long itineraryId, @RequestBody ChatRequest request) {
-        return chatbotService.askChatBot(currentUserId(), itineraryId, request.message());
+    @PostMapping(produces = MediaType.APPLICATION_JSON_VALUE)
+    public ChatResponse chat(@PathVariable Long itineraryId, @RequestBody ChatRequest request) {
+        String reply = chatbotService.askChatBot(currentUserId(), itineraryId, request.message());
+        return ChatResponse.of(reply);
     }
 
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
