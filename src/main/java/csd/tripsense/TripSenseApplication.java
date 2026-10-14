@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * Entry point for TripSense.
@@ -11,6 +12,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * The application watches a feed of real-world disruption events and works out,
  * for one traveller's itinerary at a time, whether any of them actually matter.
  */
+@EnableScheduling
 @SpringBootApplication
 public class TripSenseApplication {
 
