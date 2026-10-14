@@ -57,4 +57,6 @@ public interface ItineraryService {
      */
     void deleteItinerary(Long id);
 
+    Itinerary getForUser(Long userId, Long itineraryId);
+
 }

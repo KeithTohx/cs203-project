@@ -30,12 +30,13 @@ public class ItineraryServiceImpl implements ItineraryService {
         List<Itinerary> itinerariesByUser = new ArrayList<>();
         List<Itinerary> itineraryList = getAllItineraries();
 
-        if (itineraryList.isEmpty()) throw new ItineraryNotFoundException("User (ID: " + userId + ") has no existing itineraries.");
+        if (itineraryList.isEmpty()) throw new ItineraryNotFoundException("There are no existing itineraries.");
         for (Itinerary itinerary : itineraryList) {
             if (itinerary.getUser().getId().equals(userId)) {
                 itinerariesByUser.add(itinerary);
             }
         }
+        if (itinerariesByUser.isEmpty()) throw new ItineraryNotFoundException("User (ID: " + userId + ") has no existing itineraries.");
         return itinerariesByUser;
     }
 
@@ -78,4 +79,9 @@ public class ItineraryServiceImpl implements ItineraryService {
         itineraries.deleteById(id);
     }
 
+    @Override
+    public Itinerary getForUser(Long userId, Long itineraryId) {
+        return itineraries.findByIdAndUserId(itineraryId, userId)
+            .orElseThrow(() -> new ItineraryNotFoundException(itineraryId));
+    }
 }
