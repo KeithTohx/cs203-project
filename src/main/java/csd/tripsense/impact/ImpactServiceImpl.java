@@ -136,6 +136,7 @@ public class ImpactServiceImpl implements ImpactService {
     private EvaluateResponse.ActivityResult evaluateActivity(Itinerary itinerary, News news,
                                                              Activity activity) {
         Optional<Impact> stored = findStored(news, activity);
+        // impact was evaluated before so just get stored result
         if (stored.isPresent() && stored.get().getReason() != null) {
             Impact impact = stored.get();
             return new EvaluateResponse.ActivityResult(activity.getId(), activity.getName(),
@@ -145,6 +146,8 @@ public class ImpactServiceImpl implements ImpactService {
         try {
             // one call per activity, so a failure on one still leaves the others usable
             Verdict verdict = chatService.ask(buildPrompt(news, activity), Verdict.class);
+
+            // save the impact into the db
             save(stored.orElseGet(Impact::new), itinerary, news, activity, verdict);
             return new EvaluateResponse.ActivityResult(activity.getId(), activity.getName(),
                     verdict.impacted(), verdict.reason());

@@ -25,7 +25,8 @@ import io.swagger.v3.oas.annotations.servers.Server;
         license = @License(
             name = "Apache License 2.0",
             url = "NA")),
-    servers = @Server(url = "http://localhost:8080")
+    // relative so Try it out hits whatever host serves the page, local or deployed
+    servers = @Server(url = "/")
 )
 public class OpenAPIConfig {
 
