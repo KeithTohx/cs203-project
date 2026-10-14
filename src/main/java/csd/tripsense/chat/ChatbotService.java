@@ -1,0 +1,12 @@
+package csd.tripsense.chat;
+
+import java.util.List;
+
+import reactor.core.publisher.Flux;
+
+public interface ChatbotService {
+    String askChatBot(Long userId, Long itineraryId, String prompt);
+    Flux<String> streamChatBot(Long userId, Long itineraryId, String prompt);
+    List<ChatMessageDto> history(Long userId, Long itineraryId);
+    void reset(Long userId, Long itineraryId);
+}
