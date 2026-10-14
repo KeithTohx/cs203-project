@@ -106,7 +106,8 @@ export async function showItineraries(root, user, onAuthLost) {
     const itineraryListContainer = root.querySelector("#itinerary-list");
 
     try {
-        const itineraries = await api.itineraries(user.id);
+        // the backend sends an empty body instead of [] when the user has no itineraries
+        const itineraries = (await api.itineraries(user.id)) ?? [];
         const itinerariesWithDetails = await Promise.all(itineraries.map(loadDetails));
 
         const now = Date.now();

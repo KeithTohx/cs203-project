@@ -1,5 +1,5 @@
 import { mockApi, showMockBanner } from "./mock.js";
-// The ONLY file that knows URLs. Relative paths work locally and on EC2.
+// The ONLY file that knows URLs. Relative paths work locally and on Azure.
 export class ApiError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
@@ -7,6 +7,18 @@ const csrfToken = () => {
   const cookie = document.cookie.split("; ").find(entry => entry.startsWith("XSRF-TOKEN="));
   return cookie ? decodeURIComponent(cookie.split("=")[1]) : null;
 };
+// turns a failed response into text a user can act on. the backend's own message is kept when it's
+// meant for people (validation, "already taken", "not found"), but not for server errors or missing
+// endpoints, where it's internal detail like "No static resource api/user."
+function friendlyMessage(status, backendMessage) {
+  if (status >= 500) return "Something went wrong on the server. Please try again.";
+
+  const isMissingEndpoint = status === 405
+    || (status === 404 && (!backendMessage || backendMessage.startsWith("No static resource")));
+  if (isMissingEndpoint) return "This feature isn't available yet.";
+
+  return backendMessage || `Request failed (${status})`;
+}
 // body is sent as json, except form fields (URLSearchParams), which go as a normal form post
 async function request(path, method = "GET", body) {
   const headers = {};
@@ -20,8 +32,9 @@ async function request(path, method = "GET", body) {
 
   const response = await fetch(path, {method, headers, credentials: "same-origin", body: requestBody});
   if (!response.ok) {
-    let message; try { message = (await response.json()).message; } catch {}
-    throw new ApiError(response.status, message || `Request failed (${response.status})`);
+    let backendMessage;
+    try { backendMessage = (await response.json()).message; } catch {}
+    throw new ApiError(response.status, friendlyMessage(response.status, backendMessage));
   }
   return response.status === 204 ? null : response.json().catch(() => null);
 }
@@ -48,7 +61,7 @@ const realApi = {
   itineraryImpacts:id => request(`/api/itinerary/${id}/impact`),
   // planned, not on the backend yet
   adminUsers: () => request("/api/user"),                                              // admin only: every account, without passwords
-  chat:       (itineraryId, message) => request(`/api/itinerary/${itineraryId}/chat`, "POST", {message}),   // -> {reply}
+  chat:       (itineraryId, message) => request(`/api/itinerary/${itineraryId}/chat`, "POST", {message}),   // -> {role: "assistant", content}
 };
 
 // Mock mode only on localhost, via http://localhost:8080/?mock

@@ -133,7 +133,10 @@ export const mockApi = {
         : respondWith(USERS.map(withoutPassword))),
     itineraryImpacts: id => requireLogin() || respondWith(IMPACTS[id] || []),
     chat: (itineraryId, message) => requireLogin() || new Promise(resolve => setTimeout(() =>
-        resolve({ reply: `(mock reply) You asked about itinerary ${itineraryId}: "${message}". I would check the affected activities and suggest alternatives.` }), 700)),
+        resolve({
+            role: "assistant",
+            content: `(mock reply) You asked about itinerary ${itineraryId}: "${message}". I would check the affected activities and suggest alternatives.`,
+        }), 700)),
 };
 
 export const showMockBanner = () => document.body.insertAdjacentHTML("afterbegin",

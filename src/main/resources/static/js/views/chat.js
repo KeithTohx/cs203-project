@@ -20,8 +20,15 @@ export function openChat(slot, itineraryId, onAuthLost) {
     const messageLog = slot.querySelector(".log");
     const questionInput = slot.querySelector(`#chat-question-${itineraryId}`);
     const chatForm = slot.querySelector(`#chat-form-${itineraryId}`);
+    const sendButton = chatForm.querySelector("button[type=submit]");
 
     questionInput.focus();
+
+    // replies take a while, so block new questions until the current one is answered
+    const setWaiting = (isWaiting) => {
+        questionInput.disabled = isWaiting;
+        sendButton.disabled = isWaiting;
+    };
 
     const appendMessage = (text, isUserMessage) => {
         messageLog.insertAdjacentHTML(
@@ -41,13 +48,22 @@ export function openChat(slot, itineraryId, onAuthLost) {
 
         appendMessage("Thinking…", false);
         const thinkingPlaceholder = messageLog.lastElementChild;
+        setWaiting(true);
 
         try {
             const response = await api.chat(Number(itineraryId), questionText);
-            thinkingPlaceholder.textContent = response?.reply ?? "No reply.";
+            thinkingPlaceholder.textContent = response?.content ?? "No reply.";
         } catch (error) {
             if (error.status === 401) return onAuthLost();
-            thinkingPlaceholder.textContent = "The assistant failed: " + error.message;
+
+            // a server error here nearly always means the model is down, which the user can't fix
+            const isServerError = error.status >= 500;
+            thinkingPlaceholder.textContent = isServerError
+                ? "The assistant is unavailable right now. Please try again later."
+                : "The assistant failed: " + error.message;
+        } finally {
+            setWaiting(false);
+            questionInput.focus();
         }
     };
 }
