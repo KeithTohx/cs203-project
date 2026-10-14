@@ -91,11 +91,4 @@ public class ItineraryServiceImpl implements ItineraryService {
         itineraries.deleteById(id);
     }
 
-    @Override
-    public Itinerary getForUser(Long userId, Long itineraryId) {
-        Itinerary itineraryResult = getItineraryByIdAndUserId(itineraryId, userId);
-        if (itineraryResult.equals(null)) throw new ItineraryNotFoundException(itineraryId);
-        
-        return itineraryResult;
-    }
 }

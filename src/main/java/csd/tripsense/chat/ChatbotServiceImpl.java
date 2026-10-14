@@ -70,7 +70,7 @@ public class ChatbotServiceImpl implements ChatbotService {
 
     @Override
     public List<ChatResponse> history(Long userId, Long itineraryId) {
-        itineraryService.getForUser(userId, itineraryId);   // ownership check
+        itineraryService.getItineraryByIdAndUserId(itineraryId, userId);   // ownership check
         return chatMemory.get(conversationId(userId, itineraryId)).stream()
             .map(m -> new ChatResponse(m.getMessageType().name().toLowerCase(), m.getText()))
             .toList();
@@ -78,12 +78,12 @@ public class ChatbotServiceImpl implements ChatbotService {
 
     @Override
     public void reset(Long userId, Long itineraryId) {
-        itineraryService.getForUser(userId, itineraryId);   // ownership check
+        itineraryService.getItineraryByIdAndUserId(itineraryId, userId);   // ownership check
         chatMemory.clear(conversationId(userId, itineraryId));
     }
 
     private ChatClient.ChatClientRequestSpec buildRequest(Long userId, Long itineraryId, String prompt) {
-        Itinerary itinerary = itineraryService.getForUser(userId, itineraryId);
+        Itinerary itinerary = itineraryService.getItineraryByIdAndUserId(itineraryId, userId);
         List<Activity> activities = activityService.getActivitiesByItinerary(itineraryId);
 
         List<ChatImpactView> impacts = impactService.findImpacted(userId, itineraryId).stream()

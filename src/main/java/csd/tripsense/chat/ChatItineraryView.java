@@ -12,7 +12,7 @@ public record ChatItineraryView(String name, String country,
     public static ChatItineraryView from(Itinerary i, List<Activity> activities) {
         return new ChatItineraryView(
             i.getName(),
-            i.getCountry().getName(),   // adjust to your Country getter
+            i.getCountry().getName(),   
             i.getDateStart(),
             i.getDateEnd(),
             activities.stream().map(ChatActivityView::from).toList());

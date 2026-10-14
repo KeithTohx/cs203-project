@@ -27,6 +27,13 @@ public interface ItineraryService {
      */
     List<Itinerary> getItinerariesByUser(Long userId);
 
+    /**
+     * Retrieve the Itinerary by its unique identifier which belongs to the User 
+     * 
+     * @param id the unique identifier of the Itinerary
+     * @param userId the unique identifier of the User
+     * @return the Itinerary entity with the given Itinerary ID and User ID
+     */
     Itinerary getItineraryByIdAndUserId(Long id, Long userId);
 
     /**
@@ -59,7 +66,5 @@ public interface ItineraryService {
      * @throws ItineraryNotFoundException if no Itinerary exists with the given ID
      */
     void deleteItinerary(Long id);
-
-    Itinerary getForUser(Long userId, Long itineraryId);
 
 }
