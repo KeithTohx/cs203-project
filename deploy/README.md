@@ -11,7 +11,7 @@ No containers - the app runs as a systemd service and Ollama runs as its own.
 | Repo on VM | `/opt/tripsense` (repo root is the maven project) |
 | Database | `/var/lib/tripsense/tripsense.db` |
 | Config | `/etc/tripsense.env` (root only, not in git) |
-| Swagger | http://cs203tripsense.australiaeast.cloudapp.azure.com:8080/swagger-ui.html |
+| Swagger | http://cs203tripsense.australiaeast.cloudapp.azure.com/swagger-ui.html |
 
 We picked Azure for Students because it needs no payment card, just an @smu.edu.sg
 address. The $100 credit is a runway, not a free tier - roughly to end of December at
@@ -106,7 +106,7 @@ sudo chmod 440 /etc/sudoers.d/tripsense
 cd /opt/tripsense
 ./mvnw -B package                 # tests included on the first run, on purpose
 sudo systemctl enable --now tripsense
-journalctl -u tripsense -f        # watch for "Tomcat started on port 8080"
+journalctl -u tripsense -f        # watch for "Started TripSenseApplication"
 ```
 
 ## Checking it
@@ -114,8 +114,8 @@ journalctl -u tripsense -f        # watch for "Tomcat started on port 8080"
 Work outwards, so a failure tells you where the problem is:
 
 ```bash
-curl -s localhost:8080/v3/api-docs | head -c 200     # on the VM: app healthy
-curl http://20.92.233.131:8080/v3/api-docs           # from a laptop: nsg rule ok
+curl -s localhost/v3/api-docs | head -c 200           # on the VM: app healthy
+curl http://20.92.233.131/v3/api-docs                 # from a laptop: nsg rule ok
 free -h                                              # during an AI call
 ```
 
@@ -149,4 +149,9 @@ VM, and `~/.ssh/github_deploy` on the VM lets the VM pull from GitHub.
   together under `azure.com`, so certs on this hostname are unreliable. DuckDNS plus
   Caddy is the route if a padlock is ever needed
 - the Azure credit runs out around end of December and the URL dies with it
-- 2 burstable vCPUs, so expect roughly 10-20 tok/s from the model
+- `qwen2.5:1.5b` not `phi4-mini`. We measured both on this box: phi4-mini runs at
+  6 tok/s with 130MB headroom and starts swapping, qwen2.5 at 21 tok/s with 1.9GB
+  free. A swagger call takes ~2s instead of 25-60s. Change `OLLAMA_MODEL` in
+  `/etc/tripsense.env` and restart if you want to revisit, no rebuild needed
+- port 80 is bound by a non-root process via `AmbientCapabilities=CAP_NET_BIND_SERVICE`
+  in the unit file, so there is no nginx and nothing runs as root
