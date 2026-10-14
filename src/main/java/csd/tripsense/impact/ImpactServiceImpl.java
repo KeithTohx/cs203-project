@@ -88,15 +88,42 @@ public class ImpactServiceImpl implements ImpactService {
         News news = newsService.getNewsById(newsId);
         List<Activity> activities = activityService.getActivitiesByItinerary(itineraryId);
 
+        // the trip as a whole is always checked, so an itinerary with no activities still gets a verdict,
+        // and news that hits the trip but no single activity (a flight strike, an entry ban) is caught
+        EvaluateResponse.ItineraryResult tripResult = evaluateItinerary(itinerary, news);
+
         List<EvaluateResponse.ActivityResult> results = new ArrayList<>();
         for (Activity activity : activities) {
             results.add(evaluateActivity(itinerary, news, activity));
         }
 
-        boolean anyImpacted = results.stream().anyMatch(EvaluateResponse.ActivityResult::impacted);
+        boolean anyImpacted = tripResult.impacted()
+                || results.stream().anyMatch(EvaluateResponse.ActivityResult::impacted);
 
         return new EvaluateResponse(itinerary.getId(), news.getId(), news.getTitle(),
-                anyImpacted, results);
+                anyImpacted, tripResult, results);
+    }
+
+    /**
+     * Same as evaluateActivity, but for the itinerary itself. The verdict is stored as an
+     * impact with no activity, which the frontend shows as "Affects the whole itinerary".
+     */
+    private EvaluateResponse.ItineraryResult evaluateItinerary(Itinerary itinerary, News news) {
+        Optional<Impact> stored = findStoredForItinerary(news, itinerary);
+        if (stored.isPresent() && stored.get().getReason() != null) {
+            Impact impact = stored.get();
+            return new EvaluateResponse.ItineraryResult(
+                    Boolean.TRUE.equals(impact.getImpacted()), impact.getReason());
+        }
+
+        try {
+            Verdict verdict = chatService.ask(buildItineraryPrompt(news, itinerary), Verdict.class);
+            save(stored.orElseGet(Impact::new), itinerary, news, null, verdict);
+            return new EvaluateResponse.ItineraryResult(verdict.impacted(), verdict.reason());
+        } catch (Exception e) {
+            // nothing is saved on failure, so the next call retries instead of serving the error
+            return new EvaluateResponse.ItineraryResult(false, "Could not evaluate: " + e.getMessage());
+        }
     }
 
     /**
@@ -133,6 +160,34 @@ public class ImpactServiceImpl implements ImpactService {
         return getImpactsByActivity(activity.getId()).stream()
                 .filter(impact -> impact.getNews().getId().equals(news.getId()))
                 .findFirst();
+    }
+
+    // an impact already recorded for this news and itinerary (no activity), if there is one
+    private Optional<Impact> findStoredForItinerary(News news, Itinerary itinerary) {
+        return getImpactsByItinerary(itinerary.getId()).stream()
+                .filter(impact -> impact.getActivity() == null
+                        && impact.getNews().getId().equals(news.getId()))
+                .findFirst();
+    }
+
+    private String buildItineraryPrompt(News news, Itinerary itinerary) {
+        return """
+                You are helping a traveller work out whether a news story affects their trip as a whole.
+
+                News headline: %s
+                News details: %s
+
+                Trip: %s
+                Country: %s
+                Dates: %s to %s
+
+                Decide whether this trip is affected, for example travel into or around the country,
+                safety, transport or entry rules. Only say it is affected if the news is about the same
+                country and overlaps these dates. Give one short sentence of reasoning that refers to the trip.
+                """
+                .formatted(news.getTitle(), news.getDescription(), itinerary.getName(),
+                        itinerary.getCountry() == null ? "unknown" : itinerary.getCountry().getName(),
+                        itinerary.getDateStart(), itinerary.getDateEnd());
     }
 
     private String buildPrompt(News news, Activity activity) {
