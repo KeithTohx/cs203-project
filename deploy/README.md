@@ -8,7 +8,7 @@ No containers - the app runs as a systemd service and Ollama runs as its own.
 | Public IP | `20.92.233.131` (static) |
 | Hostname | `cs203tripsense.australiaeast.cloudapp.azure.com` |
 | Admin user | `ubuntu` |
-| Repo on VM | `/opt/tripsense` (Maven project at `/opt/tripsense/code`) |
+| Repo on VM | `/opt/tripsense` (repo root is the maven project) |
 | Database | `/var/lib/tripsense/tripsense.db` |
 | Config | `/etc/tripsense.env` (root only, not in git) |
 | Swagger | http://cs203tripsense.australiaeast.cloudapp.azure.com:8080/swagger-ui.html |
@@ -88,10 +88,10 @@ sudo mkdir -p /var/lib/tripsense
 sudo chown ubuntu:ubuntu /var/lib/tripsense
 
 # config and any future secrets, root only - see ../.env.example
-sudo cp /opt/tripsense/code/.env.example /etc/tripsense.env
+sudo cp /opt/tripsense/.env.example /etc/tripsense.env
 sudo chmod 600 /etc/tripsense.env
 
-sudo cp /opt/tripsense/code/deploy/tripsense.service /etc/systemd/system/
+sudo cp /opt/tripsense/deploy/tripsense.service /etc/systemd/system/
 sudo systemctl daemon-reload
 
 # allow restarting this one service without a password, nothing else
@@ -103,7 +103,7 @@ sudo chmod 440 /etc/sudoers.d/tripsense
 ### 5. Build and start
 
 ```bash
-cd /opt/tripsense/code
+cd /opt/tripsense
 ./mvnw -B package                 # tests included on the first run, on purpose
 sudo systemctl enable --now tripsense
 journalctl -u tripsense -f        # watch for "Tomcat started on port 8080"
@@ -130,7 +130,7 @@ tripsense`, GET it back. Then `sudo reboot` and confirm both services return.
 Manual for now:
 
 ```bash
-cd /opt/tripsense/code
+cd /opt/tripsense
 git pull
 ./mvnw -B -q package -DskipTests
 sudo systemctl restart tripsense
