@@ -40,10 +40,17 @@ const createActivityList = (itineraryId, activities, impactedActivityIds) => {
         </li>`).join("")}</ol>${addLink}`;
 };
 
+// dateEnd is stored as midnight, so a trip only counts as past once its last day is over
+const isTripOver = itinerary => {
+    const endOfLastDay = new Date(itinerary.dateEnd);
+    endOfLastDay.setHours(23, 59, 59, 999);
+    return endOfLastDay < Date.now();
+};
+
 // Component: Renders a single itinerary card
 const createItineraryCard = ({ itinerary, activities, impacts, failed }) => {
     const itineraryId = Number(itinerary.id);
-    const isPast = new Date(itinerary.dateEnd) < Date.now();
+    const isPast = isTripOver(itinerary);
     const impactedOnly = impacts.filter(impact => impact.impacted);
     const impactedActivityIds = new Set(impactedOnly.map(impact => impact.activityId).filter(id => id != null));
     const events = groupByEvent(impactedOnly);   // news checked and found not to matter is left out
@@ -110,11 +117,10 @@ export async function showItineraries(root, user, onAuthLost) {
         const itineraries = (await api.itineraries(user.id)) ?? [];
         const itinerariesWithDetails = await Promise.all(itineraries.map(loadDetails));
 
-        const now = Date.now();
         const startTime = details => new Date(details.itinerary.dateStart);
-        const upcoming = itinerariesWithDetails.filter(details => new Date(details.itinerary.dateEnd) >= now)
+        const upcoming = itinerariesWithDetails.filter(details => !isTripOver(details.itinerary))
             .sort((first, second) => startTime(first) - startTime(second));
-        const past = itinerariesWithDetails.filter(details => new Date(details.itinerary.dateEnd) < now)
+        const past = itinerariesWithDetails.filter(details => isTripOver(details.itinerary))
             .sort((first, second) => startTime(second) - startTime(first));   // most recent first
 
         itineraryListContainer.className = "";
