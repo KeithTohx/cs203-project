@@ -19,6 +19,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.logout.HttpStatusReturningLogoutSuccessHandler;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.security.web.session.HttpSessionEventPublisher;
 
 /**
@@ -48,10 +50,16 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, SessionRegistry sessionRegistry) throws Exception {
+        CsrfTokenRequestAttributeHandler csrfHandler = new CsrfTokenRequestAttributeHandler();
+        csrfHandler.setCsrfRequestAttributeName(null);
+        // CSRF: the token lives in the readable XSRF-TOKEN cookie; the frontend echoes it back in the
+        // X-XSRF-TOKEN header on every POST. Null attribute name = load the token eagerly, so the
+        // cookie is set on the very first response (e.g. loading the page).
+
         http
-            // NOTE: CSRF protection is off so plain curl/Swagger clients can POST. With cookie sessions
-            // a browser front end (E8-01) should turn it back on - see the notes that came with this code.
-            .csrf(AbstractHttpConfigurer::disable)
+            .csrf(csrf -> csrf
+                .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                .csrfTokenRequestHandler(csrfHandler))
 
             .sessionManagement(s -> s
                 .maximumSessions(-1)                       // -1 = no limit; this only turns on tracking
@@ -64,8 +72,6 @@ public class SecurityConfig {
                 .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
                 .requestMatchers("/error").permitAll()   // else error bodies (409, 400...) turn into 401
                 .requestMatchers("/", "/index.html", "/js/**", "/css/**", "/favicon.ico").permitAll()   // the frontend has to load before anyone logs in
-                // Everything else needs a logged-in session. To keep teammates' endpoints open while
-                // they integrate, temporarily change this one line to .permitAll().
                 .anyRequest().authenticated()
             )
 

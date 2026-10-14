@@ -14,10 +14,11 @@
 
 create table user {
     id integer primary key,
-    username varchar not null,
-    email varchar not null, 
-    password varchar not null, 
-    role varchar not null
+    username varchar not null unique,
+    email varchar not null unique,
+    password varchar not null,
+    role varchar not null,
+    enabled boolean            -- null counts as enabled
 }
 
 create table country {
