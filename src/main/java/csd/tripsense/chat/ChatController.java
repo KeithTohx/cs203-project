@@ -17,7 +17,7 @@ public class ChatController {
     @PostMapping(produces = MediaType.APPLICATION_JSON_VALUE)
     public ChatResponse chat(@PathVariable Long itineraryId, @RequestBody ChatRequest request) {
         String reply = chatbotService.askChatBot(currentUserId(), itineraryId, request.message());
-        return ChatResponse.of(reply);
+        return new ChatResponse("assistant", reply);
     }
 
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -26,7 +26,7 @@ public class ChatController {
     }
 
     @GetMapping("/history")
-    public List<ChatMessageDto> history(@PathVariable Long itineraryId) {
+    public List<ChatResponse> history(@PathVariable Long itineraryId) {
         return chatbotService.history(currentUserId(), itineraryId);
     }
 

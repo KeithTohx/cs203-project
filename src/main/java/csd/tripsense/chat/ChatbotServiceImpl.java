@@ -10,7 +10,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityService;
-import csd.tripsense.impact.ImpactRepository;
+import csd.tripsense.impact.ImpactService;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryService;
 import lombok.RequiredArgsConstructor;
@@ -55,7 +55,7 @@ public class ChatbotServiceImpl implements ChatbotService {
     private final ChatMemory chatMemory;
     private final ItineraryService itineraryService;
     private final ActivityService activityService;
-    private final ImpactRepository impactRepository;
+    private final ImpactService impactService;
     private final ObjectMapper mapper;
 
     @Override
@@ -69,10 +69,10 @@ public class ChatbotServiceImpl implements ChatbotService {
     }
 
     @Override
-    public List<ChatMessageDto> history(Long userId, Long itineraryId) {
+    public List<ChatResponse> history(Long userId, Long itineraryId) {
         itineraryService.getForUser(userId, itineraryId);   // ownership check
         return chatMemory.get(conversationId(userId, itineraryId)).stream()
-            .map(m -> new ChatMessageDto(m.getMessageType().name().toLowerCase(), m.getText()))
+            .map(m -> new ChatResponse(m.getMessageType().name().toLowerCase(), m.getText()))
             .toList();
     }
 
@@ -86,11 +86,11 @@ public class ChatbotServiceImpl implements ChatbotService {
         Itinerary itinerary = itineraryService.getForUser(userId, itineraryId);
         List<Activity> activities = activityService.getActivitiesByItinerary(itineraryId);
 
-        List<ChatImpactView> impacts = impactRepository.findImpacted(userId, itineraryId).stream()
+        List<ChatImpactView> impacts = impactService.findImpacted(userId, itineraryId).stream()
         .map(ChatImpactView::from)
         .limit(10)
         .toList();
-        long evaluated = impactRepository.countByItineraryIdAndUserId(itineraryId, userId);
+        long evaluated = impactService.countByItineraryIdAndUserId(itineraryId, userId);
 
         String status = evaluated == 0
             ? "No news has been evaluated yet. Say so; do not claim the trip is unaffected."

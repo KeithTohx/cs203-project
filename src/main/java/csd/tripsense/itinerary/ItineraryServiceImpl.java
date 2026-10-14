@@ -2,6 +2,7 @@ package csd.tripsense.itinerary;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.stereotype.Service;
 
@@ -38,6 +39,17 @@ public class ItineraryServiceImpl implements ItineraryService {
         }
         if (itinerariesByUser.isEmpty()) throw new ItineraryNotFoundException("User (ID: " + userId + ") has no existing itineraries.");
         return itinerariesByUser;
+    }
+
+    @Override
+    public Itinerary getItineraryByIdAndUserId(Long id, Long userId){
+        List<Itinerary> itinerariesByUserId = getItinerariesByUser(userId);
+
+        for (Itinerary itinerary : itinerariesByUserId){
+            if (itinerary.getId().equals(id)) return itinerary;
+        }
+
+        return null;
     }
 
     @Override
@@ -81,7 +93,9 @@ public class ItineraryServiceImpl implements ItineraryService {
 
     @Override
     public Itinerary getForUser(Long userId, Long itineraryId) {
-        return itineraries.findByIdAndUserId(itineraryId, userId)
-            .orElseThrow(() -> new ItineraryNotFoundException(itineraryId));
+        Itinerary itineraryResult = getItineraryByIdAndUserId(itineraryId, userId);
+        if (itineraryResult.equals(null)) throw new ItineraryNotFoundException(itineraryId);
+        
+        return itineraryResult;
     }
 }

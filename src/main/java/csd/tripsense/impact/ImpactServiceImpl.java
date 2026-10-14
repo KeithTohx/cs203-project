@@ -165,4 +165,24 @@ public class ImpactServiceImpl implements ImpactService {
         impact.setReason(verdict.reason());
         impacts.save(impact);
     }
+
+    @Override 
+    public List<Impact> findImpacted(Long userId, Long itineraryId){
+        return impacts.findAll().stream()
+                .filter(impact -> impact.getItinerary() != null
+                        && impact.getItinerary().getId().equals(itineraryId)
+                        && impact.getUser().getId().equals(userId)
+                        && impact.getImpacted().equals(Boolean.TRUE))
+                .collect(Collectors.toList());
+    }
+
+    @Override 
+    public long countByItineraryIdAndUserId(Long itineraryId, Long userId){
+        return impacts.findAll().stream()
+                .filter(impact -> impact.getItinerary() != null
+                        && impact.getItinerary().getId().equals(itineraryId)
+                        && impact.getUser().getId().equals(userId))
+                .collect(Collectors.toList())
+                .size();
+    }
 }
