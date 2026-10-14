@@ -115,6 +115,9 @@
     </dependencies>
 
     <build>
+        <!-- always target/app.jar so the systemd unit does not hardcode a version -->
+        <finalName>app</finalName>
+
         <plugins>
 
             <plugin>
