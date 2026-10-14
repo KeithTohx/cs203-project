@@ -42,11 +42,11 @@ public class Itinerary {
     // the foreign keys live on activity and impact (mappedBy), these just let jpa find them.
     // deleting an itinerary deletes its activities and impacts too, instead of leaving rows
     // that point at an itinerary that no longer exists
-    @OneToMany(mappedBy = "itinerary", cascade = CascadeType.REMOVE, orphanRemoval = true)
+    @OneToMany(mappedBy = "itinerary", cascade = CascadeType.REMOVE)
     @JsonIgnore
     private List<Activity> activities;
 
-    @OneToMany(mappedBy = "itinerary", cascade = CascadeType.REMOVE, orphanRemoval = true)
+    @OneToMany(mappedBy = "itinerary", cascade = CascadeType.REMOVE)
     @JsonIgnore
     private List<Impact> impacts;
 }

@@ -45,7 +45,7 @@ public class Activity {
     private LocalDateTime dateEnd;
 
     // deleting an activity deletes the impacts recorded against it (the foreign key is on impact)
-    @OneToMany(mappedBy = "activity", cascade = CascadeType.REMOVE, orphanRemoval = true)
+    @OneToMany(mappedBy = "activity", cascade = CascadeType.REMOVE)
     @JsonIgnore
     private List<Impact> impacts;
 }
