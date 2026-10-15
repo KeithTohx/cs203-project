@@ -1,6 +1,7 @@
 package csd.tripsense.itinerary;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface ItineraryService {
 
@@ -25,6 +26,15 @@ public interface ItineraryService {
      * @throws ItineraryNotFoundException if no Itinerary exists with the given ID
      */
     List<Itinerary> getItinerariesByUser(Long userId);
+
+    /**
+     * Retrieve the Itinerary by its unique identifier which belongs to the User 
+     * 
+     * @param id the unique identifier of the Itinerary
+     * @param userId the unique identifier of the User
+     * @return the Itinerary entity with the given Itinerary ID and User ID
+     */
+    Itinerary getItineraryByIdAndUserId(Long id, Long userId);
 
     /**
      * Retrieve all itineraries by countries' unique identifier

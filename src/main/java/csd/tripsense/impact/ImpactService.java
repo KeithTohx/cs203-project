@@ -66,4 +66,22 @@ public interface ImpactService {
      * @throws ImpactNotFoundException if no impact exists with the given ID
      */
     void deleteImpact(Long id);
+
+    /**
+     * Retrieves a list of Impact for the User's Itinerary
+     * 
+     * @param userId the user to check
+     * @param itineraryId the itinerary to check
+     * @return
+     */
+    List<Impact> findImpacted(Long userId, Long itineraryId);
+
+    /**
+     * Counts all impact rows for this itinerary and user, whether impacted or not
+     * 
+     * @param itineraryId the itinerary to check
+     * @param userId the user to check
+     * @return
+     */
+    long countByItineraryIdAndUserId(Long itineraryId, Long userId);
 }

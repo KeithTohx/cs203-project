@@ -25,18 +25,9 @@ public class ActivityServiceImpl implements ActivityService {
         }).orElseThrow(() -> new ActivityNotFoundException(id));
     }
 
-    @Override 
+    @Override
     public List<Activity> getActivitiesByItinerary(long itineraryId) {
-        List<Activity> activitiesByItinerary = new ArrayList<>();
-        List<Activity> activityList = getAllActivities();
-
-        if (activityList.isEmpty()) throw new ActivityNotFoundException("Itinerary (ID: " + itineraryId + ") has no activities.");
-        for (Activity activity : activityList) {
-            if (activity.getItinerary().getId().equals(itineraryId)) {
-                activitiesByItinerary.add(activity);
-            }
-        }
-        return activitiesByItinerary;
+        return activities.findByItineraryIdOrderByDateStart(itineraryId);
     }
 
     @Override 
