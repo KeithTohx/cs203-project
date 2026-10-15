@@ -87,3 +87,112 @@ Content-Type: application/json
     "itineraryId": 999,
     "newsId": 1
 }
+
+
+### ---------------------------------------------------------------------------
+### update profile and change password   (uses the seeded user dave)
+### both need a login AND the CSRF header (X-XSRF-TOKEN), because they are not GETs
+###
+### how the token works: the server sets a cookie called XSRF-TOKEN, and every POST, PUT
+### and PATCH must send the same value in the X-XSRF-TOKEN header. The client keeps the
+### cookie by itself. You copy its value into @xsrf below by hand.
+###
+### steps, once per session:
+###   1. send "csrf probe" (a 401 is expected). In the response headers find
+###        Set-Cookie: XSRF-TOKEN=<value>; Path=/
+###      and paste only <value> (stop before the first ;) into @xsrf
+###   2. send "login as dave"
+###   3. send "who am I" (expect 200). If its response sets a NEW XSRF-TOKEN cookie, paste the
+###      new value into @xsrf. Spring can change the token at login
+###   4. send the requests you want
+###
+### seeded users all use password123 (admin uses admin123). If you get 401 on login, the
+### database may hold old or damaged password hashes: see fix-seed-passwords.sql
+###
+### these requests change the real database (data.sql is INSERT OR IGNORE, so it will not
+### reset them). Change things back afterwards or restore data/tripsense.db
+### ---------------------------------------------------------------------------
+
+### the host is 127.0.0.1 instead of localhost on purpose. REST Client keeps cookies between runs,
+### and once it already holds an XSRF-TOKEN cookie the server stops sending it, so you could never
+### see the value. Cookies are stored per host name, so 127.0.0.1 gives these requests a clean jar.
+@host = http://127.0.0.1:8080
+@xsrf = paste-the-xsrf-token-cookie-value-here
+
+### csrf probe, expect 401 with a Set-Cookie: XSRF-TOKEN=... header
+GET {{host}}/api/auth/me
+
+### login as dave (password123), expect 200 {"role":"USER"}
+POST {{host}}/api/auth/login
+Content-Type: application/x-www-form-urlencoded
+X-XSRF-TOKEN: {{xsrf}}
+
+email=dave@example.com&password=password123
+
+### who am I, expect username dave (run again after a rename to see the new name)
+GET {{host}}/api/auth/me
+
+### rename, expect 200 and the new username in the body
+PATCH {{host}}/api/user/me
+Content-Type: application/json
+X-XSRF-TOKEN: {{xsrf}}
+
+{
+    "username": "davey"
+}
+
+### rename to a username another account has, expect 409
+PATCH {{host}}/api/user/me
+Content-Type: application/json
+X-XSRF-TOKEN: {{xsrf}}
+
+{
+    "username": "alice"
+}
+
+### invalid username, expect 400
+PATCH {{host}}/api/user/me
+Content-Type: application/json
+X-XSRF-TOKEN: {{xsrf}}
+
+{
+    "username": "a!"
+}
+
+### wrong current password, expect 400
+PUT {{host}}/api/user/me/password
+Content-Type: application/json
+X-XSRF-TOKEN: {{xsrf}}
+
+{
+    "currentPassword": "not-my-password",
+    "newPassword": "newpassword123"
+}
+
+### change password, expect 204
+### every session of this account is ended, so the next request returns 401 until you log in again
+PUT {{host}}/api/user/me/password
+Content-Type: application/json
+X-XSRF-TOKEN: {{xsrf}}
+
+{
+    "currentPassword": "password123",
+    "newPassword": "newpassword123"
+}
+
+### after the change: who am I, expect 401 because the session was ended
+GET {{host}}/api/auth/me
+
+### after the change: the old password no longer logs in, expect 401
+POST {{host}}/api/auth/login
+Content-Type: application/x-www-form-urlencoded
+X-XSRF-TOKEN: {{xsrf}}
+
+email=dave@example.com&password=password123
+
+### after the change: the new password logs in, expect 200
+POST {{host}}/api/auth/login
+Content-Type: application/x-www-form-urlencoded
+X-XSRF-TOKEN: {{xsrf}}
+
+email=dave@example.com&password=newpassword123

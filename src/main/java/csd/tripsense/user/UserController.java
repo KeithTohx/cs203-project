@@ -1,13 +1,20 @@
 package csd.tripsense.user;
 
+import csd.tripsense.auth.CurrentUser;
+import csd.tripsense.auth.SessionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -24,9 +31,11 @@ import java.net.URI;
 public class UserController {
 
     private final UserService userService;
+    private final SessionService sessionService;
 
-    public UserController(UserService userService) {
+    public UserController(UserService userService, SessionService sessionService) {
         this.userService = userService;
+        this.sessionService = sessionService;
     }
 
     @Operation(summary = "Register a new user account",
@@ -59,5 +68,38 @@ public class UserController {
             throw UserNotFoundException.forUsername(username);
         }
         return ResponseEntity.ok(user);
+    }
+
+    @Operation(summary = "Change your username",
+            description = "Requires login and the X-XSRF-TOKEN header. Updates the logged-in account only; "
+                    + "the email and role cannot be changed here.")
+    @ApiResponse(responseCode = "200", description = "Username updated; returns the account")
+    @ApiResponse(responseCode = "400", description = "Validation failed")
+    @ApiResponse(responseCode = "401", description = "Not logged in")
+    @ApiResponse(responseCode = "409", description = "Username already taken")
+    @PatchMapping("/user/me")
+    public ResponseEntity<User> updateProfile(@Valid @RequestBody UpdateProfileRequest request,
+                                              @AuthenticationPrincipal CurrentUser currentUser,
+                                              HttpServletRequest httpRequest,
+                                              HttpServletResponse httpResponse) {
+        User updated = userService.updateUsername(currentUser.getId(), request.username());
+        // The session holds a copy of the account, so refresh it or /api/auth/me shows the old name.
+        sessionService.refreshCurrentSession(updated, httpRequest, httpResponse);
+        return ResponseEntity.ok(updated);
+    }
+
+    @Operation(summary = "Change your password",
+            description = "Requires login, the X-XSRF-TOKEN header and the current password. "
+                    + "On success every session of this account is ended, so log in again with the new password.")
+    @ApiResponse(responseCode = "204", description = "Password changed")
+    @ApiResponse(responseCode = "400", description = "Validation failed, current password wrong, or new password unchanged")
+    @ApiResponse(responseCode = "401", description = "Not logged in")
+    @PutMapping("/user/me/password")
+    public ResponseEntity<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request,
+                                               @AuthenticationPrincipal CurrentUser currentUser) {
+        userService.changePassword(currentUser.getId(), request.currentPassword(), request.newPassword());
+        // Runs after the password is saved: ends this and every other login so old sessions can't linger.
+        sessionService.expireSessionsFor(currentUser.getEmail());
+        return ResponseEntity.noContent().build();
     }
 }
