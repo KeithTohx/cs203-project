@@ -54,6 +54,14 @@ const IMPACTS = {
     // itinerary 9 has no impacts, to test the empty state
 };
 
+// itinerary id -> [{ role, content }], oldest first. john's ski trip starts with a short conversation
+const CHATS = {
+    1: [
+        { role: "user", content: "Is my ski trip affected by anything?" },
+        { role: "assistant", content: "(mock reply) The Hokkaido earthquake may affect Ski at Niseko, as some resorts have suspended lifts. Check with the resort before you go." },
+    ],
+};
+
 const myItinerary = id => ITINERARIES.find(itinerary => itinerary.id === Number(id) && itinerary.userId === me?.id);
 const myActivity = id => ACTIVITIES.find(activity => activity.id === Number(id) && myItinerary(activity.itineraryId));
 
@@ -132,11 +140,28 @@ export const mockApi = {
         ? fail(403, "Admins only.")
         : respondWith(USERS.map(withoutPassword))),
     itineraryImpacts: id => requireLogin() || respondWith(IMPACTS[id] || []),
-    chat: (itineraryId, message) => requireLogin() || new Promise(resolve => setTimeout(() =>
-        resolve({
+    // conversations are kept per itinerary, like the backend's chat memory
+    chat: (itineraryId, message) => {
+        if (requireLogin() || !myItinerary(itineraryId)) return requireLogin() || fail(404, "Itinerary not found.");
+
+        const reply = {
             role: "assistant",
             content: `(mock reply) You asked about itinerary ${itineraryId}: "${message}". I would check the affected activities and suggest alternatives.`,
-        }), 700)),
+        };
+        const conversation = CHATS[itineraryId] ?? (CHATS[itineraryId] = []);
+        conversation.push({ role: "user", content: message }, reply);
+
+        return new Promise(resolve => setTimeout(() => resolve(structuredClone(reply)), 700));
+    },
+    chatHistory: itineraryId => {
+        if (requireLogin() || !myItinerary(itineraryId)) return requireLogin() || fail(404, "Itinerary not found.");
+        return respondWith(CHATS[itineraryId] ?? []);
+    },
+    resetChat: itineraryId => {
+        if (requireLogin() || !myItinerary(itineraryId)) return requireLogin() || fail(404, "Itinerary not found.");
+        delete CHATS[itineraryId];
+        return respondWith(null);
+    },
 };
 
 export const showMockBanner = () => document.body.insertAdjacentHTML("afterbegin",

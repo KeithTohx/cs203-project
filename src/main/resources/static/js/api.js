@@ -59,9 +59,11 @@ const realApi = {
   updateActivity:(id, activity) => request(`/api/activity/${id}`, "PUT", activity),
   deleteActivity:id => request(`/api/activity/${id}`, "DELETE"),
   itineraryImpacts:id => request(`/api/itinerary/${id}/impact`),
+  chat:       (itineraryId, message) => request(`/api/itinerary/${itineraryId}/chat`, "POST", {message}),   // -> {role: "assistant", content}
+  chatHistory:itineraryId => request(`/api/itinerary/${itineraryId}/chat/history`),   // -> [{role: "user" | "assistant", content}], oldest first
+  resetChat:  itineraryId => request(`/api/itinerary/${itineraryId}/chat`, "DELETE"),
   // planned, not on the backend yet
   adminUsers: () => request("/api/user"),                                              // admin only: every account, without passwords
-  chat:       (itineraryId, message) => request(`/api/itinerary/${itineraryId}/chat`, "POST", {message}),   // -> {role: "assistant", content}
 };
 
 // Mock mode only on localhost, via http://localhost:8080/?mock
