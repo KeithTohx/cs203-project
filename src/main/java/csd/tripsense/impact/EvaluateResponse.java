@@ -9,7 +9,14 @@ public record EvaluateResponse(
         Long newsId,
         String newsTitle,
         boolean impacted,
+        ItineraryResult itinerary,
         List<ActivityResult> activities) {
+
+    // the verdict for the trip as a whole, separate from any single activity
+    public record ItineraryResult(
+            boolean impacted,
+            String reason) {
+    }
 
     public record ActivityResult(
             Long activityId,

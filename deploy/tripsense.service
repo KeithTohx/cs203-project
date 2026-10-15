@@ -1,0 +1,20 @@
+# copy to /etc/systemd/system/tripsense.service on the VM
+# then: sudo systemctl daemon-reload && sudo systemctl enable --now tripsense
+
+[Unit]
+Description=TripSense API
+After=network.target ollama.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/tripsense
+EnvironmentFile=/etc/tripsense.env
+# lets a non-root process bind port 80, no proxy and no running as root
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+# quarter of the 4GB VM is about 1GB heap, rest is for ollama and the OS
+ExecStart=/usr/bin/java -XX:MaxRAMPercentage=25 -jar target/app.jar
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

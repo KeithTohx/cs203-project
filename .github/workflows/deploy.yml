@@ -1,0 +1,31 @@
+# on merge to main, ssh into the vm, rebuild and restart
+# tests already ran on the pr so we skip them here
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# two merges landing together should queue, not race
+concurrency:
+  group: deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ubuntu
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/tripsense
+            git pull --ff-only
+            ./mvnw -B -q package -DskipTests
+            sudo systemctl restart tripsense
+            # app starts in about 9s, so 20 is comfortable margin
+            sleep 20
+            curl -fsS -o /dev/null http://localhost/v3/api-docs

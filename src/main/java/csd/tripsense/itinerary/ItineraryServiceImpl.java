@@ -74,7 +74,6 @@ public class ItineraryServiceImpl implements ItineraryService {
     @Override 
     public Itinerary updateItinerary(Long id, Itinerary newItineraryInfo){
         return itineraries.findById(id).map(itinerary -> {
-            itinerary.setUser(newItineraryInfo.getUser());
             itinerary.setCountry(newItineraryInfo.getCountry());
             itinerary.setName(newItineraryInfo.getName());
             itinerary.setDateStart(newItineraryInfo.getDateStart());

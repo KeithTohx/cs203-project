@@ -43,6 +43,7 @@ public class News {
 
     private String source;
 
+    @Column(length = 2048, unique = true)
     private String url;
 
     private LocalDateTime publishedAt;

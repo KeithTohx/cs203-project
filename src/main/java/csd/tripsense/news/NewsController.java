@@ -1,57 +1,61 @@
 package csd.tripsense.news;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.net.URI;
 import java.util.List;
 
 /**
  * REST Controller for managing news articles about transit disruptions.
  * Maps to the /api/news endpoint prefix.
- * Note: Uses local SQLite database instead of external API calls.
+ * News is stored in the local SQLite database and is kept up to date by the
+ * scheduled GDELT ingestion job.
  */
-@RestController //Marks this class as a Web REST Controller, meaning returned object instances will automatically be serialized to JSON/XML in the HTTP response body.
+@RestController
 @RequestMapping("/api")
 public class NewsController {
 
+    private static final int MAX_PAGE_SIZE = 100;
+
     private final NewsService newsService;
 
-     /**
-      * Constructor injection for dependency.
-      *
-      * @param newsService The NewsService implementation for managing news
-      */
     public NewsController(NewsService newsService) {
         this.newsService = newsService;
-      }
+    }
 
-      /**
-       * Get all stored news entries from the database.
-       *
-       * @return List of all news articles
-       */
-     @GetMapping("/news")
-    public ResponseEntity<List<News>> getAllNews() {
-        List<News> newsList = newsService.getAllNews();
-        return ResponseEntity.ok(newsList);
-      }
+    /**
+     * Get one page of stored news, newest first.
+     *
+     * @param page zero-based page number (default 0)
+     * @param size items per page (default 20, capped at 100)
+     * @return the page's articles; total count is in the X-Total-Count header
+     */
+    @GetMapping("/news")
+    public ResponseEntity<List<News>> getAllNews(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        int safePage = Math.max(page, 0);
+        int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
+        Page<News> result = newsService.getNewsPage(PageRequest.of(safePage, safeSize));
+        return ResponseEntity.ok()
+                .header("X-Total-Count", String.valueOf(result.getTotalElements()))
+                .body(result.getContent());
+    }
 
-      /**
-       * Get a single news article by its ID.
-       *
-       * @param id The unique identifier of the news article
-       * @return The news article if found
-       */
-     @GetMapping("/news/{id}")
+    /**
+     * Get a single news article by its ID.
+     */
+    @GetMapping("/news/{id}")
     public ResponseEntity<News> getNewsById(@PathVariable Long id) {
         try {
             News news = newsService.getNewsById(id);
             return ResponseEntity.ok(news);
-          } catch (NewsNotFoundException e) {
-             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
-          }
-      }
+        } catch (NewsNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+    }
 
 }

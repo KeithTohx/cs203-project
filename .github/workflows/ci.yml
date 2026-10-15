@@ -1,0 +1,25 @@
+# runs on every pr into main, branch protection makes a failure block the merge
+name: ci
+
+on:
+  # branches filters the TARGET branch not the source, so this means prs aimed at main
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: temurin
+          cache: maven
+
+      # drive sync keeps dropping the exec bit on mvnw
+      - run: chmod +x mvnw
+
+      - run: ./mvnw -B verify
