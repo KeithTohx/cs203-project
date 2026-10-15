@@ -81,10 +81,27 @@ export const mockApi = {
     },
     logout: () => { me = null; sessionStorage.removeItem("mockUserId"); return respondWith(null); },
     me: () => requireLogin() || respondWith(withoutPassword(me)),
-    updateMe: details => requireLogin() || (Object.assign(me, { username: details.username, email: details.email }), respondWith(withoutPassword(me))),
-    changePassword: passwords => requireLogin() || (passwords.currentPassword !== me.password
-        ? fail(400, "Current password is incorrect.")
-        : (me.password = passwords.newPassword, respondWith(null))),
+    // like the backend: only the username changes, and a name taken by someone else is a 409
+    updateMe: details => {
+        if (requireLogin()) return requireLogin();
+
+        const takenBy = USERS.find(user => user.username.toLowerCase() === details.username.toLowerCase());
+        if (takenBy && takenBy.id !== me.id) return fail(409, `username '${details.username}' is already taken`);
+
+        me.username = details.username;
+        return respondWith(withoutPassword(me));
+    },
+    // like the backend: a password change ends the session, so the user has to log in again
+    changePassword: passwords => {
+        if (requireLogin()) return requireLogin();
+        if (passwords.currentPassword !== me.password) return fail(400, "current password is incorrect");
+        if (passwords.newPassword === me.password) return fail(400, "new password must be different from the current password");
+
+        me.password = passwords.newPassword;
+        me = null;
+        sessionStorage.removeItem("mockUserId");
+        return respondWith(null);
+    },
     itineraries: () => requireLogin() || respondWith(ITINERARIES.filter(itinerary => itinerary.userId === me.id)),
     countries: () => requireLogin() || respondWith(COUNTRIES),
     itinerary: id => requireLogin() || respondWith(myItinerary(id) ?? null),

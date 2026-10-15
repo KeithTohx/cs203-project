@@ -7,6 +7,13 @@ const csrfToken = () => {
   const cookie = document.cookie.split("; ").find(entry => entry.startsWith("XSRF-TOKEN="));
   return cookie ? decodeURIComponent(cookie.split("=")[1]) : null;
 };
+// spring security deletes the csrf cookie on logout and when a session is ended (e.g. after a password
+// change), and only sends a new one with the next response. a post sent before that is rejected with 403,
+// so when the cookie is missing, ask for the page headers first just to get a fresh one
+async function ensureCsrfToken() {
+  if (csrfToken()) return;
+  try { await fetch("/", { method: "HEAD", credentials: "same-origin" }); } catch {}
+}
 // turns a failed response into text a user can act on. the backend's own message is kept when it's
 // meant for people (validation, "already taken", "not found"), but not for server errors or missing
 // endpoints, where it's internal detail like "No static resource api/user."
@@ -24,7 +31,10 @@ async function request(path, method = "GET", body) {
   const headers = {};
   const isForm = body instanceof URLSearchParams;
   if (body && !isForm) headers["Content-Type"] = "application/json";
-  if (method !== "GET" && csrfToken()) headers["X-XSRF-TOKEN"] = csrfToken();
+  if (method !== "GET") {
+    await ensureCsrfToken();
+    if (csrfToken()) headers["X-XSRF-TOKEN"] = csrfToken();
+  }
 
   let requestBody;
   if (isForm) requestBody = body;   // fetch sets the form content type itself
@@ -44,9 +54,9 @@ const realApi = {
   logout:     () => request("/api/auth/logout", "POST"),
   register:   details => request("/api/user/register", "POST", details),   // {username, email, password}; role is always USER
   me:         () => request("/api/auth/me"),
-  // planned, not on the backend yet: user/UserController, the logged-in user comes from the session
-  updateMe:   details => request("/api/user/me", "PUT", details),                     // {username, email}
-  changePassword: passwords => request("/api/user/me/password", "PUT", passwords),    // {currentPassword, newPassword} -> 204
+  // the account is always the logged-in one, from the session. the email is the login, so only the username changes
+  updateMe:   details => request("/api/user/me", "PATCH", details),                   // {username} -> the account
+  changePassword: passwords => request("/api/user/me/password", "PUT", passwords),    // {currentPassword, newPassword} -> 204, then every session is ended
   itineraries:userId => request(`/api/user/${userId}/itinerary`),   // that user's own itineraries
   itinerary:  id => request(`/api/itinerary/${id}`),
   addItinerary:itinerary => request("/api/itinerary", "POST", itinerary),
