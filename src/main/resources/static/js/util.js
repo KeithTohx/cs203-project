@@ -67,6 +67,7 @@ export function formPage(root, { title, fieldsHtml, onSubmit, onAuthLost, cancel
 // Two-click confirm for buttons that remove things, so a misclick doesn't lose anything.
 // The first click shows `confirmText`; a second click runs onConfirm. It goes back to normal when the mouse
 // leaves the button or focus moves away; touch and keyboard (which have no "leave") get a 4 second timeout.
+// Returns a function that puts the button back to normal, for buttons that stay on the page after confirming.
 export function confirmTwice(button, { confirmText, onConfirm, onArm = () => { }, onDisarm = () => { } }) {
     const original = { text: button.textContent, label: button.getAttribute("aria-label") };
     let timer;
@@ -95,4 +96,5 @@ export function confirmTwice(button, { confirmText, onConfirm, onArm = () => { }
     button.addEventListener("blur", disarm);
     // Touch is left out: a finger "leaves" the button the moment it lifts, which would cancel every tap.
     button.addEventListener("pointerleave", event => { if (event.pointerType === "mouse") disarm(); });
+    return disarm;
 }
