@@ -237,7 +237,7 @@ public class ImpactServiceImpl implements ImpactService {
                 .filter(impact -> impact.getItinerary() != null
                         && impact.getItinerary().getId().equals(itineraryId)
                         && impact.getUser().getId().equals(userId)
-                        && impact.getImpacted().equals(Boolean.TRUE))
+                        && Boolean.TRUE.equals(impact.getImpacted()))
                 .collect(Collectors.toList());
     }
 
