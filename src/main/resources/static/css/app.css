@@ -558,21 +558,239 @@ summary {
     color: var(--ok);
 }
 
-.chat {
-    margin-top: 12px;
-    border-top: 1px solid var(--border);
-    padding-top: 12px;
+/* ===== AI assistant: one panel on the right, opened from an itinerary card. Full width on phones ===== */
+.chat-panel {
+    margin: 0 0 0 auto;
+    width: min(440px, 100%);
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+    padding: 0;
+    border: none;
+    border-left: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
 }
 
-.log p {
-    margin: 6px 0;
-    padding: 8px 10px;
-    border-radius: 6px;
+.chat-panel::backdrop {
+    background: rgb(0 0 0 / .3);
+}
+
+.chat-panel-body {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.chat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.chat-header h2 {
+    margin: 0;
+    font-size: 1.1rem;
+}
+
+.chat-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* the header's buttons sit on one line, so drop the margins buttons get elsewhere */
+.chat-header-actions button {
+    margin: 0;
+}
+
+/* closing isn't destructive, so the "×" stays neutral instead of the red remove style */
+.chat-panel button.ghost.icon-button:hover {
+    color: var(--text);
+    border-color: var(--text);
+    background: transparent;
+}
+
+/* the conversation takes the spare height and scrolls; the message box stays at the bottom */
+.chat-log {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;   /* answers have no bubble, so the space between turns does the separating */
+    padding: 20px 18px;
+}
+
+/* like most ai chats: your message sits in a soft bubble on the right,
+   the assistant's answer is plain text across the panel */
+.chat-message {
+    white-space: pre-wrap;   /* answers keep their line breaks */
+    overflow-wrap: anywhere;
+}
+
+.chat-message.user {
+    align-self: flex-end;
+    max-width: 85%;
+    padding: 9px 14px;
+    border-radius: 18px;
+    background: color-mix(in srgb, var(--text) 7%, var(--panel));   /* a gentle grey in both light and dark mode */
+}
+
+.chat-message.assistant,
+.chat-message.error {
+    align-self: stretch;
+    line-height: 1.6;
+}
+
+.chat-message.error {
+    color: var(--bad);
+}
+
+/* the dots' markup has its own line breaks, which shouldn't show as blank lines */
+.chat-message.typing {
+    white-space: normal;
+}
+
+/* three dots that rise and fall in turn while the answer is on its way */
+.typing-dots {
+    display: inline-flex;
+    gap: 4px;
+    padding: 4px 0;
+}
+
+.typing-dots span {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--muted);
+    animation: typing-bounce 1.2s infinite ease-in-out;
+}
+
+.typing-dots span:nth-child(2) {
+    animation-delay: .15s;
+}
+
+.typing-dots span:nth-child(3) {
+    animation-delay: .3s;
+}
+
+@keyframes typing-bounce {
+    0%, 60%, 100% {
+        transform: translateY(0);
+        opacity: .4;
+    }
+    30% {
+        transform: translateY(-4px);
+        opacity: 1;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .typing-dots span {
+        animation: none;
+    }
+}
+
+/* a new or cleared chat: a short greeting and questions to start with */
+.chat-empty {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+    padding: 16px;
+    text-align: center;
+}
+
+.chat-empty[hidden] {
+    display: none;
+}
+
+.chat-empty-title {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.chat-suggestions {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    width: 100%;
+    margin-top: 12px;
+}
+
+button.chat-suggestion {
+    margin: 0;
+    padding: 9px 14px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: transparent;
+    color: var(--text);
+    font-weight: 500;
+    text-align: left;
+}
+
+button.chat-suggestion:hover {
+    border-color: var(--accent);
+    filter: none;
+}
+
+/* the message box: rounded, with the send arrow inside it on the right */
+.chat-composer {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    margin: 0 16px;
+    padding: 6px 6px 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: 22px;
     background: var(--bg);
 }
 
-.log p.me {
-    background: var(--ok-bg);
+.chat-composer:focus-within {
+    border-color: var(--accent);
+}
+
+.chat-composer textarea {
+    flex: 1;
+    max-height: 9em;   /* about six lines, then it scrolls */
+    padding: 6px 0;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    resize: none;
+}
+
+/* the whole box shows focus instead of the bare textarea */
+.chat-composer textarea:focus-visible {
+    outline: none;
+}
+
+button.chat-send {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    margin: 0;
+    padding: 0;
+    border-radius: 50%;
+}
+
+.chat-footnote {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 18px 14px;
+    font-size: 12px;
 }
 .imp > p:not(.meta) {
     margin: 4px 0 0;

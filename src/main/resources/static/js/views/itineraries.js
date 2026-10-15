@@ -77,8 +77,11 @@ const createItineraryCard = ({ itinerary, activities, impacts, failed }) => {
             </div>
             <p class="meta">${escapeHtml(itinerary.countryName)} · ${dateRange(itinerary.dateStart, itinerary.dateEnd)}</p>
             ${body}
-            <p><button class="ghost" data-chat="${itineraryId}" aria-expanded="false">Ask the assistant</button></p>
-            <div class="chat-slot"></div>
+            <p>
+                <button class="ghost" data-chat="${itineraryId}" data-chat-name="${escapeHtml(itinerary.name)}" aria-haspopup="dialog">
+                    Ask the AI assistant
+                </button>
+            </p>
         </article>
     `;
 };
@@ -131,21 +134,15 @@ export async function showItineraries(root, user, onAuthLost) {
         return showError(itineraryListContainer, error, onAuthLost);
     }
 
-    // Event delegation: the assistant button opens the chat, and closes it again
+    // Event delegation: an assistant button opens the side panel for that itinerary
     itineraryListContainer.addEventListener("click", (event) => {
         const chatButton = event.target.closest("[data-chat]");
         if (!chatButton) return;
 
-        const cardElement = chatButton.closest(".card");
-        const chatSlot = cardElement ? cardElement.querySelector(".chat-slot") : null;
-        const itineraryId = chatButton.dataset.chat;
-        if (!chatSlot || !itineraryId) return;
-
-        const isOpen = chatSlot.firstChild !== null;
-        if (isOpen) chatSlot.innerHTML = "";
-        else openChat(chatSlot, itineraryId, onAuthLost);
-
-        chatButton.textContent = isOpen ? "Ask the assistant" : "Close assistant";
-        chatButton.setAttribute("aria-expanded", String(!isOpen));
+        const itinerary = {
+            id: Number(chatButton.dataset.chat),
+            name: chatButton.dataset.chatName,   // the browser decodes the escaped attribute back to plain text
+        };
+        openChat(itinerary, onAuthLost);
     });
 }
