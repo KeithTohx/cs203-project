@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { dateRange, escapeHtml, showError, sortByStart, takeFlash } from "../util.js";
+import { dateRange, escapeHtml, formatDate, safeUrl, showError, sortByStart, takeFlash } from "../util.js";
 import { openChat } from "./chat.js";
 
 // Group impacts by the news event that caused them, so each event lists the activities it affects.
@@ -7,10 +7,81 @@ const groupByEvent = (impacts) => {
     const events = new Map();
     for (const impact of impacts) {
         const key = impact.newsId ?? impact.newsTitle;
-        if (!events.has(key)) events.set(key, { title: impact.newsTitle, impacts: [] });
+        if (!events.has(key)) {
+            events.set(key, {
+                title: impact.newsTitle,
+                source: impact.newsSource,
+                url: impact.newsUrl,
+                description: impact.newsDescription,
+                publishedAt: impact.newsPublishedAt,
+                impacts: [],
+            });
+        }
         events.get(key).impacts.push(impact);
     }
     return [...events.values()];
+};
+
+// the site name from a link, so gdelt news without a source still gets a label
+const hostnameOf = url => {
+    try {
+        return new URL(url).hostname.replace(/^www\./, "");
+    } catch {
+        return "";
+    }
+};
+
+// each bubble needs its own id so aria-describedby points at the right popover
+let nextPopoverId = 0;
+
+// Component: a small bubble naming where the news came from. hovering or focusing it shows more
+// about the article, and clicking opens the original in a new tab
+const createSourceBubble = (event) => {
+    const link = safeUrl(event.url);
+    const label = event.source || hostnameOf(event.url);
+    if (!label) return "";
+
+    nextPopoverId += 1;
+    const popoverId = `news-source-${nextPopoverId}`;
+    const published = formatDate(event.publishedAt);
+    const description = event.description ? escapeHtml(event.description) : "";
+    const site = hostnameOf(event.url);
+
+    const popover = `
+        <span class="source-popover" id="${popoverId}" role="tooltip">
+            <span class="meta">
+                ${escapeHtml(label)}${published ? ` · ${published}` : ""}
+            </span>
+            ${description ? `<span class="source-description">${description}</span>` : ""}
+            <span class="meta">
+                ${link ? `Opens ${escapeHtml(site)} in a new tab` : "No link available for this article"}
+            </span>
+        </span>
+    `;
+
+    // without a safe link the bubble still shows the info, it just isn't clickable
+    if (!link) {
+        return `
+            <span class="source">
+                <span class="source-bubble" tabindex="0" aria-describedby="${popoverId}">
+                    ${escapeHtml(label)}
+                </span>
+                ${popover}
+            </span>
+        `;
+    }
+
+    return `
+        <span class="source">
+            <a class="source-bubble" href="${link}" target="_blank" rel="noopener noreferrer"
+               aria-describedby="${popoverId}">
+                ${escapeHtml(label)}
+                <span aria-hidden="true">↗</span>
+                <span class="sr-only">(opens in a new tab)</span>
+            </a>
+            ${popover}
+        </span>
+    `;
 };
 
 // Component: one news event and what it affects. An impact with no activity applies to the whole itinerary.
@@ -21,7 +92,10 @@ const createEventCard = (event) => {
 
     return `
         <div class="imp hit">
-            <strong>${escapeHtml(event.title || "Untitled news")}</strong>
+            <div class="imp-head">
+                <strong>${escapeHtml(event.title || "Untitled news")}</strong>
+                ${createSourceBubble(event)}
+            </div>
             ${wholeItineraryImpacts.map(impact => `<p>Affects the whole itinerary${formatReason(impact)}</p>`).join("")}
             ${activityImpacts.length ? `<p class="meta">Affected activities:</p>
                 <ul>${activityImpacts.map(impact => `<li>${escapeHtml(impact.activityName)}${formatReason(impact)}</li>`).join("")}</ul>` : ""}
