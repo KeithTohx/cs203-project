@@ -70,10 +70,15 @@ public class GkgRelevanceFilter {
     }
 
     /**
-     * Judges several articles with one model call.
+     * Judges several articles with as few model calls as possible.
+     * <p>
+     * Tries one call for the whole batch. If the model's answer cannot be read (for example the
+     * JSON is cut off or in the wrong shape), the articles are judged one at a time instead.
+     * Any article the model skipped in an otherwise readable answer is also re-judged on its own.
      *
      * @return one verdict per article, in the same order as the batch
-     * @throws RuntimeException if the model is unreachable or its answer cannot be read
+     * @throws RuntimeException only if a single-article call also fails, which means the model
+     *                          is probably unreachable
      */
     public List<Boolean> judgeBatch(List<GkgArticle> batch) {
         if (!enabled) {
@@ -83,7 +88,15 @@ public class GkgRelevanceFilter {
             return List.of(isRelevant(batch.get(0)));
         }
 
-        BatchItem[] answer = chatService.ask(buildBatchPrompt(batch), BatchItem[].class);
+        BatchItem[] answer;
+        try {
+            answer = chatService.ask(buildBatchPrompt(batch), BatchItem[].class);
+        } catch (Exception e) {
+            // cut-off, wrapped or otherwise unreadable JSON: don't give up, judge them one by one
+            log.warn("AI filter: batch of {} could not be read ({}), judging one by one",
+                    batch.size(), e.getMessage());
+            return judgeOneByOne(batch);
+        }
 
         // match the answers back to the articles by id
         Boolean[] verdicts = new Boolean[batch.size()];
@@ -111,6 +124,15 @@ public class GkgRelevanceFilter {
             } else {
                 result.add(verdicts[i]);
             }
+        }
+        return result;
+    }
+
+    /** Fallback for a batch the model answered badly: one model call per article. */
+    private List<Boolean> judgeOneByOne(List<GkgArticle> batch) {
+        List<Boolean> result = new ArrayList<>(batch.size());
+        for (GkgArticle article : batch) {
+            result.add(isRelevant(article));
         }
         return result;
     }
