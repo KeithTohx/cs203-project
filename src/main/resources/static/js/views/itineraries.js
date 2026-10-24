@@ -149,7 +149,7 @@ const createDismissedSection = (dismissedEvents) => {
     if (!dismissedEvents.length) return "";
 
     return `
-        <details>
+        <details data-section="dismissed">
             <summary>Marked as not relevant (${dismissedEvents.length})</summary>
             ${dismissedEvents.map(event => createEventCard(event, true)).join("")}
         </details>
@@ -191,7 +191,7 @@ const createItineraryCard = ({ itinerary, activities, impacts, failed }) => {
         : `
             <h3>Activities</h3>
             ${createActivityList(itineraryId, activities, impactedActivityIds)}
-            <details${events.length ? " open" : ""}>
+            <details data-section="news"${events.length ? " open" : ""}>
                 <summary>News affecting this itinerary (${events.length})</summary>
                 ${events.map(event => createEventCard(event)).join("") || `<div class="msg">No news has affected this itinerary.</div>`}
             </details>
@@ -257,11 +257,27 @@ async function toggleRejected(button, detailsById, onAuthLost) {
         return;
     }
 
+    // redrawing resets every section to its default, so note which ones the user had open first.
+    // that way restoring several in a row does not mean reopening the list each time
+    const openSections = [...card.querySelectorAll("details[data-section]")]
+        .filter(section => section.open)
+        .map(section => section.dataset.section);
+    const clickedSection = button.closest("details[data-section]")?.dataset.section;
+
     card.outerHTML = createItineraryCard(details);
 
-    // the button that was clicked is gone, so keep keyboard users in the same card instead of at the top of the page
+    // a section that is now empty is not drawn at all, so it simply stays gone
     const redrawnCard = document.querySelector(`[data-itinerary="${details.itinerary.id}"]`);
-    redrawnCard?.querySelector("summary")?.focus();
+    for (const name of openSections) {
+        const section = redrawnCard.querySelector(`details[data-section="${name}"]`);
+        if (section) section.open = true;
+    }
+
+    // the button that was clicked is gone, so keep keyboard users in the section they were working in,
+    // or the news section if that one has just emptied
+    const clickedSummary = redrawnCard.querySelector(`details[data-section="${clickedSection}"] > summary`);
+    const fallbackSummary = redrawnCard.querySelector("summary");
+    (clickedSummary ?? fallbackSummary)?.focus();
 }
 
 export async function showItineraries(root, user, onAuthLost) {
