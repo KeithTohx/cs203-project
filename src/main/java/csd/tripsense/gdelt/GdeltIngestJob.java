@@ -32,17 +32,20 @@ public class GdeltIngestJob {
     private volatile String lastProcessedUrl;
     private final Set<String> checkedUrls = ConcurrentHashMap.newKeySet();   // already judged (accepted or rejected) for currentFile
     private volatile String currentFile;
+    private final int batchSize;
 
     public GdeltIngestJob(GkgClient client, GkgParser parser, GkgRelevanceFilter relevanceFilter,
-                          NewsService newsService,
-                          @Value("${gdelt.ingest.enabled}") boolean enabled,
-                          @Value("${gdelt.ai.max-per-run:60}") int maxPerRun) {
+                        NewsService newsService,
+                        @Value("${gdelt.ingest.enabled}") boolean enabled,
+                        @Value("${gdelt.ai.max-per-run:60}") int maxPerRun,
+                        @Value("${gdelt.ai.batch-size:10}") int batchSize) {
         this.client = client;
         this.parser = parser;
         this.relevanceFilter = relevanceFilter;
         this.newsService = newsService;
         this.enabled = enabled;
         this.maxPerRun = maxPerRun;
+        this.batchSize = Math.max(1, batchSize);   // never below 1
     }
 
     @Scheduled(fixedRateString = "${gdelt.ingest.interval-ms}",
@@ -86,16 +89,20 @@ public class GdeltIngestJob {
             // 3. this run's share
             List<GkgArticle> toCheck = pending.size() > maxPerRun ? pending.subList(0, maxPerRun) : pending;
 
-            // 4. ask the model; if it fails, stop and continue from here next poll
+            // 4. ask the model in batches; if a call fails, stop and continue from there next poll
             List<News> accepted = new ArrayList<>();
             List<String> checked = new ArrayList<>();
             boolean aborted = false;
-            for (GkgArticle article : toCheck) {
+            for (int start = 0; start < toCheck.size(); start += batchSize) {
+                List<GkgArticle> batch = toCheck.subList(start, Math.min(start + batchSize, toCheck.size()));
                 try {
-                    if (relevanceFilter.isRelevant(article)) {
-                        accepted.add(toNews(article));
+                    List<Boolean> verdicts = relevanceFilter.judgeBatch(batch);
+                    for (int i = 0; i < batch.size(); i++) {
+                        if (verdicts.get(i)) {
+                            accepted.add(toNews(batch.get(i)));
+                        }
+                        checked.add(batch.get(i).url());
                     }
-                    checked.add(article.url());
                 } catch (Exception e) {
                     log.warn("GDELT: AI filter failed, stopping this run: {}", e.getMessage());
                     aborted = true;
