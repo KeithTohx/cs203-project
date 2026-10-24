@@ -102,4 +102,27 @@ public class UserController {
         sessionService.expireSessionsFor(currentUser.getEmail());
         return ResponseEntity.noContent().build();
     }
+
+    @Operation(summary = "Get your preferences",
+            description = "Requires login. Returns defaults for accounts that haven't set any yet.")
+    @ApiResponse(responseCode = "200", description = "Preferences returned")
+    @ApiResponse(responseCode = "401", description = "Not logged in")
+    @GetMapping("/user/me/preferences")
+    public ResponseEntity<PreferenceResponse> getPreferences(@AuthenticationPrincipal CurrentUser currentUser) {
+        return ResponseEntity.ok(PreferenceResponse.from(userService.getPreferences(currentUser.getId())));
+    }
+
+    @Operation(summary = "Update your preferences",
+            description = "Requires login and the X-XSRF-TOKEN header. Only the fields you send are changed; ")
+    @ApiResponse(responseCode = "200", description = "Preferences updated")
+    @ApiResponse(responseCode = "400", description = "Validation failed")
+    @ApiResponse(responseCode = "401", description = "Not logged in")
+    @PatchMapping("/user/me/preferences")
+    public ResponseEntity<PreferenceResponse> updatePreferences(
+            @Valid @RequestBody UpdatePreferenceRequest request,
+            @AuthenticationPrincipal CurrentUser currentUser) {
+        return ResponseEntity.ok(PreferenceResponse.from(
+                userService.updatePreferences(currentUser.getId(), request)));
+    }
+
 }
