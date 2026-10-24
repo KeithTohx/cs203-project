@@ -69,6 +69,7 @@ create table impact {
     activity_id integer,
     impacted boolean,
     reason varchar(500),
+    rejected boolean,
 
     foreign key (user_id) references user(id),
     foreign key (news_id) references news(id),
