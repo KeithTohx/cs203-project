@@ -1,5 +1,9 @@
 package csd.tripsense.impact;
 
+import java.time.LocalDateTime;
+
+import csd.tripsense.news.News;
+
 /**
  * What the API returns for an impact.
  *
@@ -15,12 +19,18 @@ public record ImpactResponse(
         String username,
         Long newsId,
         String newsTitle,
+        String newsSource,
+        String newsUrl,
+        String newsDescription,
+        LocalDateTime newsPublishedAt,
         Long itineraryId,
         String itineraryName,
         Long activityId,
         String activityName) {
 
     public static ImpactResponse from(Impact impact) {
+        News news = impact.getNews();
+
         // itinerary and activity are optional on an impact, so both are guarded
         return new ImpactResponse(
                 impact.getId(),
@@ -28,8 +38,12 @@ public record ImpactResponse(
                 impact.getReason(),
                 impact.getUser() == null ? null : impact.getUser().getId(),
                 impact.getUser() == null ? null : impact.getUser().getUsername(),
-                impact.getNews() == null ? null : impact.getNews().getId(),
-                impact.getNews() == null ? null : impact.getNews().getTitle(),
+                news == null ? null : news.getId(),
+                news == null ? null : news.getTitle(),
+                news == null ? null : news.getSource(),
+                news == null ? null : news.getUrl(),
+                news == null ? null : news.getDescription(),
+                news == null ? null : news.getPublishedAt(),
                 impact.getItinerary() == null ? null : impact.getItinerary().getId(),
                 impact.getItinerary() == null ? null : impact.getItinerary().getName(),
                 impact.getActivity() == null ? null : impact.getActivity().getId(),
