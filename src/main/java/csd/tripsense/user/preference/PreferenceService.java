@@ -13,9 +13,9 @@ public interface PreferenceService {
      * Changes the preferences of the user
      * Partial update is possible. Omitted fields are not changed
      * Validation happens for travelGroup: travellingWithChildren and travellingWithElderly can’t be set to true when travelling SOLO
-     * @param userId
-     * @param request
-     * @return
+     * @param userId the user to check
+     * @param request the new preferences to change
+     * @return the updated user preferences
      */
     UserPreference updatePreferences(Long userId, UpdatePreferenceRequest request);
 
