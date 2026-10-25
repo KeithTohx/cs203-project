@@ -1,10 +1,4 @@
-package csd.tripsense.user;
-
-import jakarta.validation.constraints.Pattern;
-
-import java.util.Set;
-
-import csd.tripsense.user.preference.*;
+package csd.tripsense.user.preference;
 
 public record UpdatePreferenceRequest(
         RiskTolerance riskTolerance,

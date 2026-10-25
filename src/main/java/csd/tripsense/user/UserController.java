@@ -2,6 +2,9 @@ package csd.tripsense.user;
 
 import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.auth.SessionService;
+import csd.tripsense.user.preference.PreferenceResponse;
+import csd.tripsense.user.preference.PreferenceService;
+import csd.tripsense.user.preference.UpdatePreferenceRequest;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import jakarta.servlet.http.HttpServletRequest;
@@ -31,10 +34,12 @@ import java.net.URI;
 public class UserController {
 
     private final UserService userService;
+    private final PreferenceService preferenceService;
     private final SessionService sessionService;
 
-    public UserController(UserService userService, SessionService sessionService) {
+    public UserController(UserService userService, PreferenceService preferenceService, SessionService sessionService) {
         this.userService = userService;
+        this.preferenceService = preferenceService;
         this.sessionService = sessionService;
     }
 
@@ -109,7 +114,7 @@ public class UserController {
     @ApiResponse(responseCode = "401", description = "Not logged in")
     @GetMapping("/user/me/preferences")
     public ResponseEntity<PreferenceResponse> getPreferences(@AuthenticationPrincipal CurrentUser currentUser) {
-        return ResponseEntity.ok(PreferenceResponse.from(userService.getPreferences(currentUser.getId())));
+        return ResponseEntity.ok(PreferenceResponse.from(preferenceService.getPreferences(currentUser.getId())));
     }
 
     @Operation(summary = "Update your preferences",
@@ -122,7 +127,7 @@ public class UserController {
             @Valid @RequestBody UpdatePreferenceRequest request,
             @AuthenticationPrincipal CurrentUser currentUser) {
         return ResponseEntity.ok(PreferenceResponse.from(
-                userService.updatePreferences(currentUser.getId(), request)));
+                preferenceService.updatePreferences(currentUser.getId(), request)));
     }
 
 }

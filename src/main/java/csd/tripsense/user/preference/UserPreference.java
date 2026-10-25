@@ -1,12 +1,10 @@
-package csd.tripsense.user;
+package csd.tripsense.user.preference;
 
 import jakarta.persistence.*;
 
 import java.time.Instant;
-import java.util.HashSet;
-import java.util.Set;
 
-import csd.tripsense.user.preference.*;
+import csd.tripsense.user.User;
 
 
 @Entity

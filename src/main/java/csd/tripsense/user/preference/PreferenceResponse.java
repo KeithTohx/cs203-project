@@ -1,8 +1,6 @@
-package csd.tripsense.user;
+package csd.tripsense.user.preference;
 
 import java.time.Instant;
-
-import csd.tripsense.user.preference.*;
 
 public record PreferenceResponse(
         RiskTolerance riskTolerance,

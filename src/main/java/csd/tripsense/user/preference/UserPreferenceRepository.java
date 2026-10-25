@@ -1,4 +1,4 @@
-package csd.tripsense.user;
+package csd.tripsense.user.preference;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 

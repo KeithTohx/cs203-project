@@ -13,8 +13,8 @@ import csd.tripsense.activity.ActivityService;
 import csd.tripsense.impact.ImpactService;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryService;
-import csd.tripsense.user.PreferenceResponse;
-import csd.tripsense.user.UserService;
+import csd.tripsense.user.preference.PreferenceResponse;
+import csd.tripsense.user.preference.PreferenceService;
 import lombok.RequiredArgsConstructor;
 import reactor.core.publisher.Flux;
 
@@ -65,7 +65,7 @@ public class ChatbotServiceImpl implements ChatbotService {
     private final ItineraryService itineraryService;
     private final ActivityService activityService;
     private final ImpactService impactService;
-    private final UserService userService;
+    private final PreferenceService preferenceService;
     private final ObjectMapper mapper;
 
     @Override
@@ -98,7 +98,7 @@ public class ChatbotServiceImpl implements ChatbotService {
         // load itinerary info and user preferences
         Itinerary itinerary = itineraryService.getItineraryByIdAndUserId(itineraryId, userId);
         List<Activity> activities = activityService.getActivitiesByItinerary(itineraryId);
-        PreferenceResponse profile = PreferenceResponse.from(userService.getPreferences(userId));
+        PreferenceResponse profile = PreferenceResponse.from(preferenceService.getPreferences(userId));
 
         // load impact info
         List<ChatImpactView> impacts = impactService.findImpacted(userId, itineraryId).stream()
