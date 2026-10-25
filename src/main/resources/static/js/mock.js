@@ -128,6 +128,31 @@ export const mockApi = {
         sessionStorage.removeItem("mockUserId");
         return respondWith(null);
     },
+    // like the backend: needs the current password, the last admin cannot go, and the user's
+    // itineraries (with their activities, impacts and chats) are removed along with the account
+    deleteMe: currentPassword => {
+        const notLoggedIn = requireLogin();
+        if (notLoggedIn) return notLoggedIn;
+        if (currentPassword !== me.password) return fail(400, "current password is incorrect");
+
+        const adminCount = USERS.filter(user => user.role === "ADMIN").length;
+        if (me.role === "ADMIN" && adminCount <= 1) return fail(409, "the last admin account cannot be deleted");
+
+        const ownedItineraries = ITINERARIES.filter(itinerary => itinerary.userId === me.id);
+        for (const itinerary of ownedItineraries) {
+            ITINERARIES.splice(ITINERARIES.indexOf(itinerary), 1);
+            for (let index = ACTIVITIES.length - 1; index >= 0; index--) {
+                if (ACTIVITIES[index].itineraryId === itinerary.id) ACTIVITIES.splice(index, 1);
+            }
+            delete IMPACTS[itinerary.id];
+            delete CHATS[itinerary.id];
+        }
+
+        USERS.splice(USERS.indexOf(me), 1);
+        me = null;
+        sessionStorage.removeItem("mockUserId");
+        return respondWith(null);
+    },
     itineraries: () => requireLogin() || respondWith(ITINERARIES.filter(itinerary => itinerary.userId === me.id)),
     countries: () => requireLogin() || respondWith(COUNTRIES),
     itinerary: id => requireLogin() || respondWith(myItinerary(id) ?? null),

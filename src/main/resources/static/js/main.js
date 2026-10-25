@@ -4,7 +4,7 @@ import { showLogin } from "./views/login.js";
 import { showRegister } from "./views/register.js";
 import { showItineraries } from "./views/itineraries.js";
 import { showAccount } from "./views/account.js";
-import { showEditDetails, showChangePassword } from "./views/account-edit.js";
+import { showEditDetails, showChangePassword, showDeleteAccount } from "./views/account-edit.js";
 import { showEditItinerary } from "./views/itinerary-edit.js";
 import { showAdminUsers } from "./views/admin-users.js";
 
@@ -29,6 +29,7 @@ const routes = [
 	{ path: "/account", nav: "Account", view: context => showAccount(context.root, context.user) },
 	{ path: "/account/details", view: context => showEditDetails(context.root, context.user, context.reauth) },
 	{ path: "/account/password", view: context => showChangePassword(context.root, context.user, context.reauth) },
+	{ path: "/account/delete", view: context => showDeleteAccount(context.root, context.user, context.reauth) },
 	// { path: "/itineraries/:id", view: context => showItinerary(context.root, context.user, context.reauth, context.params.id) },
 ];
 // Where each role starts. Admins manage accounts and don't have itineraries.

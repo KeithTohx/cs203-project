@@ -375,6 +375,16 @@ button.ghost:hover {
     padding: 4px 10px;
 }
 
+/* a link that leads to something destructive: red outline, filled only on hover */
+.btn.danger {
+    color: var(--bad);
+    border-color: var(--bad);
+}
+
+.btn.danger:hover {
+    background: var(--bad-bg);
+}
+
 button.danger {
     color: var(--bad);
     border-color: var(--bad);
@@ -383,6 +393,13 @@ button.danger {
 
 button.danger:hover {
     background: var(--bad-bg);
+    border-color: var(--bad);
+}
+
+/* the main button of a form that removes something for good, e.g. "Delete my account" */
+button.destructive {
+    color: #fff;
+    background: var(--bad);
     border-color: var(--bad);
 }
 
@@ -419,6 +436,17 @@ button.ghost.icon-button[data-confirming] {
     border-radius: 8px;
     padding: 16px;
     margin-bottom: 12px;
+}
+
+/* settings that cannot be undone, like deleting the account: set apart from the everyday cards
+   above with extra space and a red outline, but no red fill so it does not shout */
+.card.danger-zone {
+    margin-top: 32px;
+    border-color: var(--bad);
+}
+
+.card.danger-zone h2 {
+    color: var(--bad);
 }
 
 .card.past {

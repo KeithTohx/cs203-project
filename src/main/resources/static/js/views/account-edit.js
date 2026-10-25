@@ -49,3 +49,30 @@ export function showChangePassword(root, user, reauth) {
         },
     });
 }
+
+// the current password is the confirmation, the same way changing the password works,
+// so a stolen session or a stray click cannot delete anything on its own
+export function showDeleteAccount(root, user, reauth) {
+    formPage(root, {
+        title: "Delete account", cancelLink: "#/account", onAuthLost: reauth,
+        submitLabel: "Delete my account", submitClass: "destructive", fieldsHtml: `
+    <p>
+        This permanently deletes the account <strong>${escapeHtml(user.username)}</strong>
+        along with your itineraries, their activities, the news found to affect them and your chat history.
+    </p>
+    <p class="err">This cannot be undone.</p>
+
+    <label for="currentPassword">Current password</label>
+    <input id="currentPassword" name="currentPassword" type="password" autocomplete="current-password" required>
+    <p class="meta hint">You will be logged out everywhere once it is done.</p>`,
+        onSubmit: async inputs => {
+            await api.deleteMe(inputs.currentPassword.value);
+
+            // the account is gone and so is the session. the address is cleared first so the
+            // login screen does not try to send anyone back to this form
+            flash("Your account has been deleted.");
+            history.replaceState(null, "", location.pathname + location.search);
+            reauth();
+        },
+    });
+}

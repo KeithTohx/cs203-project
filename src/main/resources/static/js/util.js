@@ -37,14 +37,17 @@ export const takeFlash = () => {
 // throwing an error shows its message under the form.
 // Returns { form, errorMessage } so a view can wire up extra buttons (e.g. Delete).
 // formClass sets the form's width: "narrow" (default) or "wide".
-export function formPage(root, { title, fieldsHtml, onSubmit, onAuthLost, cancelLink, extraActions = "", formClass = "narrow" }) {
+// submitLabel and submitClass change the main button, for forms that do something other than save.
+export function formPage(root, { title, fieldsHtml, onSubmit, onAuthLost, cancelLink, extraActions = "", formClass = "narrow",
+                                 submitLabel = "Save", submitClass = "" }) {
+    const submitClassAttribute = submitClass ? ` class="${submitClass}"` : "";
     root.innerHTML = `
     <h1>${escapeHtml(title)}</h1>
     <form class="card ${formClass}" id="edit-form">
     ${fieldsHtml}
         <p class="err" id="form-error" role="alert"></p>
         <div class="actions">
-            <button type="submit">Save</button>
+            <button type="submit"${submitClassAttribute}>${escapeHtml(submitLabel)}</button>
             <a class="btn" href="${cancelLink}">Cancel</a>
             ${extraActions}
         </div>

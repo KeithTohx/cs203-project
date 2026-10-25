@@ -25,5 +25,12 @@ export function showAccount(root, user) {
         </div>
         to be added
     </section>
+    <section class="card danger-zone">
+        <div class="row">
+            <h2>Delete account</h2>
+            <a class="btn danger" href="#/account/delete">Delete</a>
+        </div>
+        <p class="meta">Permanently removes your account, itineraries and chat history.</p>
+    </section>
     `;
 }
