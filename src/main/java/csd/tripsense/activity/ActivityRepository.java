@@ -16,7 +16,7 @@ public interface ActivityRepository extends JpaRepository<Activity, Long> {
     // Activities in one country that have not finished yet and have no impact row for this news,
     // so one article is never judged twice against the same activity. The itinerary and its user
     // are fetched up front because an Impact needs the user and open-in-view is off.
-    @Query("""
+        @Query("""
             select a from Activity a
             join fetch a.itinerary i
             join fetch i.user
@@ -25,7 +25,8 @@ public interface ActivityRepository extends JpaRepository<Activity, Long> {
               and not exists (
                     select 1 from Impact im
                     where im.activity = a
-                      and im.news.id = :newsId)
+                      and im.news.id = :newsId
+                      and im.reason is not null)
             """)
     List<Activity> findPendingForNews(@Param("newsId") Long newsId,
                                       @Param("countryId") Long countryId,

@@ -33,7 +33,7 @@ public interface ItineraryRepository extends JpaRepository<Itinerary, Long> {
 
     // Same, but only the itineraries that have no itinerary-level impact row for this news yet,
     // so one news article is never judged twice against the same itinerary.
-    @Query("""
+        @Query("""
             select i from Itinerary i
             join fetch i.user
             join fetch i.country
@@ -43,7 +43,8 @@ public interface ItineraryRepository extends JpaRepository<Itinerary, Long> {
                     select 1 from Impact im
                     where im.itinerary = i
                       and im.news.id = :newsId
-                      and im.activity is null)
+                      and im.activity is null
+                      and im.reason is not null)
             """)
     List<Itinerary> findPendingForNews(@Param("newsId") Long newsId,
                                        @Param("countryId") Long countryId,
