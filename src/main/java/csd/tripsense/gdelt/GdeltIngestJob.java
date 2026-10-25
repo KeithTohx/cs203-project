@@ -15,7 +15,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.context.ApplicationEventPublisher;
 
+import csd.tripsense.news.NewsIngestCompletedEvent;
 import csd.tripsense.news.News;
 import csd.tripsense.news.NewsService;
 import csd.tripsense.country.Country;
@@ -38,9 +40,11 @@ public class GdeltIngestJob {
     private volatile String currentFile;
     private final int batchSize;
     private final CountryService countryService;
+    private final ApplicationEventPublisher events;
 
     public GdeltIngestJob(GkgClient client, GkgParser parser, GkgRelevanceFilter relevanceFilter,
                         NewsService newsService, CountryService countryService,
+                        ApplicationEventPublisher events,
                         @Value("${gdelt.ingest.enabled}") boolean enabled,
                         @Value("${gdelt.ai.max-per-run:60}") int maxPerRun,
                         @Value("${gdelt.ai.batch-size:10}") int batchSize) {
@@ -52,6 +56,7 @@ public class GdeltIngestJob {
         this.enabled = enabled;
         this.maxPerRun = maxPerRun;
         this.batchSize = Math.max(1, batchSize);
+        this.events = events;
     }
 
     @Scheduled(fixedRateString = "${gdelt.ingest.interval-ms}",
@@ -101,7 +106,6 @@ public class GdeltIngestJob {
             // 4. ask the model in batches; if a call fails, stop and continue from there next poll
             List<News> accepted = new ArrayList<>();
             List<String> checked = new ArrayList<>();
-            boolean aborted = false;
             for (int start = 0; start < toCheck.size(); start += batchSize) {
                 List<GkgArticle> batch = toCheck.subList(start, Math.min(start + batchSize, toCheck.size()));
                 try {
@@ -114,7 +118,6 @@ public class GdeltIngestJob {
                     }
                 } catch (Exception e) {
                     log.warn("GDELT: AI filter failed, stopping this run: {}", e.getMessage());
-                    aborted = true;
                     break;
                 }
             }
@@ -123,24 +126,29 @@ public class GdeltIngestJob {
             checkedUrls.addAll(checked);            // only after the save worked
 
             int remaining = pending.size() - checked.size();
-            if (remaining == 0) {
+            boolean fileDone = remaining == 0;
+            if (fileDone) {
                 lastProcessedUrl = url;             // everything judged, this file is done
             }
             log.info("GDELT: scanned {} rows, {} candidates, {} pending, checked {}, accepted {}, saved {}, {} left for next run ({})",
                     rows[0], byUrl.size(), pending.size(), checked.size(), accepted.size(), saved, remaining, url);
+
+            if (saved > 0 || fileDone) {
+                events.publishEvent(new NewsIngestCompletedEvent(url));   // triggers impact evaluation
+            }
         } catch (Exception e) {
             log.warn("GDELT ingest failed: {}", e.getMessage());
         }
     }
-
+    
         private Map<String, Country> countriesFor(List<GkgArticle> articles) {
-        Set<String> codes = articles.stream()
-                .flatMap(a -> a.countryCodes().stream())
-                .collect(Collectors.toSet());
-        if (codes.isEmpty()) return Map.of();
-        return countryService.getCountriesByFipsCodes(codes).stream()
-                .collect(Collectors.toMap(Country::getFipsCode, c -> c, (a, b) -> a));
-    }
+            Set<String> codes = articles.stream()
+                    .flatMap(a -> a.countryCodes().stream())
+                    .collect(Collectors.toSet());
+            if (codes.isEmpty()) return Map.of();
+            return countryService.getCountriesByFipsCodes(codes).stream()
+                    .collect(Collectors.toMap(Country::getFipsCode, c -> c, (a, b) -> a));
+        }
 
     private News toNews(GkgArticle a, Map<String, Country> countriesByCode) {
         News n = new News();
