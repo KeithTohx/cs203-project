@@ -42,12 +42,14 @@ create table itinerary {
 create table activity {
     id integer primary key,
     itinerary_id integer not null,
+    country_id integer,            -- copied from the itinerary; null on rows created before this column existed
     name varchar not null,
     address varchar,
     date_start timestamp,
     date_end timestamp,
 
-    foreign key (itinerary_id) references itinerary(id)
+    foreign key (itinerary_id) references itinerary(id),
+    foreign key (country_id) references country(id)
 }
 
 -- News table for transit disruption updates and news articles.
