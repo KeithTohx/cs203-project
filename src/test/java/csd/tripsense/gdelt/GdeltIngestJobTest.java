@@ -27,6 +27,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import csd.tripsense.news.News;
 import csd.tripsense.news.NewsService;
+import csd.tripsense.country.Country;
+import csd.tripsense.country.CountryService;
 
 @ExtendWith(MockitoExtension.class)
 class GdeltIngestJobTest {
@@ -39,6 +41,7 @@ class GdeltIngestJobTest {
     @Mock GkgParser parser;
     @Mock GkgRelevanceFilter relevanceFilter;
     @Mock NewsService newsService;
+    @Mock CountryService countryService;
 
     @Captor ArgumentCaptor<List<GkgArticle>> batchCaptor;   // what was sent to judgeBatch
     @Captor ArgumentCaptor<List<News>> savedCaptor;         // what was sent to saveNewArticles
@@ -46,7 +49,7 @@ class GdeltIngestJobTest {
     // ---------------------------------------------------------------- helpers
 
     private GdeltIngestJob job(boolean enabled, int maxPerRun, int batchSize) {
-        return new GdeltIngestJob(client, parser, relevanceFilter, newsService,
+        return new GdeltIngestJob(client, parser, relevanceFilter, newsService, countryService,
                 enabled, maxPerRun, batchSize);
     }
 
@@ -83,7 +86,7 @@ class GdeltIngestJobTest {
     void run_disabled_doesNothing() {
         job(false, 300, 10).run();
 
-        verifyNoInteractions(client, parser, relevanceFilter, newsService);
+        verifyNoInteractions(client, parser, relevanceFilter, newsService, countryService);
     }
 
     // TESTS: if (latest.isEmpty()) { log.warn("no GKG file listed..."); return; }
@@ -94,7 +97,7 @@ class GdeltIngestJobTest {
         job(true, 300, 10).run();
 
         verify(client, never()).readLines(any(), any());
-        verifyNoInteractions(parser, relevanceFilter, newsService);
+        verifyNoInteractions(parser, relevanceFilter, newsService, countryService);
     }
 
     // TESTS: the chunking loop  for (int start = 0; start < toCheck.size(); start += batchSize)
@@ -243,5 +246,37 @@ class GdeltIngestJobTest {
         assertThat(batchCaptor.getAllValues()).allSatisfy(batch ->
                 assertThat(batch).extracting(GkgArticle::url).containsExactly(article(1).url()));
         // article 2 (left over from file A) is never judged: its file was replaced
+    }
+
+        // TESTS: toNews(a, countriesByCode) -> the article's FIPS codes become Country links
+    @Test
+    void run_linksAcceptedNewsToTheMatchingCountries() throws Exception {
+        Country japan = new Country();
+        japan.setId(1L);
+        japan.setName("Japan");
+        japan.setFipsCode("JA");
+        when(client.latestGkgUrl()).thenReturn(Optional.of(FILE_A));
+        givenFile(FILE_A, 1);                                   // article(1) has codes {"JA"}
+        when(countryService.getCountriesByFipsCodes(any())).thenReturn(List.of(japan));
+        when(relevanceFilter.judgeBatch(anyList())).thenReturn(List.of(true));
+
+        job(true, 300, 10).run();
+
+        verify(newsService).saveNewArticles(savedCaptor.capture());
+        assertThat(savedCaptor.getValue().get(0).getCountries()).containsExactly(japan);
+    }
+
+    // TESTS: a code with no Country row is skipped, but the article is still saved
+    @Test
+    void run_codeWithNoCountryRow_stillSavesTheNewsWithNoCountries() throws Exception {
+        when(client.latestGkgUrl()).thenReturn(Optional.of(FILE_A));
+        givenFile(FILE_A, 1);
+        when(countryService.getCountriesByFipsCodes(any())).thenReturn(List.of());
+        when(relevanceFilter.judgeBatch(anyList())).thenReturn(List.of(true));
+
+        job(true, 300, 10).run();
+
+        verify(newsService).saveNewArticles(savedCaptor.capture());
+        assertThat(savedCaptor.getValue().get(0).getCountries()).isEmpty();
     }
 }

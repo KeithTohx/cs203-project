@@ -7,6 +7,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.HashSet;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +18,8 @@ import org.springframework.stereotype.Component;
 
 import csd.tripsense.news.News;
 import csd.tripsense.news.NewsService;
+import csd.tripsense.country.Country;
+import csd.tripsense.country.CountryService;
 
 /** Polls GDELT for the newest 15-minute GKG file and stores articles the AI judges relevant. */
 @Component
@@ -33,9 +37,10 @@ public class GdeltIngestJob {
     private final Set<String> checkedUrls = ConcurrentHashMap.newKeySet();   // already judged (accepted or rejected) for currentFile
     private volatile String currentFile;
     private final int batchSize;
+    private final CountryService countryService;
 
     public GdeltIngestJob(GkgClient client, GkgParser parser, GkgRelevanceFilter relevanceFilter,
-                        NewsService newsService,
+                        NewsService newsService, CountryService countryService,
                         @Value("${gdelt.ingest.enabled}") boolean enabled,
                         @Value("${gdelt.ai.max-per-run:60}") int maxPerRun,
                         @Value("${gdelt.ai.batch-size:10}") int batchSize) {
@@ -43,9 +48,10 @@ public class GdeltIngestJob {
         this.parser = parser;
         this.relevanceFilter = relevanceFilter;
         this.newsService = newsService;
+        this.countryService = countryService;
         this.enabled = enabled;
         this.maxPerRun = maxPerRun;
-        this.batchSize = Math.max(1, batchSize);   // never below 1
+        this.batchSize = Math.max(1, batchSize);
     }
 
     @Scheduled(fixedRateString = "${gdelt.ingest.interval-ms}",
@@ -89,6 +95,9 @@ public class GdeltIngestJob {
             // 3. this run's share
             List<GkgArticle> toCheck = pending.size() > maxPerRun ? pending.subList(0, maxPerRun) : pending;
 
+            // 3b. one small query: GDELT country codes -> our Country rows
+            Map<String, Country> countriesByCode = countriesFor(toCheck);
+
             // 4. ask the model in batches; if a call fails, stop and continue from there next poll
             List<News> accepted = new ArrayList<>();
             List<String> checked = new ArrayList<>();
@@ -99,7 +108,7 @@ public class GdeltIngestJob {
                     List<Boolean> verdicts = relevanceFilter.judgeBatch(batch);
                     for (int i = 0; i < batch.size(); i++) {
                         if (verdicts.get(i)) {
-                            accepted.add(toNews(batch.get(i)));
+                            accepted.add(toNews(batch.get(i), countriesByCode));
                         }
                         checked.add(batch.get(i).url());
                     }
@@ -124,13 +133,29 @@ public class GdeltIngestJob {
         }
     }
 
-    private News toNews(GkgArticle a) {
+        private Map<String, Country> countriesFor(List<GkgArticle> articles) {
+        Set<String> codes = articles.stream()
+                .flatMap(a -> a.countryCodes().stream())
+                .collect(Collectors.toSet());
+        if (codes.isEmpty()) return Map.of();
+        return countryService.getCountriesByFipsCodes(codes).stream()
+                .collect(Collectors.toMap(Country::getFipsCode, c -> c, (a, b) -> a));
+    }
+
+    private News toNews(GkgArticle a, Map<String, Country> countriesByCode) {
         News n = new News();
         n.setTitle(a.title());
         n.setUrl(a.url());
         n.setSource(a.domain());
         n.setPublishedAt(a.publishedAt());   // batch time, UTC
         n.setDescription(a.description());
+
+        Set<Country> countries = new HashSet<>();
+        for (String code : a.countryCodes()) {
+            Country c = countriesByCode.get(code);
+            if (c != null) countries.add(c);   // codes we have no Country row for are skipped
+        }
+        n.setCountries(countries);
         return n;
     }
 }

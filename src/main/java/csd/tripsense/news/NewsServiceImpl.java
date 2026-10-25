@@ -7,6 +7,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import java.time.LocalDateTime;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -95,6 +97,11 @@ public class NewsServiceImpl implements NewsService {
         return newsRepository.findByUrlIn(urls).stream()
                 .map(News::getUrl)
                 .collect(Collectors.toSet());
+    }
+
+    @Override
+    public List<News> getNewsByCountrySince(Long countryId, LocalDateTime since) {
+        return newsRepository.findByCountryIdSince(countryId, since);
     }
 
 }

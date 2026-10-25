@@ -1,13 +1,18 @@
 -- Seed data for local testing. INSERT OR IGNORE with fixed ids makes it safe to re-run on every restart. 
 -- Parents are inserted before children because of the foreign keys.
 
-INSERT OR IGNORE INTO country (id, name) VALUES
-    (1, 'Japan'),
-    (2, 'Singapore'),
-    (3, 'Thailand'),
-    (4, 'South Korea'),
-    (5, 'Indonesia'),
-    (6, 'Vietnam');
+INSERT OR IGNORE INTO country (id, name, fips_code) VALUES
+    (1, 'Japan', 'JA'),
+    (2, 'Singapore', 'SN'),
+    (3, 'Thailand', 'TH'),
+    (4, 'South Korea', 'KS'),
+    (5, 'Indonesia', 'ID'),
+    (6, 'Vietnam', 'VM');
+
+UPDATE country
+SET fips_code = CASE id WHEN 1 THEN 'JA' WHEN 2 THEN 'SN' WHEN 3 THEN 'TH'
+                        WHEN 4 THEN 'KS' WHEN 5 THEN 'ID' WHEN 6 THEN 'VM' END
+WHERE fips_code IS NULL AND id IN (1, 2, 3, 4, 5, 6);
 
 -- Passwords are BCrypt hashes (login compares against the hash, so plaintext would never match).
 -- Plain-text values for local testing: john/alice/bob/carol/dave = password123, admin = admin123.
@@ -72,6 +77,16 @@ INSERT OR IGNORE INTO news (id, title, description, source, url, published_at) V
     (8, 'Universal Studios Singapore to close for maintenance',
         'The park will close for several days for scheduled works, with dates to be confirmed.',
         'The Straits Times', 'https://example.com/news/uss-maintenance', '2026-09-27 16:30:00');
+
+INSERT OR IGNORE INTO news_country (news_id, country_id) VALUES
+    (1, 1),   -- Hokkaido quake: Japan
+    (2, 3),   -- Bangkok flooding: Thailand
+    (3, 6),   -- Vietnam typhoon: Vietnam
+    (4, 5),   -- Mount Batur: Indonesia
+    (5, 3),   -- Grand Palace closure: Thailand
+    (6, 4),   -- Seoul rail strike: South Korea
+    (7, 3),   -- SEA haze (northern Thailand): Thailand
+    (8, 2);   -- USS maintenance: Singapore
 
 INSERT OR IGNORE INTO activity (id, itinerary_id, country_id, name, address, date_start, date_end) VALUES
     (1,  1, 1, 'Ski at Niseko',              'Niseko, Hokkaido, Japan',            '2026-12-16 09:00:00', '2026-12-16 16:00:00'),

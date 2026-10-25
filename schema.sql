@@ -24,6 +24,7 @@ create table user {
 create table country {
     id integer primary key,
     name varchar not null
+    fips_code varchar
 }
 
 create table itinerary {
@@ -76,4 +77,14 @@ create table impact {
     foreign key (news_id) references news(id),
     foreign key (itinerary_id) references itinerary(id),
     foreign key (activity_id) references activity(id)
+}
+
+-- Which countries a news article is about. Corresponds to News.countries.
+create table news_country {
+    news_id integer not null,
+    country_id integer not null,
+
+    primary key (news_id, country_id),
+    foreign key (news_id) references news(id),
+    foreign key (country_id) references country(id)
 }
