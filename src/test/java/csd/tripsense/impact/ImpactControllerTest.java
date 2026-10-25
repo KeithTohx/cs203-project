@@ -23,10 +23,10 @@ import csd.tripsense.itinerary.ItineraryAccess;
 import csd.tripsense.user.User;
 import csd.tripsense.user.UserRepository;
 
-// unit tests for who may reject an impact. ItineraryAccess is the real one, so these check the
+// unit tests for ImpactController. ItineraryAccess is the real one, so these check the
 // same ownership rule the itinerary endpoints use, without starting a web server
 @ExtendWith(MockitoExtension.class)
-@DisplayName("ImpactController Reject Unit Tests")
+@DisplayName("ImpactController Unit Tests")
 class ImpactControllerTest {
 
     @Mock

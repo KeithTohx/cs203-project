@@ -28,10 +28,10 @@ import csd.tripsense.news.News;
 import csd.tripsense.news.NewsService;
 import csd.tripsense.user.User;
 
-// unit tests for rejecting impacts in ImpactServiceImpl. the repository and the model are mocked,
-// so these check the rules around a rejection and not the database or the ai
+// unit tests for ImpactServiceImpl. the repository and the model are mocked,
+// so these check the service's own rules and not the database or the ai
 @ExtendWith(MockitoExtension.class)
-@DisplayName("ImpactServiceImpl Reject Unit Tests")
+@DisplayName("ImpactService Unit Tests")
 class ImpactServiceImplTest {
 
     @Mock
