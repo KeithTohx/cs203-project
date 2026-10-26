@@ -5,6 +5,7 @@ import java.util.*;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.stereotype.Service;
+import org.springframework.ai.chat.memory.ChatMemoryRepository;
 
 import tools.jackson.databind.ObjectMapper;
 
@@ -57,6 +58,7 @@ public class ChatbotServiceImpl implements ChatbotService {
     private final ActivityService activityService;
     private final ImpactService impactService;
     private final ObjectMapper mapper;
+    private final ChatMemoryRepository chatMemoryRepository; 
 
     @Override
     public String askChatBot(Long userId, Long itineraryId, String prompt) {
@@ -80,6 +82,15 @@ public class ChatbotServiceImpl implements ChatbotService {
     public void reset(Long userId, Long itineraryId) {
         itineraryService.getItineraryByIdAndUserId(itineraryId, userId);   // ownership check
         chatMemory.clear(conversationId(userId, itineraryId));
+    }
+    @Override
+    public void deleteAllConversationsFor(Long userId) {
+        String prefix = userId + ":";   // the colon stops user 1 from matching user 11
+        for (String conversationId : chatMemoryRepository.findConversationIds()) {
+            if (conversationId.startsWith(prefix)) {
+                chatMemoryRepository.deleteByConversationId(conversationId);
+            }
+        }
     }
 
     private ChatClient.ChatClientRequestSpec buildRequest(Long userId, Long itineraryId, String prompt) {
