@@ -54,7 +54,3 @@ public interface ItineraryRepository extends JpaRepository<Itinerary, Long> {
                                        @Param("countryId") Long countryId,
                                        @Param("now") LocalDateTime now);
 }
-
-
-}
-
