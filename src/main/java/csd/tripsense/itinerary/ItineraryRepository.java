@@ -7,10 +7,14 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import java.util.List;
 
 @Repository
 public interface ItineraryRepository extends JpaRepository<Itinerary, Long> {
 
+    //Returns all of one user’s itineraries  
+    List<Itinerary> findByUserId(Long userId);
+    
     // Countries that have at least one trip still to come (or under way). Lets the evaluator
     // skip news about countries nobody is travelling to.
     @Query("""
@@ -50,3 +54,7 @@ public interface ItineraryRepository extends JpaRepository<Itinerary, Long> {
                                        @Param("countryId") Long countryId,
                                        @Param("now") LocalDateTime now);
 }
+
+
+}
+

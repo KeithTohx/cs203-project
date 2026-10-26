@@ -23,9 +23,16 @@ jobs:
           script: |
             set -e
             cd /opt/tripsense
-            git pull --ff-only
+            # force server to match main
+            git fetch --prune origin
+            git reset --hard origin/main
             ./mvnw -B -q package -DskipTests
             sudo systemctl restart tripsense
-            # app starts in about 9s, so 20 is comfortable margin
-            sleep 20
-            curl -fsS -o /dev/null http://localhost/v3/api-docs
+            # poll rather than a fixed wait, startup has already grown 9s -> 14s
+            for i in $(seq 1 12); do
+              sleep 5
+              if curl -fsS -o /dev/null http://localhost/v3/api-docs; then exit 0; fi
+            done
+            echo "app did not come back up"
+            journalctl -u tripsense -n 30 --no-pager
+            exit 1

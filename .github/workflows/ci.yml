@@ -9,11 +9,13 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # pinned, not ubuntu-latest: that moves to ubuntu 26 on 19 oct and we do not
+    # want the runner changing under us mid sprint. revisit after the demo
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           java-version: '25'
           distribution: temurin

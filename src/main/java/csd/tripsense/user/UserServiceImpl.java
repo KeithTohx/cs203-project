@@ -7,6 +7,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import csd.tripsense.chat.ChatbotService;
+import csd.tripsense.impact.ImpactRepository;
+import csd.tripsense.itinerary.ItineraryRepository;
+
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 
@@ -15,10 +19,18 @@ public class UserServiceImpl implements UserService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
-
-    public UserServiceImpl(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+    private final ItineraryRepository itineraryRepository;
+    private final ImpactRepository impactRepository;
+    private final ChatbotService chatbotService;
+    
+    public UserServiceImpl(UserRepository userRepository, PasswordEncoder passwordEncoder,
+                        ItineraryRepository itineraryRepository, ImpactRepository impactRepository,
+                        ChatbotService chatbotService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.itineraryRepository = itineraryRepository;
+        this.impactRepository = impactRepository;
+        this.chatbotService = chatbotService;
     }
 
     @Override
@@ -102,5 +114,25 @@ public class UserServiceImpl implements UserService {
         if (password.getBytes(StandardCharsets.UTF_8).length > 72) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "password must be at most 72 bytes");
         }
+    }
+
+    @Override
+    @Transactional
+    public void deleteAccount(Long userId, String currentPassword) {
+        User user = findById(userId);
+
+        if (!passwordEncoder.matches(currentPassword, user.getPassword())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "current password is incorrect");
+        }
+        if ("ADMIN".equals(user.getRole()) && userRepository.countByRole("ADMIN") <= 1) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "the last admin account cannot be deleted");
+        }
+
+        chatbotService.deleteAllConversationsFor(userId);   // chat history is personal data too
+
+        impactRepository.deleteByUserId(userId);
+        itineraryRepository.deleteAll(itineraryRepository.findByUserId(userId));  // cascades to activities and impacts
+        itineraryRepository.flush();
+        userRepository.delete(user);
     }
 }

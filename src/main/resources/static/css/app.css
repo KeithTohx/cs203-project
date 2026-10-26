@@ -541,6 +541,93 @@ summary {
     background: var(--bad-bg);
 }
 
+/* news title with its source bubble beside it */
+.imp-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+}
+
+.source {
+    position: relative;
+    display: inline-block;
+}
+
+.source-bubble {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 99px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: default;
+}
+
+a.source-bubble {
+    cursor: pointer;
+}
+
+a.source-bubble:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* padding-top bridges the gap so the mouse can move onto the popover without it closing */
+.source-popover {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 10;
+    display: none;
+    padding-top: 6px;
+    width: max-content;
+    max-width: min(320px, calc(100vw - 48px));
+}
+
+.source:hover .source-popover,
+.source:focus-within .source-popover {
+    display: block;
+}
+
+.source-popover::before {
+    content: "";
+    position: absolute;
+    inset: 6px 0 0;
+    z-index: -1;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgb(0 0 0 / 15%);
+}
+
+.source-popover > :first-child {
+    padding-top: 10px;
+}
+
+.source-popover > * {
+    display: block;
+    padding: 2px 12px;
+}
+
+.source-popover > :last-child {
+    padding-bottom: 10px;
+}
+
+.source-description {
+    font-size: 14px;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
 .msg {
     padding: 14px;
     border: 1px dashed var(--border);
