@@ -1,15 +1,16 @@
 package csd.tripsense.auth;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 import java.util.List;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -22,129 +23,117 @@ import org.springframework.security.core.session.SessionRegistry;
 import jakarta.servlet.http.Cookie;
 
 /**
- * Unit tests for SessionService.expireSessionsFor (existing, used by the new code) and
- * SessionService.endAllSessions (new).
+ * LOCATION: src/test/java/csd/tripsense/auth/SessionServiceTest.java
  *
- * SessionRegistry is a Mockito mock. The servlet request/response are Spring's MockHttpServletRequest /
- * MockHttpServletResponse, which behave like the real thing, so the real logout handlers can run.
+ * Unit tests for SessionService.endAllSessions (added for the delete-account story) and
+ * SessionService.expireSessionsFor (existing, called by endAllSessions)
+ * Tests that every session of the account is expired, the current session is invalidated and the
+ * security context cleared, and the JSESSIONID cookie is sent back expired
+ * SessionRegistry is a Mockito mock. The request and response are Spring's MockHttpServletRequest and
+ * MockHttpServletResponse, so the real Spring Security logout handlers run against them
+ * refreshCurrentSession is not covered here
+ * Does not cover the 401 that other devices get on their next request, which comes from the
+ * session filter in the Spring Security filter chain
  *
- * Map of source statements -> tests that cover them
- * ---------------------------------------------------------------------------------------------
- * endAllSessions: expireSessionsFor(email);                       | endAllSessions_expiresEveryMatchingSession
- * endAllSessions: new SecurityContextLogoutHandler().logout(...)  | endAllSessions_invalidatesCurrentSession_andClearsContext
- * endAllSessions: new CookieClearingLogoutHandler("JSESSIONID")   | endAllSessions_clearsJsessionidCookie
- * expireSessionsFor: principal instanceof CurrentUser && email ==  | expireSessionsFor_matchesEmailIgnoringCase_andSkipsOthers
- * ---------------------------------------------------------------------------------------------
+ * Source statement                                           -> Test that covers it
+ * endAllSessions: expireSessionsFor(email)                   -> endAllSessions_ShouldExpireEveryMatchingSession_WhenUserHasManySessions
+ * endAllSessions: SecurityContextLogoutHandler.logout(...)   -> endAllSessions_ShouldInvalidateSessionAndClearContext_WhenLoggedIn
+ * endAllSessions: CookieClearingLogoutHandler("JSESSIONID")  -> endAllSessions_ShouldClearJsessionidCookie_WhenCalled
+ * expireSessionsFor: equalsIgnoreCase(email) and the count   -> expireSessionsFor_ShouldMatchEmailIgnoringCase_WhenCasingDiffers
  */
 @ExtendWith(MockitoExtension.class)
+@DisplayName("SessionService Unit Tests")
 class SessionServiceTest {
 
-    @Mock private SessionRegistry sessionRegistry;
-    @Mock private SessionInformation session1;
-    @Mock private SessionInformation session2;
-    @Mock private SessionInformation otherUsersSession;
+    @Mock
+    private SessionRegistry sessionRegistry;
 
-    private final CurrentUser bob = new CurrentUser(4L, "bob@example.com", "bob", null, "USER");
-    private final CurrentUser alice = new CurrentUser(2L, "alice@example.com", "alice", null, "USER");
+    @Mock
+    private SessionInformation bobSession1;
+
+    @Mock
+    private SessionInformation bobSession2;
+
+    @InjectMocks
+    private SessionService sessionService;
+
+    private CurrentUser bob;
+    private CurrentUser alice;
+    private MockHttpServletRequest httpRequest;
+    private MockHttpServletResponse httpResponse;
+
+    @BeforeEach
+    void setUp() {
+        bob = new CurrentUser(4L, "bob@example.com", "bob", null, "USER");
+        alice = new CurrentUser(2L, "alice@example.com", "alice", null, "USER");
+        httpRequest = new MockHttpServletRequest();
+        httpResponse = new MockHttpServletResponse();
+
+        // The registry knows two logged-in accounts, and bob is logged in on two devices
+        when(sessionRegistry.getAllPrincipals()).thenReturn(List.of(bob, alice));
+        when(sessionRegistry.getAllSessions(bob, false)).thenReturn(List.of(bobSession1, bobSession2));
+    }
 
     @AfterEach
     void clearSecurityContext() {
-        SecurityContextHolder.clearContext();   // the handlers touch the static holder; keep tests independent
+        // The logout handlers use the static SecurityContextHolder, so reset it between tests
+        SecurityContextHolder.clearContext();
     }
 
-    private SessionService service() {
-        return new SessionService(sessionRegistry);
-    }
+    // ===== END ALL SESSIONS TESTS =====
 
-    private void givenRegistryHoldsBobAndAlice() {
-        when(sessionRegistry.getAllPrincipals()).thenReturn(List.of(bob, alice));
-        when(sessionRegistry.getAllSessions(bob, false)).thenReturn(List.of(session1, session2));
-    }
-
-    // =========================================================================================
-    // endAllSessions -> expireSessionsFor(email)
-    // =========================================================================================
-
-    /**
-     * TESTS: endAllSessions calls expireSessionsFor(email), which calls expireNow() on EVERY session of
-     * the account (two devices here) and not on anyone else's.
-     */
     @Test
-    void endAllSessions_expiresEveryMatchingSession() {
-        givenRegistryHoldsBobAndAlice();
-        MockHttpServletRequest request = new MockHttpServletRequest();
-        MockHttpServletResponse response = new MockHttpServletResponse();
+    @DisplayName("Should expire every session of the account and no one else's")
+    void endAllSessions_ShouldExpireEveryMatchingSession_WhenUserHasManySessions() {
+        // Act
+        sessionService.endAllSessions("bob@example.com", httpRequest, httpResponse);
 
-        service().endAllSessions("bob@example.com", request, response);
-
-        verify(session1).expireNow();                                              // TESTS: device 1 logged out
-        verify(session2).expireNow();                                              // TESTS: device 2 logged out
-        verify(sessionRegistry, never()).getAllSessions(alice, false);             // TESTS: alice untouched
+        // Assert
+        verify(bobSession1, times(1)).expireNow();
+        verify(bobSession2, times(1)).expireNow();
+        verify(sessionRegistry, never()).getAllSessions(alice, false);
     }
 
-    // =========================================================================================
-    // endAllSessions -> SecurityContextLogoutHandler
-    // =========================================================================================
-
-    /**
-     * TESTS: new SecurityContextLogoutHandler().logout(request, response, auth)
-     * -> the current HTTP session is invalidated and the security context is cleared.
-     */
     @Test
-    void endAllSessions_invalidatesCurrentSession_andClearsContext() {
-        givenRegistryHoldsBobAndAlice();
-        MockHttpServletRequest request = new MockHttpServletRequest();
-        request.getSession(true);                                                  // a live session exists
-        MockHttpServletResponse response = new MockHttpServletResponse();
+    @DisplayName("Should invalidate the current session and clear the security context")
+    void endAllSessions_ShouldInvalidateSessionAndClearContext_WhenLoggedIn() {
+        // Arrange - a live session and an authenticated user
+        httpRequest.getSession(true);
+        SecurityContextHolder.getContext().setAuthentication(
+            UsernamePasswordAuthenticationToken.authenticated(bob, null, bob.getAuthorities()));
 
-        UsernamePasswordAuthenticationToken auth = UsernamePasswordAuthenticationToken.authenticated(
-                bob, null, bob.getAuthorities());
-        SecurityContextHolder.getContext().setAuthentication(auth);                // the "logged in" state
+        // Act
+        sessionService.endAllSessions("bob@example.com", httpRequest, httpResponse);
 
-        service().endAllSessions("bob@example.com", request, response);
-
-        assertThat(request.getSession(false)).isNull();                            // TESTS: session invalidated
-        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull(); // TESTS: context cleared
+        // Assert
+        assertNull(httpRequest.getSession(false));
+        assertNull(SecurityContextHolder.getContext().getAuthentication());
     }
 
-    // =========================================================================================
-    // endAllSessions -> CookieClearingLogoutHandler("JSESSIONID")
-    // =========================================================================================
-
-    /**
-     * TESTS: new CookieClearingLogoutHandler("JSESSIONID").logout(...)
-     * -> the response carries a JSESSIONID cookie with max-age 0, which makes the browser delete it.
-     */
     @Test
-    void endAllSessions_clearsJsessionidCookie() {
-        givenRegistryHoldsBobAndAlice();
-        MockHttpServletRequest request = new MockHttpServletRequest();
-        MockHttpServletResponse response = new MockHttpServletResponse();
+    @DisplayName("Should send back an expired JSESSIONID cookie so the browser deletes it")
+    void endAllSessions_ShouldClearJsessionidCookie_WhenCalled() {
+        // Act
+        sessionService.endAllSessions("bob@example.com", httpRequest, httpResponse);
 
-        service().endAllSessions("bob@example.com", request, response);
-
-        Cookie cookie = response.getCookie("JSESSIONID");
-        assertThat(cookie).isNotNull();                                            // TESTS: cookie is sent back
-        assertThat(cookie.getMaxAge()).isZero();                                   // TESTS: ...as an expiry
+        // Assert - max age 0 tells the browser to delete the cookie
+        Cookie cookie = httpResponse.getCookie("JSESSIONID");
+        assertNotNull(cookie);
+        assertEquals(0, cookie.getMaxAge());
     }
 
-    // =========================================================================================
-    // expireSessionsFor (existing method that endAllSessions relies on)
-    // =========================================================================================
+    // ===== EXPIRE SESSIONS TESTS =====
 
-    /**
-     * TESTS: the principal filter in expireSessionsFor: matches the email case-insensitively
-     * (equalsIgnoreCase) and returns the number of sessions ended; other accounts are skipped.
-     */
     @Test
-    void expireSessionsFor_matchesEmailIgnoringCase_andSkipsOthers() {
-        givenRegistryHoldsBobAndAlice();
+    @DisplayName("Should match the email ignoring case and return how many sessions were ended")
+    void expireSessionsFor_ShouldMatchEmailIgnoringCase_WhenCasingDiffers() {
+        // Act
+        int expired = sessionService.expireSessionsFor("BOB@Example.com");
 
-        int expired = service().expireSessionsFor("BOB@Example.com");              // different casing on purpose
-
-        assertThat(expired).isEqualTo(2);                                          // TESTS: count of sessions ended
-        verify(session1).expireNow();
-        verify(session2).expireNow();
-        verify(otherUsersSession, never()).expireNow();                            // TESTS: not called for others
+        // Assert
+        assertEquals(2, expired);
+        verify(bobSession1, times(1)).expireNow();
+        verify(bobSession2, times(1)).expireNow();
+        verify(sessionRegistry, never()).getAllSessions(alice, false);
     }
 }
