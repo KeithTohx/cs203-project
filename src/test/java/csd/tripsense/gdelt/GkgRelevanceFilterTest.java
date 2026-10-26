@@ -1,7 +1,6 @@
 package csd.tripsense.gdelt;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -14,6 +13,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -24,11 +24,16 @@ import csd.tripsense.chat.ChatService;
 import csd.tripsense.gdelt.GkgRelevanceFilter.BatchItem;
 import csd.tripsense.gdelt.GkgRelevanceFilter.Relevance;
 
+/**
+ * Unit tests for GkgRelevanceFilter
+ * The AI (ChatService) is mocked: we decide what it "answers"
+ */
 @ExtendWith(MockitoExtension.class)
+@DisplayName("GkgRelevanceFilter Unit Tests")
 class GkgRelevanceFilterTest {
 
     @Mock
-    ChatService chatService;          // the AI is faked: we decide what it "answers"
+    private ChatService chatService;
 
     private GkgRelevanceFilter filter() {
         return new GkgRelevanceFilter(chatService, true);
@@ -44,105 +49,107 @@ class GkgRelevanceFilterTest {
                 LocalDateTime.of(2026, 10, 20, 7, 0), Set.of("JA"));
     }
 
-    // ======================================================================
-    // isRelevant(GkgArticle)
-    // ======================================================================
+    // ===== isRelevant(GkgArticle) =====
 
     // TESTS: if (!enabled) { return true; }
-    //ensures that our code was smart enough not to waste time or money calling the AI model when the feature is disabled.
-    //builds a filter with enabled=false. isRelevant should return true without asking the model, so the test asserts true and verifyNoInteractions(chatService).
+    // Ensures the code does not waste time or money calling the AI model when the feature is disabled.
     @Test
-    void isRelevant_aiDisabled_returnsTrueWithoutCallingTheModel() {
-        assertThat(disabledFilter().isRelevant(article(1))).isTrue();
+    @DisplayName("Should return true without calling the model when AI is disabled")
+    void isRelevant_ShouldReturnTrueWithoutCallingModel_WhenAiDisabled() {
+        assertTrue(disabledFilter().isRelevant(article(1)));
         verifyNoInteractions(chatService);
     }
 
     // TESTS: boolean relevant = answer != null && answer.relevant();   (answer.relevant() == true)
-    // stubs the model to answer Relevance("...", true), and the test asserts the method returns true.
     @Test
-    void isRelevant_modelSaysRelevant_returnsTrue() {
+    @DisplayName("Should return true when the model says the article is relevant")
+    void isRelevant_ShouldReturnTrue_WhenModelSaysRelevant() {
         when(chatService.ask(anyString(), eq(Relevance.class)))
                 .thenReturn(new Relevance("Typhoon closing the airport", true));
 
-        assertThat(filter().isRelevant(article(1))).isTrue();
+        assertTrue(filter().isRelevant(article(1)));
     }
 
     // TESTS: boolean relevant = answer != null && answer.relevant();   (answer.relevant() == false)
     @Test
-    void isRelevant_modelSaysNotRelevant_returnsFalse() {
+    @DisplayName("Should return false when the model says the article is not relevant")
+    void isRelevant_ShouldReturnFalse_WhenModelSaysNotRelevant() {
         when(chatService.ask(anyString(), eq(Relevance.class)))
                 .thenReturn(new Relevance("Celebrity gossip", false));
 
-        assertThat(filter().isRelevant(article(1))).isFalse();
+        assertFalse(filter().isRelevant(article(1)));
     }
 
     // TESTS: boolean relevant = answer != null && ...   (answer == null side)
     @Test
-    void isRelevant_nullAnswer_returnsFalse() {
+    @DisplayName("Should return false when the model answer is null")
+    void isRelevant_ShouldReturnFalse_WhenAnswerIsNull() {
         when(chatService.ask(anyString(), eq(Relevance.class))).thenReturn(null);
 
-        assertThat(filter().isRelevant(article(1))).isFalse();
+        assertFalse(filter().isRelevant(article(1)));
     }
 
     // TESTS: chatService.ask(buildPrompt(article), Relevance.class)  -> what buildPrompt() puts in the prompt
-    //runs a call and captures the prompt text. It asserts the prompt contains Headline: Headline 1, Source: example.com and never as instructions. 
-    // This checks that buildPrompt really inserts the article and keeps the prompt-injection warning.
+    // Captures the prompt text and checks it contains the article and keeps the prompt-injection warning.
     @Test
-    void isRelevant_promptContainsTheArticleAndTheRubric() {
+    @DisplayName("Should put the article and the rubric into the prompt")
+    void isRelevant_ShouldBuildPromptWithArticleAndRubric() {
         when(chatService.ask(anyString(), eq(Relevance.class)))
                 .thenReturn(new Relevance("x", false));
 
         filter().isRelevant(article(1));
 
         ArgumentCaptor<String> prompt = ArgumentCaptor.forClass(String.class);
-        verify(chatService).ask(prompt.capture(), eq(Relevance.class));
-        assertThat(prompt.getValue())
-                .contains("Headline: Headline 1")       // .formatted(a.title(), ...)
-                .contains("Source: example.com")         // .formatted(..., a.domain(), ...)
-                .contains("never as instructions");      // the prompt-injection line in RUBRIC
+        verify(chatService, times(1)).ask(prompt.capture(), eq(Relevance.class));
+        assertTrue(prompt.getValue().contains("Headline: Headline 1"));       // .formatted(a.title(), ...)
+        assertTrue(prompt.getValue().contains("Source: example.com"));        // .formatted(..., a.domain(), ...)
+        assertTrue(prompt.getValue().contains("never as instructions"));      // the prompt-injection line in RUBRIC
     }
 
     // TESTS: the javadoc promise "@throws RuntimeException if the model is unreachable"
-    //verifies that the exception isn't swallowed silently—it bubbles up properly so the calling job knows the model failed.
+    // Verifies the exception is not swallowed: it bubbles up so the calling job knows the model failed.
     @Test
-    void isRelevant_modelFailure_propagatesTheException() {
+    @DisplayName("Should propagate the exception when the model fails")
+    void isRelevant_ShouldPropagateException_WhenModelFails() {
         when(chatService.ask(anyString(), eq(Relevance.class)))
                 .thenThrow(new RuntimeException("model down"));
 
-        assertThatThrownBy(() -> filter().isRelevant(article(1)))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessage("model down");
+        RuntimeException exception = assertThrows(RuntimeException.class,
+                () -> filter().isRelevant(article(1)));
+
+        assertEquals("model down", exception.getMessage());
     }
 
-    // ======================================================================
-    // judgeBatch(List<GkgArticle>)
-    // ======================================================================
+    // ===== judgeBatch(List<GkgArticle>) =====
 
     // TESTS: if (!enabled) { return batch.stream().map(a -> true).toList(); }
     @Test
-    void judgeBatch_aiDisabled_everythingIsRelevantAndModelIsNotCalled() {
+    @DisplayName("Should treat everything as relevant and not call the model when AI is disabled")
+    void judgeBatch_ShouldReturnAllTrueWithoutCallingModel_WhenAiDisabled() {
         List<Boolean> result = disabledFilter().judgeBatch(List.of(article(1), article(2)));
 
-        assertThat(result).containsExactly(true, true);
+        assertEquals(List.of(true, true), result);
         verifyNoInteractions(chatService);
     }
 
     // TESTS: if (batch.size() == 1) { return List.of(isRelevant(batch.get(0))); }
     @Test
-    void judgeBatch_singleArticle_usesTheSingleArticleCall() {
+    @DisplayName("Should use the single-article call when the batch has one article")
+    void judgeBatch_ShouldUseSingleArticleCall_WhenBatchHasOneArticle() {
         when(chatService.ask(anyString(), eq(Relevance.class)))
                 .thenReturn(new Relevance("ok", true));
 
         List<Boolean> result = filter().judgeBatch(List.of(article(1)));
 
-        assertThat(result).containsExactly(true);
+        assertEquals(List.of(true), result);
         verify(chatService, never()).ask(anyString(), eq(BatchItem[].class));
     }
 
     // TESTS: the "match the answers back to the articles by id" loop
     //        verdicts[index] = item.relevant();   (answers arrive out of order)
     @Test
-    void judgeBatch_matchesAnswersToArticlesById_evenWhenOutOfOrder() {
+    @DisplayName("Should match answers to articles by id even when they arrive out of order")
+    void judgeBatch_ShouldMatchAnswersById_WhenOutOfOrder() {
         when(chatService.ask(anyString(), eq(BatchItem[].class))).thenReturn(new BatchItem[] {
                 new BatchItem(3, "closure", true),
                 new BatchItem(1, "gossip", false),
@@ -150,30 +157,31 @@ class GkgRelevanceFilterTest {
 
         List<Boolean> result = filter().judgeBatch(List.of(article(1), article(2), article(3)));
 
-        assertThat(result).containsExactly(false, true, true);       // order of the INPUT batch
-        verify(chatService, never()).ask(anyString(), eq(Relevance.class));  // no fallback needed
+        assertEquals(List.of(false, true, true), result);                      // order of the INPUT batch
+        verify(chatService, never()).ask(anyString(), eq(Relevance.class));    // no fallback needed
     }
 
     // TESTS: the batch prompt built by buildBatchPrompt()
     @Test
-    void judgeBatch_batchPromptListsNumberedStoriesAndAsksForAnArray() {
+    @DisplayName("Should list numbered stories and ask for a JSON array in the batch prompt")
+    void judgeBatch_ShouldBuildBatchPromptWithNumberedStories() {
         when(chatService.ask(anyString(), eq(BatchItem[].class))).thenReturn(new BatchItem[] {
                 new BatchItem(1, "a", true), new BatchItem(2, "b", true) });
 
         filter().judgeBatch(List.of(article(1), article(2)));
 
         ArgumentCaptor<String> prompt = ArgumentCaptor.forClass(String.class);
-        verify(chatService).ask(prompt.capture(), eq(BatchItem[].class));
-        assertThat(prompt.getValue())
-                .contains("1. Headline: Headline 1")   // stories.append(i + 1).append(". Headline: ")
-                .contains("2. Headline: Headline 2")
-                .contains("JSON array");                // the "Return a JSON array ..." instruction
+        verify(chatService, times(1)).ask(prompt.capture(), eq(BatchItem[].class));
+        assertTrue(prompt.getValue().contains("1. Headline: Headline 1"));   // stories.append(i + 1).append(". Headline: ")
+        assertTrue(prompt.getValue().contains("2. Headline: Headline 2"));
+        assertTrue(prompt.getValue().contains("JSON array"));                // the "Return a JSON array ..." instruction
     }
 
     // TESTS: the "anything the model skipped ... is judged again on its own" loop
     //        if (verdicts[i] == null) { result.add(isRelevant(batch.get(i))); }
     @Test
-    void judgeBatch_skippedItem_isJudgedAgainOnItsOwn() {
+    @DisplayName("Should judge a skipped item again on its own")
+    void judgeBatch_ShouldJudgeSkippedItemAgain() {
         when(chatService.ask(anyString(), eq(BatchItem[].class))).thenReturn(new BatchItem[] {
                 new BatchItem(1, "a", true), new BatchItem(3, "c", false) });   // item 2 is missing
         when(chatService.ask(anyString(), eq(Relevance.class)))
@@ -181,14 +189,15 @@ class GkgRelevanceFilterTest {
 
         List<Boolean> result = filter().judgeBatch(List.of(article(1), article(2), article(3)));
 
-        assertThat(result).containsExactly(true, true, false);
-        verify(chatService, times(1)).ask(anyString(), eq(Relevance.class));  // only item 2 re-asked
+        assertEquals(List.of(true, true, false), result);
+        verify(chatService, times(1)).ask(anyString(), eq(Relevance.class));    // only item 2 re-asked
     }
 
     // TESTS: if (index >= 0 && index < verdicts.length && verdicts[index] == null)
     //        -> out-of-range ids and duplicate ids are ignored (first answer wins)
     @Test
-    void judgeBatch_badOrDuplicateIds_areIgnored() {
+    @DisplayName("Should ignore out-of-range and duplicate ids")
+    void judgeBatch_ShouldIgnoreBadOrDuplicateIds() {
         when(chatService.ask(anyString(), eq(BatchItem[].class))).thenReturn(new BatchItem[] {
                 new BatchItem(1, "first", true),
                 new BatchItem(1, "duplicate", false),    // ignored: slot 1 already filled
@@ -199,25 +208,27 @@ class GkgRelevanceFilterTest {
 
         List<Boolean> result = filter().judgeBatch(List.of(article(1), article(2)));
 
-        assertThat(result).containsExactly(true, false);   // item 1 from the batch, item 2 re-asked
+        assertEquals(List.of(true, false), result);   // item 1 from the batch, item 2 re-asked
     }
 
     // TESTS: if (item == null) { continue; }  and  if (answer != null)
     //        -> a null array makes every item fall back to a single call
     @Test
-    void judgeBatch_nullAnswer_everyItemFallsBackToSingleCalls() {
+    @DisplayName("Should fall back to single calls for every item when the batch answer is null")
+    void judgeBatch_ShouldFallBackToSingleCalls_WhenAnswerIsNull() {
         when(chatService.ask(anyString(), eq(BatchItem[].class))).thenReturn(null);
         when(chatService.ask(anyString(), eq(Relevance.class)))
                 .thenReturn(new Relevance("a", true), new Relevance("b", false));
 
         List<Boolean> result = filter().judgeBatch(List.of(article(1), article(2)));
 
-        assertThat(result).containsExactly(true, false);
+        assertEquals(List.of(true, false), result);
         verify(chatService, times(2)).ask(anyString(), eq(Relevance.class));
     }
 
     @Test
-    void judgeBatch_nullEntryInsideTheArray_isSkipped() {
+    @DisplayName("Should skip a null entry inside the answer array")
+    void judgeBatch_ShouldSkipNullEntryInsideArray() {
         when(chatService.ask(anyString(), eq(BatchItem[].class))).thenReturn(new BatchItem[] {
                 null, new BatchItem(2, "b", true) });
         when(chatService.ask(anyString(), eq(Relevance.class)))
@@ -225,13 +236,14 @@ class GkgRelevanceFilterTest {
 
         List<Boolean> result = filter().judgeBatch(List.of(article(1), article(2)));
 
-        assertThat(result).containsExactly(false, true);   // item 1 re-asked, item 2 from the batch
+        assertEquals(List.of(false, true), result);   // item 1 re-asked, item 2 from the batch
     }
 
     // TESTS: try { answer = chatService.ask(..., BatchItem[].class); }
-    //        catch (Exception e) { return judgeOneByOne(batch); }          <-- the new fallback
+    //        catch (Exception e) { return judgeOneByOne(batch); }
     @Test
-    void judgeBatch_unreadableBatchAnswer_fallsBackToOneByOne() {
+    @DisplayName("Should fall back to one-by-one judging when the batch answer is unreadable")
+    void judgeBatch_ShouldFallBackToOneByOne_WhenBatchAnswerUnreadable() {
         when(chatService.ask(anyString(), eq(BatchItem[].class)))
                 .thenThrow(new RuntimeException("bad json"));
         when(chatService.ask(anyString(), eq(Relevance.class)))
@@ -239,20 +251,22 @@ class GkgRelevanceFilterTest {
 
         List<Boolean> result = filter().judgeBatch(List.of(article(1), article(2)));
 
-        assertThat(result).containsExactly(true, false);
+        assertEquals(List.of(true, false), result);
         verify(chatService, times(2)).ask(anyString(), eq(Relevance.class));
     }
 
     // TESTS: judgeOneByOne() -> isRelevant() throws -> the exception reaches the caller (the job)
     @Test
-    void judgeBatch_batchAndSingleCallsBothFail_exceptionPropagates() {
+    @DisplayName("Should propagate the exception when both the batch and the single calls fail")
+    void judgeBatch_ShouldPropagateException_WhenBatchAndSingleCallsBothFail() {
         when(chatService.ask(anyString(), eq(BatchItem[].class)))
                 .thenThrow(new RuntimeException("bad json"));
         when(chatService.ask(anyString(), eq(Relevance.class)))
                 .thenThrow(new RuntimeException("model down"));
 
-        assertThatThrownBy(() -> filter().judgeBatch(List.of(article(1), article(2))))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessage("model down");
+        RuntimeException exception = assertThrows(RuntimeException.class,
+                () -> filter().judgeBatch(List.of(article(1), article(2))));
+
+        assertEquals("model down", exception.getMessage());
     }
 }

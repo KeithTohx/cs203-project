@@ -1,6 +1,9 @@
 package csd.tripsense.impact;
 
 import java.util.List;
+import csd.tripsense.activity.Activity;
+import csd.tripsense.itinerary.Itinerary;
+import csd.tripsense.news.News;
 
 public interface ImpactService {
     /**
@@ -84,4 +87,28 @@ public interface ImpactService {
      * @return
      */
     long countByItineraryIdAndUserId(Long itineraryId, Long userId);
+
+    /**
+     * Judges one itinerary as a whole against one news article. Returns the stored verdict if
+     * there already is one (with a reason), otherwise asks the model and stores the answer.
+     *
+     * Unlike evaluate(), a failed model call is NOT swallowed and nothing is saved, so the
+     * caller can stop and the pair is retried next time.
+     *
+     * @param itinerary the itinerary, with its user loaded
+     * @param news the news article
+     * @return the stored or newly saved itinerary-level impact
+     * @throws RuntimeException if the model call fails
+     */
+    Impact evaluateItineraryForNews(Itinerary itinerary, News news);
+
+    /**
+     * Same as evaluateItineraryForNews, but for one activity.
+     *
+     * @param activity the activity, with its itinerary and the itinerary's user loaded
+     * @param news the news article
+     * @return the stored or newly saved activity-level impact
+     * @throws RuntimeException if the model call fails
+     */
+    Impact evaluateActivityForNews(Activity activity, News news);
 }

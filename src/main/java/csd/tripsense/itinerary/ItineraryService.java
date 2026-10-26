@@ -2,6 +2,7 @@ package csd.tripsense.itinerary;
 
 import java.util.List;
 import java.util.Optional;
+import java.time.LocalDateTime;
 
 public interface ItineraryService {
 
@@ -66,5 +67,31 @@ public interface ItineraryService {
      * @throws ItineraryNotFoundException if no Itinerary exists with the given ID
      */
     void deleteItinerary(Long id);
+
+
+    /**
+     * IDs of countries that have at least one itinerary that has not ended yet.
+     * @param now the cut-off; itineraries ending before it are ignored
+     * @return distinct country IDs (empty if there are none)
+     */
+    List<Long> getCountryIdsWithActiveItineraries(LocalDateTime now);
+
+    /**
+     * Itineraries in a country that have not ended yet.
+     * @param countryId the unique identifier of the Country
+     * @param now the cut-off; itineraries ending before it are ignored
+     * @return matching itineraries, with user and country loaded (empty if none)
+     */
+    List<Itinerary> getActiveItinerariesByCountry(Long countryId, LocalDateTime now);
+
+    /**
+     * Itineraries in a country that have not ended yet and have not yet been evaluated
+     * against the given news.
+     * @param newsId the unique identifier of the News
+     * @param countryId the unique identifier of the Country
+     * @param now the cut-off; itineraries ending before it are ignored
+     * @return itineraries still waiting for an impact decision on this news (empty if none)
+     */
+    List<Itinerary> getItinerariesPendingForNews(Long newsId, Long countryId, LocalDateTime now);
 
 }
