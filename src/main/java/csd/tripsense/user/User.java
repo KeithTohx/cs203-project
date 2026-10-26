@@ -11,8 +11,6 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
-
-
 // No @Table: Hibernate names the table "user", matching schema.sql and the other entities.
 @Entity
 public class User {
@@ -51,7 +49,6 @@ public class User {
     @JsonProperty(access = JsonProperty.Access.READ_ONLY)
     private Boolean enabled = true;
 
-
     protected User() {
     }
 
@@ -61,7 +58,6 @@ public class User {
         this.password = password;
         this.role = role;
     }
-
 
     public Long getId() { return id; }
 

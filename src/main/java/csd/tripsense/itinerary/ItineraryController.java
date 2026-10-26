@@ -13,16 +13,19 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import csd.tripsense.auth.CurrentUser;
+import csd.tripsense.audit.AuditService;
 
 @RestController
 @RequestMapping("/api")
 public class ItineraryController {
     private ItineraryService itineraryService;
     private ItineraryAccess access;
+    private AuditService auditService;
 
-    public ItineraryController(ItineraryService itineraryService, ItineraryAccess access) {
+    public ItineraryController(ItineraryService itineraryService, ItineraryAccess access, AuditService auditService) {
         this.itineraryService = itineraryService;
         this.access = access;
+        this.auditService = auditService;
     }
 
     // Your own itineraries (an admin sees everyone's).
@@ -61,19 +64,40 @@ public class ItineraryController {
     // The owner is the logged-in user; any "user" or "id" in the request body is ignored.
     @PostMapping("/itinerary")
     public ItineraryResponse addItinerary(@RequestBody Itinerary itinerary, @AuthenticationPrincipal CurrentUser me) {
-        return ItineraryResponse.from(itineraryService.addItinerary(access.prepareNew(itinerary, me)));
+        Itinerary saved = itineraryService.addItinerary(access.prepareNew(itinerary, me));
+        audit(AuditService.ITINERARY_CREATED, me, saved);
+        return ItineraryResponse.from(saved);
     }
 
     @PutMapping("/itinerary/{id}")
     public ItineraryResponse updateItinerary(@PathVariable Long id, @RequestBody Itinerary newItineraryInfo,
                                              @AuthenticationPrincipal CurrentUser me) {
-        access.requireAccess(itineraryService.getItineraryById(id), me);
-        return ItineraryResponse.from(itineraryService.updateItinerary(id, newItineraryInfo));
+        Itinerary existing = access.requireAccess(itineraryService.getItineraryById(id), me);
+        Long ownerId = ownerId(existing);
+        Itinerary updated = itineraryService.updateItinerary(id, newItineraryInfo);
+        auditService.record(AuditService.ITINERARY_UPDATED, me.getId(), me.getEmail(), ownerId, describe(updated));
+        return ItineraryResponse.from(updated);
     }
 
     @DeleteMapping("/itinerary/{id}")
     public void deleteItinerary(@PathVariable Long id, @AuthenticationPrincipal CurrentUser me) {
-        access.requireAccess(itineraryService.getItineraryById(id), me);
+        Itinerary existing = access.requireAccess(itineraryService.getItineraryById(id), me);
+        Long ownerId = ownerId(existing);
+        String description = describe(existing);   // read before it is gone
         itineraryService.deleteItinerary(id);
+        auditService.record(AuditService.ITINERARY_DELETED, me.getId(), me.getEmail(), ownerId, description);
+    }
+
+    // The account the change is about = the itinerary's owner (the caller, or the owner when an admin edits it).
+    private void audit(String action, CurrentUser me, Itinerary itinerary) {
+        auditService.record(action, me.getId(), me.getEmail(), ownerId(itinerary), describe(itinerary));
+    }
+
+    private static Long ownerId(Itinerary itinerary) {
+        return itinerary.getUser() == null ? null : itinerary.getUser().getId();
+    }
+
+    private static String describe(Itinerary itinerary) {
+        return "itinerary " + itinerary.getId() + " '" + itinerary.getName() + "'";
     }
 }

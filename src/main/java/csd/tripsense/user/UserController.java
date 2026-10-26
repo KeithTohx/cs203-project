@@ -1,5 +1,6 @@
 package csd.tripsense.user;
 
+import csd.tripsense.audit.AuditService;
 import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.auth.SessionService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -7,6 +8,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -18,6 +20,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
@@ -32,10 +35,12 @@ public class UserController {
 
     private final UserService userService;
     private final SessionService sessionService;
+    private final AuditService auditService;
 
-    public UserController(UserService userService, SessionService sessionService) {
+    public UserController(UserService userService, SessionService sessionService, AuditService auditService) {
         this.userService = userService;
         this.sessionService = sessionService;
+        this.auditService = auditService;
     }
 
     @Operation(summary = "Register a new user account",
@@ -46,6 +51,7 @@ public class UserController {
     @PostMapping("/user/register")
     public ResponseEntity<User> register(@Valid @RequestBody User user) {
         User created = userService.register(user);
+        auditService.record(AuditService.REGISTER, created.getId(), created.getEmail(), created.getId(), null);
         URI location = UriComponentsBuilder.fromPath("/api/user/{username}")
                 .buildAndExpand(created.getUsername()).encode().toUri();
         return ResponseEntity.created(location).body(created);
@@ -82,9 +88,12 @@ public class UserController {
                                               @AuthenticationPrincipal CurrentUser currentUser,
                                               HttpServletRequest httpRequest,
                                               HttpServletResponse httpResponse) {
+        requireLoggedIn(currentUser);
         User updated = userService.updateUsername(currentUser.getId(), request.username());
         // The session holds a copy of the account, so refresh it or /api/auth/me shows the old name.
         sessionService.refreshCurrentSession(updated, httpRequest, httpResponse);
+        auditService.record(AuditService.PROFILE_UPDATED, currentUser.getId(), currentUser.getEmail(),
+                currentUser.getId(), "changed username");
         return ResponseEntity.ok(updated);
     }
 
@@ -97,9 +106,20 @@ public class UserController {
     @PutMapping("/user/me/password")
     public ResponseEntity<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request,
                                                @AuthenticationPrincipal CurrentUser currentUser) {
+        requireLoggedIn(currentUser);
         userService.changePassword(currentUser.getId(), request.currentPassword(), request.newPassword());
         // Runs after the password is saved: ends this and every other login so old sessions can't linger.
         sessionService.expireSessionsFor(currentUser.getEmail());
+        // Only the fact that it happened is recorded, never either password.
+        auditService.record(AuditService.PASSWORD_CHANGED, currentUser.getId(), currentUser.getEmail(),
+                currentUser.getId(), null);
         return ResponseEntity.noContent().build();
+    }
+
+    // Normally unreachable: SecurityConfig already returns 401 before a handler runs.
+    private static void requireLoggedIn(CurrentUser currentUser) {
+        if (currentUser == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Not logged in");
+        }
     }
 }
