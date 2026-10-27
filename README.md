@@ -158,6 +158,42 @@ rm data/tripsense.db
 This is a normal step while developing, not a sign something is broken. Sample data
 is re-inserted on the next start. Do not do it on anything you wanted to keep.
 
+## Sample data
+
+Three files in `src/main/resources/` are loaded on every start, in this order:
+
+| File | Written by | What it holds |
+|---|---|---|
+| `data.sql` | by hand | sample accounts, trips, activities, news, impacts, recommendations |
+| `countries.sql` | `tools/build-countries.py` | every sovereign state, so a trip can be anywhere |
+| `options.sql` | `tools/build-options.py` | places to go instead when an activity is disrupted |
+
+All three use `INSERT OR IGNORE` with fixed ids, so they are safe to re-run and **a change to
+one of them does nothing to a database that already has those rows**. Delete
+`data/tripsense.db` and restart to pick up an edit.
+
+The two generated files are committed, so nobody else has to run the scripts or wait on an
+API. To regenerate them yourself:
+
+```bash
+pip install -r tools/requirements.txt
+python tools/build-countries.py        # a few seconds
+python tools/build-options.py          # a few minutes, cached in tools/.cache/
+python tools/export-seed-xlsx.py       # rebuilds data/seed-data.xlsx
+```
+
+`data/seed-data.xlsx` is the same data as a workbook, one sheet per table, for reading
+without going through `INSERT` statements. It is generated from the database *after* it has
+been seeded, so it shows what actually landed rather than what we think the SQL says.
+
+**The app itself never calls an external place API.** The scripts are development tools; at
+runtime everything is read from these tables. That is deliberate — it keeps requests fast and
+the demo working offline, and it is why the AI model can only ever pick a venue that exists.
+
+Place and country data from [Wikidata](https://www.wikidata.org), released under
+[CC0](https://creativecommons.org/publicdomain/zero/1.0/). Area coordinates are looked up
+through [Nominatim](https://nominatim.openstreetmap.org), © OpenStreetMap contributors.
+
 ## Configuration
 
 Everything configurable is in `src/main/resources/application.properties`:

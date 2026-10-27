@@ -46,6 +46,7 @@ create table activity {
     address varchar,
     date_start timestamp,
     date_end timestamp,
+    category varchar,          -- ActivityCategory, null on rows made before it existed
 
     foreign key (itinerary_id) references itinerary(id)
 }
@@ -74,4 +75,33 @@ create table impact {
     foreign key (news_id) references news(id),
     foreign key (itinerary_id) references itinerary(id),
     foreign key (activity_id) references activity(id)
+}
+
+-- Places a traveller could go instead when an activity is disrupted.
+-- Generated worldwide by tools/build-options.py and seeded from options.sql, so the
+-- model picks from real rows instead of inventing a venue. Id is the Wikidata Q number.
+create table activity_option {
+    id integer primary key,
+    country varchar not null,
+    area varchar not null,       -- a word that shows up in activity addresses, eg "Sapporo"
+    category varchar not null,
+    name varchar not null,
+    address varchar,
+    latitude double,             -- null on the first rows, generated before we kept these
+    longitude double
+}
+
+create index idx_activity_option_country on activity_option(country);
+
+create table recommendation {
+    id integer primary key,
+    impact_id integer not null,
+    severity varchar not null,          -- HIGH, MEDIUM, LOW
+    action varchar not null,            -- REPLACE, RELOCATE, RESCHEDULE, MONITOR, CANCEL
+    advice varchar(500),
+    suggested_option_id integer,        -- null when there is nothing to swap to
+    created_at timestamp,
+
+    foreign key (impact_id) references impact(id),
+    foreign key (suggested_option_id) references activity_option(id)
 }
