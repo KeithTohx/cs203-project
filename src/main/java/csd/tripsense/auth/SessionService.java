@@ -12,6 +12,9 @@ import org.springframework.security.core.session.SessionRegistry;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.security.web.authentication.logout.SecurityContextLogoutHandler;
+import org.springframework.security.web.authentication.logout.CookieClearingLogoutHandler;
+
 
 import java.util.Objects;
 import java.util.function.Predicate;
@@ -81,5 +84,13 @@ public class SessionService {
         context.setAuthentication(token);
         SecurityContextHolder.setContext(context);
         securityContextRepository.saveContext(context, request, response);
+    }
+
+    /** Ends every login of this account, including the current one, and clears the session cookie. */
+    public void endAllSessions(String email, HttpServletRequest request, HttpServletResponse response) {
+        expireSessionsFor(email);
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        new SecurityContextLogoutHandler().logout(request, response, auth);        // invalidates session, clears context
+        new CookieClearingLogoutHandler("JSESSIONID").logout(request, response, auth);
     }
 }

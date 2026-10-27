@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.util.UriComponentsBuilder;
+import org.springframework.web.bind.annotation.DeleteMapping;
 
 import java.net.URI;
 
@@ -121,5 +122,25 @@ public class UserController {
         if (currentUser == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Not logged in");
         }
+    }
+    
+    @Operation(summary = "Delete your account",
+            description = "Requires login, the X-XSRF-TOKEN header and the current password. Permanently deletes the "
+                    + "account and all its itineraries, activities and impact results, then logs you out everywhere.")
+    @ApiResponse(responseCode = "204", description = "Account deleted")
+    @ApiResponse(responseCode = "400", description = "Validation failed or current password wrong")
+    @ApiResponse(responseCode = "401", description = "Not logged in")
+    @ApiResponse(responseCode = "409", description = "Last remaining admin cannot be deleted")
+    @DeleteMapping("/user/me")
+    public ResponseEntity<Void> deleteAccount(@Valid @RequestBody DeleteAccountRequest request,
+                                            @AuthenticationPrincipal CurrentUser currentUser,
+                                            HttpServletRequest httpRequest,
+                                            HttpServletResponse httpResponse) {
+        userService.deleteAccount(currentUser.getId(), request.currentPassword());
+        auditService.record(AuditService.ACCOUNT_DELETED, currentUser.getId(), currentUser.getEmail(),
+        currentUser.getId(), "deleted own account");
+        // Only after the delete committed, so a failed delete doesn't log the user out.
+        sessionService.endAllSessions(currentUser.getEmail(), httpRequest, httpResponse);
+        return ResponseEntity.noContent().build();
     }
 }

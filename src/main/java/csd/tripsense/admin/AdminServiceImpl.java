@@ -5,6 +5,7 @@ import csd.tripsense.audit.AuditService;
 import csd.tripsense.user.User;
 import csd.tripsense.user.UserNotFoundException;
 import csd.tripsense.user.UserRepository;
+import csd.tripsense.user.UserService;
 import jakarta.persistence.EntityManager;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -24,12 +25,12 @@ public class AdminServiceImpl implements AdminService {
 
     private final UserRepository userRepository;
     private final AuditService auditService;
-    private final EntityManager entityManager;
+    private final UserService userService;
 
-    public AdminServiceImpl(UserRepository userRepository, AuditService auditService, EntityManager entityManager) {
+    public AdminServiceImpl(UserRepository userRepository, AuditService auditService, UserService userService) {
         this.userRepository = userRepository;
         this.auditService = auditService;
-        this.entityManager = entityManager;
+        this.userService = userService;
     }
 
     @Override
@@ -75,23 +76,11 @@ public class AdminServiceImpl implements AdminService {
         if (Objects.equals(id, actingAdminId)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "admins cannot delete their own account");
         }
-        User user = userRepository.findById(id)
-                .orElseThrow(() -> new UserNotFoundException("No user found with id " + id));
+        User user = findUser(id);
 
-        // Children before parents, so this also works once foreign keys are enforced (PostgreSQL, E7-08).
-        // Plain SQL on purpose: it only needs the table and column names, not the other teams' classes.
-        entityManager.createNativeQuery(
-                "delete from impact where user_id = :id"
-                + " or itinerary_id in (select id from itinerary where user_id = :id)"
-                + " or activity_id in (select a.id from activity a join itinerary i on a.itinerary_id = i.id"
-                + " where i.user_id = :id)")
-                .setParameter("id", id).executeUpdate();
-        entityManager.createNativeQuery(
-                "delete from activity where itinerary_id in (select id from itinerary where user_id = :id)")
-                .setParameter("id", id).executeUpdate();
-        entityManager.createNativeQuery("delete from itinerary where user_id = :id")
-                .setParameter("id", id).executeUpdate();
-        userRepository.delete(user);
+        // The same cleanup as a user deleting themselves (chat history, impacts, itineraries and their
+        // activities, then the account), so the two paths cannot drift apart.
+        userService.deleteUserAndData(id);
         return user;
     }
 

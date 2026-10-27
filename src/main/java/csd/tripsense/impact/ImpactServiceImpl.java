@@ -3,9 +3,10 @@ package csd.tripsense.impact;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityService;
@@ -22,6 +23,7 @@ public class ImpactServiceImpl implements ImpactService {
     private ItineraryService itineraryService;
     private ActivityService activityService;
     private NewsService newsService;
+    private static final Logger log = LoggerFactory.getLogger(ImpactServiceImpl.class);
 
     public ImpactServiceImpl(ImpactRepository impacts, ChatService chatService,
                              ItineraryService itineraryService, ActivityService activityService,
@@ -41,35 +43,25 @@ public class ImpactServiceImpl implements ImpactService {
     public List<Impact> listImpacts() {
         return impacts.findAll();
     }
-    
+
     @Override
     public Impact getImpact(Long id) {
-        return impacts.findById(id).map(impact -> {
-            return impact;
-        }).orElseThrow(() -> new ImpactNotFoundException(id));
+        return impacts.findById(id).orElseThrow(() -> new ImpactNotFoundException(id));
     }
 
     @Override
     public List<Impact> getImpactsByUser(Long userId) {
-        return impacts.findAll().stream()
-                .filter(impact -> impact.getUser().getId().equals(userId))
-                .collect(Collectors.toList());
+        return impacts.findByUserId(userId);
     }
 
     @Override
     public List<Impact> getImpactsByItinerary(Long itineraryId) {
-        return impacts.findAll().stream()
-                .filter(impact -> impact.getItinerary() != null
-                        && impact.getItinerary().getId().equals(itineraryId))
-                .collect(Collectors.toList());
+        return impacts.findByItineraryId(itineraryId);
     }
 
     @Override
     public List<Impact> getImpactsByActivity(Long activityId) {
-        return impacts.findAll().stream()
-                .filter(impact -> impact.getActivity() != null
-                        && impact.getActivity().getId().equals(activityId))
-                .collect(Collectors.toList());
+        return impacts.findByActivityId(activityId);
     }
 
     @Override
@@ -77,8 +69,14 @@ public class ImpactServiceImpl implements ImpactService {
         if (!impacts.existsById(id)) {
             throw new ImpactNotFoundException(id);
         }
-        
         impacts.deleteById(id);
+    }
+
+    @Override
+    public Impact setRejected(Long id, boolean rejected) {
+        Impact impact = getImpact(id);
+        impact.setRejected(rejected);
+        return impacts.save(impact);
     }
 
     @Override
@@ -90,87 +88,72 @@ public class ImpactServiceImpl implements ImpactService {
 
         // the trip as a whole is always checked, so an itinerary with no activities still gets a verdict,
         // and news that hits the trip but no single activity (a flight strike, an entry ban) is caught
-        EvaluateResponse.ItineraryResult tripResult = evaluateItinerary(itinerary, news);
+        EvaluateResponse.ItineraryResult tripResult = tripResult(itinerary, news);
 
         List<EvaluateResponse.ActivityResult> results = new ArrayList<>();
         for (Activity activity : activities) {
-            results.add(evaluateActivity(itinerary, news, activity));
+            // one call per activity, so a failure on one still leaves the others usable
+            results.add(activityResult(activity, news));
         }
 
-        boolean anyImpacted = tripResult.impacted()
-                || results.stream().anyMatch(EvaluateResponse.ActivityResult::impacted);
+        // a verdict the user rejected does not count, the user knows their trip better than the model
+        boolean tripImpacted = tripResult.impacted() && !tripResult.rejected();
+        boolean anyActivityImpacted = results.stream()
+                .anyMatch(result -> result.impacted() && !result.rejected());
+        boolean anyImpacted = tripImpacted || anyActivityImpacted;
 
         return new EvaluateResponse(itinerary.getId(), news.getId(), news.getTitle(),
                 anyImpacted, tripResult, results);
     }
 
-    /**
-     * Same as evaluateActivity, but for the itinerary itself. The verdict is stored as an
-     * impact with no activity, which the frontend shows as "Affects the whole itinerary".
-     */
-    private EvaluateResponse.ItineraryResult evaluateItinerary(Itinerary itinerary, News news) {
-        Optional<Impact> stored = findStoredForItinerary(news, itinerary);
+    @Override
+    public Impact evaluateItineraryForNews(Itinerary itinerary, News news) {
+        Optional<Impact> stored = impacts
+                .findFirstByNewsIdAndItineraryIdAndActivityIsNull(news.getId(), itinerary.getId());
+        // a stored row only counts as evaluated if it has a reason (seed rows do not)
         if (stored.isPresent() && stored.get().getReason() != null) {
-            Impact impact = stored.get();
+            return stored.get();
+        }
+        Verdict verdict = chatService.ask(buildItineraryPrompt(news, itinerary), Verdict.class);
+        return save(stored.orElseGet(Impact::new), itinerary, news, null, verdict);
+    }
+
+    @Override
+    public Impact evaluateActivityForNews(Activity activity, News news) {
+        Optional<Impact> stored = impacts.findFirstByNewsIdAndActivityId(news.getId(), activity.getId());
+        if (stored.isPresent() && stored.get().getReason() != null) {
+            return stored.get();
+        }
+        Verdict verdict = chatService.ask(buildPrompt(news, activity), Verdict.class);
+        return save(stored.orElseGet(Impact::new), activity.getItinerary(), news, activity, verdict);
+    }
+
+    // evaluate() wants a result even when the model fails, so the exception becomes a message here
+    private EvaluateResponse.ItineraryResult tripResult(Itinerary itinerary, News news) {
+        try {
+            Impact impact = evaluateItineraryForNews(itinerary, news);
             return new EvaluateResponse.ItineraryResult(
-                    Boolean.TRUE.equals(impact.getImpacted()), impact.getReason());
-        }
-
-        try {
-            Verdict verdict = chatService.ask(buildItineraryPrompt(news, itinerary), Verdict.class);
-            save(stored.orElseGet(Impact::new), itinerary, news, null, verdict);
-            return new EvaluateResponse.ItineraryResult(verdict.impacted(), verdict.reason());
+                    Boolean.TRUE.equals(impact.getImpacted()), impact.getReason(), isRejected(impact));
         } catch (Exception e) {
             // nothing is saved on failure, so the next call retries instead of serving the error
-            return new EvaluateResponse.ItineraryResult(false, "Could not evaluate: " + e.getMessage());
+            return new EvaluateResponse.ItineraryResult(false, "Could not evaluate: " + e.getMessage(), false);
         }
     }
 
-    /**
-     * Returns the stored verdict for this activity if we already have one, otherwise asks
-     * the model and stores the answer.
-     *
-     * A stored row only counts as already evaluated if it has a reason. Rows that came from
-     * the seed data have no reason, so they get evaluated properly the first time round.
-     */
-    private EvaluateResponse.ActivityResult evaluateActivity(Itinerary itinerary, News news,
-                                                             Activity activity) {
-        Optional<Impact> stored = findStored(news, activity);
-        // impact was evaluated before so just get stored result
-        if (stored.isPresent() && stored.get().getReason() != null) {
-            Impact impact = stored.get();
-            return new EvaluateResponse.ActivityResult(activity.getId(), activity.getName(),
-                    Boolean.TRUE.equals(impact.getImpacted()), impact.getReason());
-        }
-
+    private EvaluateResponse.ActivityResult activityResult(Activity activity, News news) {
         try {
-            // one call per activity, so a failure on one still leaves the others usable
-            Verdict verdict = chatService.ask(buildPrompt(news, activity), Verdict.class);
-
-            // save the impact into the db
-            save(stored.orElseGet(Impact::new), itinerary, news, activity, verdict);
+            Impact impact = evaluateActivityForNews(activity, news);
             return new EvaluateResponse.ActivityResult(activity.getId(), activity.getName(),
-                    verdict.impacted(), verdict.reason());
+                    Boolean.TRUE.equals(impact.getImpacted()), impact.getReason(), isRejected(impact));
         } catch (Exception e) {
-            // nothing is saved on failure, so the next call retries instead of serving the error
             return new EvaluateResponse.ActivityResult(activity.getId(), activity.getName(),
-                    false, "Could not evaluate: " + e.getMessage());
+                    false, "Could not evaluate: " + e.getMessage(), false);
         }
     }
 
-    // an impact already recorded for this news and activity, if there is one
-    private Optional<Impact> findStored(News news, Activity activity) {
-        return getImpactsByActivity(activity.getId()).stream()
-                .filter(impact -> impact.getNews().getId().equals(news.getId()))
-                .findFirst();
-    }
-
-    // an impact already recorded for this news and itinerary (no activity), if there is one
-    private Optional<Impact> findStoredForItinerary(News news, Itinerary itinerary) {
-        return getImpactsByItinerary(itinerary.getId()).stream()
-                .filter(impact -> impact.getActivity() == null
-                        && impact.getNews().getId().equals(news.getId()))
-                .findFirst();
+    // older rows have null here, which counts as not rejected
+    private boolean isRejected(Impact impact) {
+        return Boolean.TRUE.equals(impact.getRejected());
     }
 
     private String buildItineraryPrompt(News news, Itinerary itinerary) {
@@ -219,35 +202,35 @@ public class ImpactServiceImpl implements ImpactService {
                     activity.getName(), activity.getAddress(), activity.getDateStart());
     }
 
-    // updates the row we found, or the blank one we made, so a pair is never stored twice
-    private void save(Impact impact, Itinerary itinerary, News news, Activity activity,
-                      Verdict verdict) {
+    // updates the row we found, or the blank one we made, so a pair is never stored twice.
+    // rejected is left alone, so a seed row the user already rejected stays rejected after its first evaluation
+    private Impact save(Impact impact, Itinerary itinerary, News news, Activity activity,
+                        Verdict verdict) {
         impact.setUser(itinerary.getUser());
         impact.setNews(news);
         impact.setItinerary(itinerary);
         impact.setActivity(activity);
         impact.setImpacted(verdict.impacted());
         impact.setReason(verdict.reason());
-        impacts.save(impact);
+        Impact saved = impacts.save(impact);
+        log.info("Impact saved: id={} news={} itinerary={} activity={} impacted={} reason={}",
+                saved.getId(), news.getId(), itinerary.getId(),
+                activity == null ? null : activity.getId(), verdict.impacted(), verdict.reason());
+        return saved;
     }
 
-    @Override 
+    @Override
     public List<Impact> findImpacted(Long userId, Long itineraryId){
-        return impacts.findAll().stream()
-                .filter(impact -> impact.getItinerary() != null
-                        && impact.getItinerary().getId().equals(itineraryId)
-                        && impact.getUser().getId().equals(userId)
-                        && Boolean.TRUE.equals(impact.getImpacted()))
-                .collect(Collectors.toList());
+        List<Impact> impacted = impacts.findByUserIdAndItineraryIdAndImpactedTrue(userId, itineraryId);
+
+        // rejected is filtered here rather than in the query, since older rows have null there
+        return impacted.stream()
+                .filter(impact -> !isRejected(impact))
+                .toList();
     }
 
-    @Override 
+    @Override
     public long countByItineraryIdAndUserId(Long itineraryId, Long userId){
-        return impacts.findAll().stream()
-                .filter(impact -> impact.getItinerary() != null
-                        && impact.getItinerary().getId().equals(itineraryId)
-                        && impact.getUser().getId().equals(userId))
-                .collect(Collectors.toList())
-                .size();
+        return impacts.countByItineraryIdAndUserId(itineraryId, userId);
     }
 }

@@ -21,4 +21,6 @@ public interface UserRepository extends JpaRepository<User, Long> {
     /** Admin search: part of the email OR part of the username, any capitalisation. */
     Page<User> findByEmailContainingIgnoreCaseOrUsernameContainingIgnoreCase(
             String email, String username, Pageable pageable);
+    //This is done so that there is at least 1 admin in the Database.
+    long countByRole(String role);
 }

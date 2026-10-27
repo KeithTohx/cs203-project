@@ -5,8 +5,7 @@ import csd.tripsense.audit.AuditService;
 import csd.tripsense.user.User;
 import csd.tripsense.user.UserNotFoundException;
 import csd.tripsense.user.UserRepository;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.Query;
+import csd.tripsense.user.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -22,11 +21,10 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -34,38 +32,27 @@ class AdminServiceImplTest {
 
     private UserRepository userRepository;
     private AuditService auditService;
-    private EntityManager entityManager;
-    private Query query;
+    private UserService userService;
     private AdminServiceImpl service;
 
     @BeforeEach
     void setUp() {
         userRepository = mock(UserRepository.class);
         auditService = mock(AuditService.class);
-        entityManager = mock(EntityManager.class);
-        query = mock(Query.class);
-        when(entityManager.createNativeQuery(anyString())).thenReturn(query);
-        when(query.setParameter(anyString(), any())).thenReturn(query);
-        service = new AdminServiceImpl(userRepository, auditService, entityManager);
+        userService = mock(UserService.class);
+        service = new AdminServiceImpl(userRepository, auditService, userService);
     }
 
     // ---------- delete ----------
 
     @Test
-    void deleteUser_removesTheirDataFirst_thenTheAccount() {
+    void deleteUser_usesTheSharedCleanup_andReturnsTheDeletedAccount() {
         User bob = new User("bob@example.com", "bob", "hash", "USER");
         when(userRepository.findById(4L)).thenReturn(Optional.of(bob));
 
         User result = service.deleteUser(4L, 3L);
 
-        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
-        verify(entityManager, times(3)).createNativeQuery(sql.capture());
-        List<String> statements = sql.getAllValues();
-        // children before parents, so it keeps working when foreign keys are enforced
-        assertThat(statements.get(0)).startsWith("delete from impact");
-        assertThat(statements.get(1)).startsWith("delete from activity");
-        assertThat(statements.get(2)).startsWith("delete from itinerary");
-        verify(userRepository).delete(bob);
+        verify(userService).deleteUserAndData(4L);   // the same method a user deleting themselves goes through
         assertThat(result).isSameAs(bob);
     }
 
@@ -75,8 +62,7 @@ class AdminServiceImplTest {
                 .isInstanceOfSatisfying(ResponseStatusException.class,
                         e -> assertThat(e.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
 
-        verify(entityManager, never()).createNativeQuery(anyString());
-        verify(userRepository, never()).delete(any(User.class));
+        verify(userService, never()).deleteUserAndData(any());
     }
 
     @Test
@@ -85,8 +71,19 @@ class AdminServiceImplTest {
 
         assertThatThrownBy(() -> service.deleteUser(99L, 3L)).isInstanceOf(UserNotFoundException.class);
 
-        verify(entityManager, never()).createNativeQuery(anyString());
-        verify(userRepository, never()).delete(any(User.class));
+        verify(userService, never()).deleteUserAndData(any());
+    }
+
+    @Test
+    void deleteUser_whenTheSharedCleanupRefuses_thatErrorReachesTheAdmin() {
+        User lastAdmin = new User("other@example.com", "other", "hash", "ADMIN");
+        when(userRepository.findById(5L)).thenReturn(Optional.of(lastAdmin));
+        doThrow(new ResponseStatusException(HttpStatus.CONFLICT, "the last admin account cannot be deleted"))
+                .when(userService).deleteUserAndData(5L);
+
+        assertThatThrownBy(() -> service.deleteUser(5L, 3L))
+                .isInstanceOfSatisfying(ResponseStatusException.class,
+                        e -> assertThat(e.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
     }
 
     // ---------- view ----------
@@ -130,7 +127,7 @@ class AdminServiceImplTest {
     // ---------- disable / enable (E1-06) ----------
 
     @Test
-    void disableUser_stopsTheAccount_butTouchesNoData() {
+    void disableUser_stopsTheAccount_butDeletesNothing() {
         User bob = new User("bob@example.com", "bob", "hash", "USER");
         when(userRepository.findById(4L)).thenReturn(Optional.of(bob));
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -138,7 +135,7 @@ class AdminServiceImplTest {
         User result = service.disableUser(4L, 3L);
 
         assertThat(result.isEnabled()).isFalse();
-        verify(entityManager, never()).createNativeQuery(anyString());   // trips and history stay
+        verify(userService, never()).deleteUserAndData(any());   // trips and history stay
         verify(userRepository, never()).delete(any(User.class));
     }
 

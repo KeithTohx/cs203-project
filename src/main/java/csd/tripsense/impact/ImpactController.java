@@ -2,8 +2,10 @@ package csd.tripsense.impact;
 
 import java.util.List;
 
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -11,18 +13,22 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.chat.ChatService;
+import csd.tripsense.itinerary.ItineraryAccess;
 import jakarta.validation.Valid;
 
-@RestController 
+@RestController
 @RequestMapping("/api")
 public class ImpactController {
     private ImpactService impactService;
     private ChatService chatService;
+    private ItineraryAccess access;
 
-    public ImpactController(ImpactService impactService, ChatService chatService) {
+    public ImpactController(ImpactService impactService, ChatService chatService, ItineraryAccess access) {
         this.impactService = impactService;
         this.chatService = chatService;
+        this.access = access;
     }
 
     /**
@@ -91,6 +97,24 @@ public class ImpactController {
     @DeleteMapping("/impact/{id}")
     public void deleteImpact(@PathVariable Long id){
         impactService.deleteImpact(id);
+    }
+
+    /**
+     * Reject an impact the user disagrees with, or restore one they rejected earlier
+     * Only the owner of the impact's itinerary (or an admin) may do this, anyone else gets a 404
+     *
+     * @param id the impact to change
+     * @param request whether the impact should be rejected
+     * @return the updated impact
+     */
+    @PatchMapping("/impact/{id}")
+    public ImpactResponse updateImpact(@PathVariable Long id, @Valid @RequestBody ImpactUpdateRequest request,
+                                       @AuthenticationPrincipal CurrentUser me) {
+        Impact impact = impactService.getImpact(id);
+        access.requireAccess(impact, me);
+
+        Impact updated = impactService.setRejected(id, request.rejected());
+        return ImpactResponse.from(updated);
     }
 
 

@@ -1,5 +1,8 @@
 package csd.tripsense.user;
 
+import csd.tripsense.chat.ChatbotService;
+import csd.tripsense.impact.ImpactRepository;
+import csd.tripsense.itinerary.ItineraryRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -29,7 +32,10 @@ class UserServiceImplTest {
     void setUp() {
         userRepository = mock(UserRepository.class);
         passwordEncoder = new BCryptPasswordEncoder();
-        userService = new UserServiceImpl(userRepository, passwordEncoder);
+        userService = new UserServiceImpl(userRepository, passwordEncoder,
+                mock(ItineraryRepository.class),
+                mock(ImpactRepository.class),
+                mock(ChatbotService.class));
     }
 
     private static void assertStatus(Throwable e, HttpStatus expected) {

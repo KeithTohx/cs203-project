@@ -24,6 +24,7 @@ create table user {
 create table country {
     id integer primary key,
     name varchar not null
+    fips_code varchar
 }
 
 create table itinerary {
@@ -42,12 +43,14 @@ create table itinerary {
 create table activity {
     id integer primary key,
     itinerary_id integer not null,
+    country_id integer,            -- copied from the itinerary; null on rows created before this column existed
     name varchar not null,
     address varchar,
     date_start timestamp,
     date_end timestamp,
 
-    foreign key (itinerary_id) references itinerary(id)
+    foreign key (itinerary_id) references itinerary(id),
+    foreign key (country_id) references country(id)
 }
 
 -- News table for transit disruption updates and news articles.
@@ -69,9 +72,32 @@ create table impact {
     activity_id integer,
     impacted boolean,
     reason varchar(500),
+    rejected boolean,
 
     foreign key (user_id) references user(id),
     foreign key (news_id) references news(id),
     foreign key (itinerary_id) references itinerary(id),
     foreign key (activity_id) references activity(id)
+}
+
+-- Which countries a news article is about. Corresponds to News.countries.
+create table news_country {
+    news_id integer not null,
+    country_id integer not null,
+
+    primary key (news_id, country_id),
+    foreign key (news_id) references news(id),
+    foreign key (country_id) references country(id)
+}
+
+create table audit_log {
+    id integer primary key,
+    occurred_at timestamp not null,
+    actor_id integer,          -- who did it; null for a failed login (the person is unknown)
+    actor_email varchar,       -- for a failed login: the email that was tried (never the password)
+    action varchar not null,   -- LOGIN, LOGIN_FAILED, LOGOUT, REGISTER, PROFILE_UPDATED,
+                               -- ACCOUNT_DISABLED, ACCOUNT_ENABLED, ACCOUNT_DELETED,
+                               -- ITINERARY_CREATED, ITINERARY_UPDATED, ITINERARY_DELETED
+    target_id integer,         -- the ACCOUNT it was done to / about (no foreign key: the record must outlive it)
+    details varchar(500)
 }
