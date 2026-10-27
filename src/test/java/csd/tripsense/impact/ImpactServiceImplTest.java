@@ -238,4 +238,143 @@ class ImpactServiceImplTest {
         assertTrue(response.impacted());
         assertTrue(response.activities().get(0).impacted());
     }
+
+    // ===== rejected impacts =====
+
+    // an impacted verdict that already has a reason, so evaluate serves it from the database
+    private Impact rejectableImpact(Long id, Activity forActivity, Boolean rejected) {
+        Impact impact = storedImpact("Some ski resorts are suspending lifts.");
+        impact.setId(id);
+        impact.setUser(user);
+        impact.setNews(news);
+        impact.setItinerary(itinerary);
+        impact.setActivity(forActivity);
+        impact.setRejected(rejected);
+        return impact;
+    }
+
+    @Test
+    @DisplayName("Should mark impact as rejected and save it")
+    void setRejected_ShouldMarkRejected_WhenImpactExists() {
+        // arrange
+        Impact impact = rejectableImpact(1L, activity, null);
+        when(impactRepository.findById(1L)).thenReturn(Optional.of(impact));
+        givenSaveEchoes();
+
+        // act
+        Impact result = impactService.setRejected(1L, true);
+
+        // assert
+        assertTrue(result.getRejected());
+        verify(impactRepository).save(impact);
+    }
+
+    @Test
+    @DisplayName("Should keep the model's verdict and reason when rejecting")
+    void setRejected_ShouldKeepVerdictAndReason_WhenRejecting() {
+        Impact impact = rejectableImpact(1L, activity, null);
+        when(impactRepository.findById(1L)).thenReturn(Optional.of(impact));
+        givenSaveEchoes();
+
+        Impact result = impactService.setRejected(1L, true);
+
+        // restoring has to bring back exactly what the model said, so neither may change
+        assertTrue(result.getImpacted());
+        assertEquals("Some ski resorts are suspending lifts.", result.getReason());
+    }
+
+    @Test
+    @DisplayName("Should clear the rejection when restoring")
+    void setRejected_ShouldClearRejection_WhenRestoring() {
+        Impact impact = rejectableImpact(1L, activity, true);
+        when(impactRepository.findById(1L)).thenReturn(Optional.of(impact));
+        givenSaveEchoes();
+
+        Impact result = impactService.setRejected(1L, false);
+
+        assertFalse(result.getRejected());
+    }
+
+    @Test
+    @DisplayName("Should throw ImpactNotFoundException when impact does not exist")
+    void setRejected_ShouldThrow_WhenImpactDoesNotExist() {
+        when(impactRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThrows(ImpactNotFoundException.class, () -> impactService.setRejected(99L, true));
+        verify(impactRepository, never()).save(any(Impact.class));
+    }
+
+    // the trip verdict and the activity verdict are both stored, so evaluate never needs the model
+    private void givenStoredVerdicts(Impact tripImpact, Impact activityImpact) {
+        when(itineraryService.getItineraryById(1L)).thenReturn(itinerary);
+        when(newsService.getNewsById(5L)).thenReturn(news);
+        when(activityService.getActivitiesByItinerary(1L)).thenReturn(List.of(activity));
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.of(tripImpact));
+        when(impactRepository.findFirstByNewsIdAndActivityId(5L, 10L))
+                .thenReturn(Optional.of(activityImpact));
+    }
+
+    @Test
+    @DisplayName("Should not ask the model again for a rejected impact")
+    void evaluate_ShouldNotAskModel_WhenImpactWasRejected() {
+        // arrange
+        Impact tripImpact = rejectableImpact(2L, null, false);
+        tripImpact.setImpacted(false);
+        Impact rejectedImpact = rejectableImpact(1L, activity, true);
+        givenStoredVerdicts(tripImpact, rejectedImpact);
+
+        // act
+        EvaluateResponse response = impactService.evaluate(1L, 5L);
+
+        // assert
+        verifyNoInteractions(chatService);
+        verify(impactRepository, never()).save(any(Impact.class));
+        assertTrue(response.activities().get(0).rejected());
+    }
+
+    @Test
+    @DisplayName("Should not count a rejected impact towards the overall verdict")
+    void evaluate_ShouldNotBeImpacted_WhenOnlyImpactIsRejected() {
+        Impact tripImpact = rejectableImpact(2L, null, false);
+        tripImpact.setImpacted(false);
+        Impact rejectedImpact = rejectableImpact(1L, activity, true);
+        givenStoredVerdicts(tripImpact, rejectedImpact);
+
+        EvaluateResponse response = impactService.evaluate(1L, 5L);
+
+        // the activity is still reported as the model saw it, it just does not count
+        assertTrue(response.activities().get(0).impacted());
+        assertFalse(response.impacted());
+    }
+
+    @Test
+    @DisplayName("Should still be impacted when another impact is not rejected")
+    void evaluate_ShouldBeImpacted_WhenTripImpactIsNotRejected() {
+        Impact tripImpact = rejectableImpact(2L, null, false);
+        Impact rejectedImpact = rejectableImpact(1L, activity, true);
+        givenStoredVerdicts(tripImpact, rejectedImpact);
+
+        EvaluateResponse response = impactService.evaluate(1L, 5L);
+
+        assertTrue(response.impacted());
+    }
+
+    @Test
+    @DisplayName("Should leave rejected impacts out of findImpacted")
+    void findImpacted_ShouldExcludeRejected_WhenSomeAreRejected() {
+        // arrange
+        Impact rejected = rejectableImpact(1L, activity, true);
+        Impact notRejected = rejectableImpact(2L, null, false);
+        Impact olderRow = rejectableImpact(3L, null, null);   // from before the column existed
+        when(impactRepository.findByUserIdAndItineraryIdAndImpactedTrue(1L, 1L))
+                .thenReturn(List.of(rejected, notRejected, olderRow));
+
+        // act
+        List<Impact> result = impactService.findImpacted(1L, 1L);
+
+        // assert
+        // the chatbot reads this list, so a rejected impact here would be brought up again
+        assertEquals(List.of(notRejected, olderRow), result);
+    }
 }

@@ -71,7 +71,22 @@ public interface ImpactService {
     void deleteImpact(Long id);
 
     /**
-     * Retrieves a list of Impact for the User's Itinerary
+     * Marks an impact as rejected by the user, or takes the rejection back.
+     *
+     * The verdict and reason are left as the model gave them, so restoring brings back
+     * exactly what was there. A rejected impact stays rejected when the itinerary is
+     * evaluated again.
+     *
+     * @param id the unique identifier of the impact
+     * @param rejected true to reject the impact, false to restore it
+     * @return the updated impact
+     * @throws ImpactNotFoundException if no impact exists with the given ID
+     */
+    Impact setRejected(Long id, boolean rejected);
+
+    /**
+     * Retrieves the impacts on the user's itinerary that are impacted and not rejected
+     * by the user.
      * 
      * @param userId the user to check
      * @param itineraryId the itinerary to check
@@ -80,7 +95,8 @@ public interface ImpactService {
     List<Impact> findImpacted(Long userId, Long itineraryId);
 
     /**
-     * Counts all impact rows for this itinerary and user, whether impacted or not
+     * Counts all impact rows for this itinerary and user, whether impacted or not.
+     * Rejected rows are counted too, since the news on them was still evaluated
      * 
      * @param itineraryId the itinerary to check
      * @param userId the user to check

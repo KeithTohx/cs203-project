@@ -73,6 +73,13 @@ public class ImpactServiceImpl implements ImpactService {
     }
 
     @Override
+    public Impact setRejected(Long id, boolean rejected) {
+        Impact impact = getImpact(id);
+        impact.setRejected(rejected);
+        return impacts.save(impact);
+    }
+
+    @Override
     public EvaluateResponse evaluate(Long itineraryId, Long newsId) {
         // these throw their own not found exceptions, which spring turns into a 404
         Itinerary itinerary = itineraryService.getItineraryById(itineraryId);
@@ -89,8 +96,11 @@ public class ImpactServiceImpl implements ImpactService {
             results.add(activityResult(activity, news));
         }
 
-        boolean anyImpacted = tripResult.impacted()
-                || results.stream().anyMatch(EvaluateResponse.ActivityResult::impacted);
+        // a verdict the user rejected does not count, the user knows their trip better than the model
+        boolean tripImpacted = tripResult.impacted() && !tripResult.rejected();
+        boolean anyActivityImpacted = results.stream()
+                .anyMatch(result -> result.impacted() && !result.rejected());
+        boolean anyImpacted = tripImpacted || anyActivityImpacted;
 
         return new EvaluateResponse(itinerary.getId(), news.getId(), news.getTitle(),
                 anyImpacted, tripResult, results);
@@ -123,9 +133,10 @@ public class ImpactServiceImpl implements ImpactService {
         try {
             Impact impact = evaluateItineraryForNews(itinerary, news);
             return new EvaluateResponse.ItineraryResult(
-                    Boolean.TRUE.equals(impact.getImpacted()), impact.getReason());
+                    Boolean.TRUE.equals(impact.getImpacted()), impact.getReason(), isRejected(impact));
         } catch (Exception e) {
-            return new EvaluateResponse.ItineraryResult(false, "Could not evaluate: " + e.getMessage());
+            // nothing is saved on failure, so the next call retries instead of serving the error
+            return new EvaluateResponse.ItineraryResult(false, "Could not evaluate: " + e.getMessage(), false);
         }
     }
 
@@ -133,11 +144,16 @@ public class ImpactServiceImpl implements ImpactService {
         try {
             Impact impact = evaluateActivityForNews(activity, news);
             return new EvaluateResponse.ActivityResult(activity.getId(), activity.getName(),
-                    Boolean.TRUE.equals(impact.getImpacted()), impact.getReason());
+                    Boolean.TRUE.equals(impact.getImpacted()), impact.getReason(), isRejected(impact));
         } catch (Exception e) {
             return new EvaluateResponse.ActivityResult(activity.getId(), activity.getName(),
-                    false, "Could not evaluate: " + e.getMessage());
+                    false, "Could not evaluate: " + e.getMessage(), false);
         }
+    }
+
+    // older rows have null here, which counts as not rejected
+    private boolean isRejected(Impact impact) {
+        return Boolean.TRUE.equals(impact.getRejected());
     }
 
     private String buildItineraryPrompt(News news, Itinerary itinerary) {
@@ -186,7 +202,8 @@ public class ImpactServiceImpl implements ImpactService {
                     activity.getName(), activity.getAddress(), activity.getDateStart());
     }
 
-    // updates the row we found, or the blank one we made, so a pair is never stored twice
+    // updates the row we found, or the blank one we made, so a pair is never stored twice.
+    // rejected is left alone, so a seed row the user already rejected stays rejected after its first evaluation
     private Impact save(Impact impact, Itinerary itinerary, News news, Activity activity,
                         Verdict verdict) {
         impact.setUser(itinerary.getUser());
@@ -204,7 +221,12 @@ public class ImpactServiceImpl implements ImpactService {
 
     @Override
     public List<Impact> findImpacted(Long userId, Long itineraryId){
-        return impacts.findByUserIdAndItineraryIdAndImpactedTrue(userId, itineraryId);
+        List<Impact> impacted = impacts.findByUserIdAndItineraryIdAndImpactedTrue(userId, itineraryId);
+
+        // rejected is filtered here rather than in the query, since older rows have null there
+        return impacted.stream()
+                .filter(impact -> !isRejected(impact))
+                .toList();
     }
 
     @Override

@@ -1,6 +1,8 @@
 package csd.tripsense.itinerary;
 
 import csd.tripsense.auth.CurrentUser;
+import csd.tripsense.impact.Impact;
+import csd.tripsense.impact.ImpactNotFoundException;
 import csd.tripsense.user.UserRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -43,6 +45,21 @@ public class ItineraryAccess {
             throw new ItineraryNotFoundException(itinerary.getId());
         }
         return itinerary;
+    }
+
+    // an impact belongs to whoever owns its itinerary. one with no itinerary is admin only.
+    // anyone else gets "not found" (404), the same as for itineraries
+    public Impact requireAccess(Impact impact, CurrentUser me) {
+        requireLoggedIn(me);
+
+        boolean allowed = impact.getItinerary() == null
+                ? isAdmin(me)
+                : canAccess(impact.getItinerary(), me);
+
+        if (!allowed) {
+            throw new ImpactNotFoundException(impact.getId());
+        }
+        return impact;
     }
 
     /** Keeps only the itineraries the caller may access (everything for an admin). */
