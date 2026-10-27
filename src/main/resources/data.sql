@@ -1,23 +1,28 @@
 -- Seed data for local testing. INSERT OR IGNORE with fixed ids makes it safe to re-run on every restart. 
 -- Parents are inserted before children because of the foreign keys.
 
-INSERT OR IGNORE INTO country (id, name) VALUES
-    (1, 'Japan'),
-    (2, 'Singapore'),
-    (3, 'Thailand'),
-    (4, 'South Korea'),
-    (5, 'Indonesia'),
-    (6, 'Vietnam');
+INSERT OR IGNORE INTO country (id, name, fips_code) VALUES
+    (1, 'Japan', 'JA'),
+    (2, 'Singapore', 'SN'),
+    (3, 'Thailand', 'TH'),
+    (4, 'South Korea', 'KS'),
+    (5, 'Indonesia', 'ID'),
+    (6, 'Vietnam', 'VM');
+
+UPDATE country
+SET fips_code = CASE id WHEN 1 THEN 'JA' WHEN 2 THEN 'SN' WHEN 3 THEN 'TH'
+                        WHEN 4 THEN 'KS' WHEN 5 THEN 'ID' WHEN 6 THEN 'VM' END
+WHERE fips_code IS NULL AND id IN (1, 2, 3, 4, 5, 6);
 
 -- Passwords are BCrypt hashes (login compares against the hash, so plaintext would never match).
--- Plain-text values for local testing: john/alice/bob/carol/dave = password123, admin = admin123.
+-- Plain-text values for local testing: karwei/alice/bob/carol/dave = password123, admin = admin123.
 INSERT OR IGNORE INTO user (id, username, email, password, role) VALUES
-    (1, 'john',  'john@example.com',  '$2a$10$xENb5lsk8eHErfInbr4fKufkjwD8wZ.ua1emb/IuDbj9..08xomHC', 'USER'),
-    (2, 'alice', 'alice@example.com', '$2a$10$xENb5lsk8eHErfInbr4fKufkjwD8wZ.ua1emb/IuDbj9..08xomHC', 'USER'),
-    (3, 'admin', 'admin@example.com', '$2a$10$Uk.hzssxOu6YLesmUIlmZOdebzEd3D4XmOSGiWUIJqJ8ihGE92Kjm', 'ADMIN'),
-    (4, 'bob',   'bob@example.com',   '$2a$10$xENb5lsk8eHErfInbr4fKufkjwD8wZ.ua1emb/IuDbj9..08xomHC', 'USER'),
-    (5, 'carol', 'carol@example.com', '$2a$10$xENb5lsk8eHErfInbr4fKufkjwD8wZ.ua1emb/IuDbj9..08xomHC', 'USER'),
-    (6, 'dave',  'dave@example.com',  '$2a$10$xENb5lsk8eHErfInbr4fKufkjwD8wZ.ua1emb/IuDbj9..08xomHC', 'USER');
+    (1, 'karwei', 'kw@email.com',      '$2a$10$xENb5lsk8eHErfInbr4fKufkjwD8wZ.ua1emb/IuDbj9..08xomHC', 'USER'),
+    (2, 'alice',  'alice@example.com', '$2a$10$xENb5lsk8eHErfInbr4fKufkjwD8wZ.ua1emb/IuDbj9..08xomHC', 'USER'),
+    (3, 'admin',  'admin@example.com', '$2a$10$Uk.hzssxOu6YLesmUIlmZOdebzEd3D4XmOSGiWUIJqJ8ihGE92Kjm', 'ADMIN'),
+    (4, 'bob',    'bob@example.com',   '$2a$10$xENb5lsk8eHErfInbr4fKufkjwD8wZ.ua1emb/IuDbj9..08xomHC', 'USER'),
+    (5, 'carol',  'carol@example.com', '$2a$10$xENb5lsk8eHErfInbr4fKufkjwD8wZ.ua1emb/IuDbj9..08xomHC', 'USER'),
+    (6, 'dave',   'dave@example.com',  '$2a$10$xENb5lsk8eHErfInbr4fKufkjwD8wZ.ua1emb/IuDbj9..08xomHC', 'USER');
 
 INSERT OR IGNORE INTO itinerary (id, user_id, country_id, name, date_start, date_end) VALUES
     (1, 1, 1, 'Japan Ski Trip',          '2026-12-15 00:00:00', '2026-12-22 00:00:00'),
@@ -29,23 +34,23 @@ INSERT OR IGNORE INTO itinerary (id, user_id, country_id, name, date_start, date
     (7, 4, 6, 'Vietnam Backpacking',     '2026-12-01 00:00:00', '2026-12-14 00:00:00'),
     (8, 5, 3, 'Chiang Mai Getaway',      '2027-01-20 00:00:00', '2027-01-25 00:00:00');
 
-INSERT OR IGNORE INTO activity (id, itinerary_id, name, address, date_start, date_end) VALUES
-    (1,  1, 'Ski at Niseko',              'Niseko, Hokkaido, Japan',            '2026-12-16 09:00:00', '2026-12-16 16:00:00'),
-    (2,  1, 'Onsen visit',                'Jozankei Onsen, Sapporo, Japan',     '2026-12-17 18:00:00', '2026-12-17 20:00:00'),
-    (3,  1, 'Sapporo Beer Museum tour',   'Higashi-ku, Sapporo, Japan',         '2026-12-19 14:00:00', '2026-12-19 16:00:00'),
-    (4,  2, 'Grand Palace visit',         'Na Phra Lan Rd, Bangkok, Thailand',  '2026-11-06 09:00:00', '2026-11-06 12:00:00'),
-    (5,  2, 'Phi Phi Island boat tour',   'Krabi Pier, Krabi, Thailand',        '2026-11-08 08:00:00', '2026-11-08 17:00:00'),
-    (6,  2, 'Chatuchak Weekend Market',   'Chatuchak, Bangkok, Thailand',       '2026-11-10 10:00:00', '2026-11-10 15:00:00'),
-    (7,  3, 'Gardens by the Bay',         '18 Marina Gardens Dr, Singapore',    '2027-01-08 17:00:00', '2027-01-08 20:00:00'),
-    (8,  3, 'Universal Studios Singapore','8 Sentosa Gateway, Singapore',       '2027-01-09 10:00:00', '2027-01-09 19:00:00'),
-    (9,  4, 'Gwangjang Market food crawl','88 Changgyeonggung-ro, Seoul',       '2026-10-21 12:00:00', '2026-10-21 15:00:00'),
-    (10, 4, 'Gyeongbokgung Palace',       '161 Sajik-ro, Seoul, South Korea',   '2026-10-22 10:00:00', '2026-10-22 13:00:00'),
-    (11, 4, 'Nami Island day trip',       'Chuncheon, Gangwon, South Korea',    '2026-10-24 09:00:00', '2026-10-24 17:00:00'),
-    (12, 5, 'Ubud Monkey Forest',         'Ubud, Bali, Indonesia',              '2027-02-15 09:00:00', '2027-02-15 11:00:00'),
-    (13, 5, 'Mount Batur sunrise trek',   'Kintamani, Bali, Indonesia',         '2027-02-17 03:00:00', '2027-02-17 09:00:00'),
-    (14, 6, 'Shinjuku Gyoen picnic',      '11 Naitomachi, Shinjuku, Tokyo',     '2027-03-27 10:00:00', '2027-03-27 15:00:00'),
-    (15, 7, 'Ha Long Bay overnight cruise','Bai Chay, Quang Ninh, Vietnam',     '2026-12-05 08:00:00', '2026-12-06 11:00:00'),
-    (16, 8, 'Doi Suthep temple',          'Doi Suthep, Chiang Mai, Thailand',   '2027-01-21 08:00:00', '2027-01-21 11:00:00');
+INSERT OR IGNORE INTO activity (id, itinerary_id, name, address, date_start, date_end, category) VALUES
+    (1,  1, 'Ski at Niseko',              'Niseko, Hokkaido, Japan',            '2026-12-16 09:00:00', '2026-12-16 16:00:00', 'SKI_SNOW'),
+    (2,  1, 'Onsen visit',                'Jozankei Onsen, Sapporo, Japan',     '2026-12-17 18:00:00', '2026-12-17 20:00:00', 'WELLNESS_SPA'),
+    (3,  1, 'Sapporo Beer Museum tour',   'Higashi-ku, Sapporo, Japan',         '2026-12-19 14:00:00', '2026-12-19 16:00:00', 'MUSEUM_GALLERY'),
+    (4,  2, 'Grand Palace visit',         'Na Phra Lan Rd, Bangkok, Thailand',  '2026-11-06 09:00:00', '2026-11-06 12:00:00', 'SIGHTSEEING'),
+    (5,  2, 'Phi Phi Island boat tour',   'Krabi Pier, Krabi, Thailand',        '2026-11-08 08:00:00', '2026-11-08 17:00:00', 'BEACH_WATER'),
+    (6,  2, 'Chatuchak Weekend Market',   'Chatuchak, Bangkok, Thailand',       '2026-11-10 10:00:00', '2026-11-10 15:00:00', 'SHOPPING'),
+    (7,  3, 'Gardens by the Bay',         '18 Marina Gardens Dr, Singapore',    '2027-01-08 17:00:00', '2027-01-08 20:00:00', 'OUTDOOR_NATURE'),
+    (8,  3, 'Universal Studios Singapore','8 Sentosa Gateway, Singapore',       '2027-01-09 10:00:00', '2027-01-09 19:00:00', 'SIGHTSEEING'),
+    (9,  4, 'Gwangjang Market food crawl','88 Changgyeonggung-ro, Seoul',       '2026-10-21 12:00:00', '2026-10-21 15:00:00', 'FOOD_DINING'),
+    (10, 4, 'Gyeongbokgung Palace',       '161 Sajik-ro, Seoul, South Korea',   '2026-10-22 10:00:00', '2026-10-22 13:00:00', 'SIGHTSEEING'),
+    (11, 4, 'Nami Island day trip',       'Chuncheon, Gangwon, South Korea',    '2026-10-24 09:00:00', '2026-10-24 17:00:00', 'OUTDOOR_NATURE'),
+    (12, 5, 'Ubud Monkey Forest',         'Ubud, Bali, Indonesia',              '2027-02-15 09:00:00', '2027-02-15 11:00:00', 'OUTDOOR_NATURE'),
+    (13, 5, 'Mount Batur sunrise trek',   'Kintamani, Bali, Indonesia',         '2027-02-17 03:00:00', '2027-02-17 09:00:00', 'OUTDOOR_NATURE'),
+    (14, 6, 'Shinjuku Gyoen picnic',      '11 Naitomachi, Shinjuku, Tokyo',     '2027-03-27 10:00:00', '2027-03-27 15:00:00', 'OUTDOOR_NATURE'),
+    (15, 7, 'Ha Long Bay overnight cruise','Bai Chay, Quang Ninh, Vietnam',     '2026-12-05 08:00:00', '2026-12-06 11:00:00', 'BEACH_WATER'),
+    (16, 8, 'Doi Suthep temple',          'Doi Suthep, Chiang Mai, Thailand',   '2027-01-21 08:00:00', '2027-01-21 11:00:00', 'SIGHTSEEING');
 
 INSERT OR IGNORE INTO news (id, title, description, source, url, published_at) VALUES
     (1, 'Magnitude 6.8 earthquake strikes near Hokkaido',
@@ -73,14 +78,51 @@ INSERT OR IGNORE INTO news (id, title, description, source, url, published_at) V
         'The park will close for several days for scheduled works, with dates to be confirmed.',
         'The Straits Times', 'https://www.straitstimes.com/', '2026-09-27 16:30:00');
 
-INSERT OR IGNORE INTO impact (id, user_id, news_id, itinerary_id, activity_id, impacted) VALUES
-    (1,  1, 1, 1, 1,    1),  -- 1, john, 6.8 earthquake, japan ski trip, ski at niseko, impacted
-    (2,  1, 1, 1, 2,    1),  -- 2, john, 6.8 earthquake, japan ski trip, onsen visit, impacted
-    (3,  1, 1, 1, NULL, 1),  -- 3, john, 6.8 earthquake, japan ski trip, NULL, impacted
-    (4,  2, 2, 2, 4,    1),  -- 4, alice, flooding, thailand beach, grand palace, impacted
-    (5,  2, 5, 2, 4,    0),  -- 5, alice, grand palace closure, thailand beach, grand palce, not impacted 
-    (6,  1, 8, 3, 8,    1),  -- 6, john, uss closed, singapore weekend, uss, impacted
-    (7,  4, 6, 4, NULL, 1),  -- 7, bob, rail strikes, seoul tour, NULL, impacted
-    (8,  5, 4, 5, 13,   1),  -- 8, carol, mount batur alert, bali retreat, mount batur trek, impacted
-    (9,  4, 3, 7, 15,   1),  -- 9, bob, vietname typhoon, vietname backpacking, ha long bay, impacted
-    (10, 5, 7, 8, NULL, 0);  -- 10, carol, sea haze, chiang mai, NULL, not impacted
+INSERT OR IGNORE INTO news_country (news_id, country_id) VALUES
+    (1, 1),   -- Hokkaido quake: Japan
+    (2, 3),   -- Bangkok flooding: Thailand
+    (3, 6),   -- Vietnam typhoon: Vietnam
+    (4, 5),   -- Mount Batur: Indonesia
+    (5, 3),   -- Grand Palace closure: Thailand
+    (6, 4),   -- Seoul rail strike: South Korea
+    (7, 3),   -- SEA haze (northern Thailand): Thailand
+    (8, 2);   -- USS maintenance: Singapore
+
+-- reason is what the model would have written, so evaluate() serves these from the db instead of
+-- calling ollama again. a null reason counts as not yet evaluated, see ImpactServiceImpl
+INSERT OR IGNORE INTO impact (id, user_id, news_id, itinerary_id, activity_id, impacted, reason) VALUES
+    (1,  1, 1, 1, 1,    1, 'Niseko is in Hokkaido and lifts may be suspended by aftershocks during the ski days.'),
+    (2,  1, 1, 1, 2,    1, 'Jozankei Onsen is near Sapporo, so the visit could be closed for safety checks after the quake.'),
+    (3,  1, 1, 1, NULL, 1, 'The whole trip is in southern Hokkaido where the quake struck, so travel and lodging may be disrupted.'),
+    (4,  2, 2, 2, 4,    1, 'The Grand Palace is in central Bangkok, where flooding has closed attractions.'),
+    (5,  2, 5, 2, 4,    0, 'The closure is for one day next week and does not fall on the planned palace visit.'),
+    (6,  1, 8, 3, 8,    1, 'Universal Studios Singapore closes for maintenance, which may fall on the planned park day.'),
+    (7,  4, 6, 4, NULL, 1, 'The trip relies on Seoul metro services, which the partial strike is reducing at peak hours.'),
+    (8,  5, 4, 5, 13,   1, 'Access to hiking routes around the crater is restricted, which covers the sunrise trek.'),
+    (9,  4, 3, 7, 15,   1, 'Boat services on the northern coast are likely suspended, which would stop the cruise.'),
+    (10, 5, 7, 8, NULL, 0, 'The haze is seasonal across the region and nothing on the Chiang Mai trip is closed.'),
+    -- not impacted, so karwei's japan trip has something for the filter to drop
+    (11, 1, 1, 1, 3,    0, 'The Sapporo Beer Museum is indoors in Higashi-ku and was not reported damaged.');
+-- recommendations for karwei's trips, so the demo has advice to show without calling ollama.
+-- generate() keys "already done" off the row existing, so these are served straight back.
+-- suggested_option_id points at activity_option, which comes from options.sql
+INSERT OR IGNORE INTO recommendation (id, impact_id, severity, action, advice, suggested_option_id, created_at) VALUES
+    (1, 1, 'HIGH',   'REPLACE',
+        'Lifts may be shut on the 16th, so swap the ski day for the Nishimura Museum of Art in Niseko and keep the skis for later in the week.',
+        123464807, '2026-10-24 12:00:00'),
+    (2, 2, 'MEDIUM', 'REPLACE',
+        'Jozankei may be closed for safety checks, so spend the evening at the Sapporo Clock Tower instead, a short ride from the city centre.',
+        1140619,   '2026-10-24 12:00:00'),
+    -- whole trip impact, no single activity to swap so no option either
+    (3, 3, 'MEDIUM', 'MONITOR',
+        'The quake affects the whole trip, so follow the Hokkaido aftershock updates and leave the 15th and 16th flexible.',
+        NULL,      '2026-10-24 12:00:00'),
+    -- low severity still says something, "no change needed" is the answer the story asks for
+    (4, 6, 'LOW',    'MONITOR',
+        'The maintenance dates are not confirmed, so no change is needed yet. Check the park calendar a week before the 9th.',
+        NULL,      '2026-10-24 12:00:00');
+-- Rows that already exist (created before country_id existed) are skipped by INSERT OR IGNORE,
+-- so fill them in. Safe to re-run: it only touches rows where country_id is still null.
+UPDATE activity
+SET country_id = (SELECT country_id FROM itinerary WHERE itinerary.id = activity.itinerary_id)
+WHERE country_id IS NULL;

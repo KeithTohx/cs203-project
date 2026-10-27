@@ -1,12 +1,17 @@
 package csd.tripsense.user;
 
+import csd.tripsense.audit.AuditService;
 import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.auth.SessionService;
+import csd.tripsense.user.preference.PreferenceResponse;
+import csd.tripsense.user.preference.PreferenceService;
+import csd.tripsense.user.preference.UpdatePreferenceRequest;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -18,7 +23,9 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.util.UriComponentsBuilder;
+import org.springframework.web.bind.annotation.DeleteMapping;
 
 import java.net.URI;
 
@@ -31,11 +38,16 @@ import java.net.URI;
 public class UserController {
 
     private final UserService userService;
+    private final PreferenceService preferenceService;
     private final SessionService sessionService;
+    private final AuditService auditService;
 
-    public UserController(UserService userService, SessionService sessionService) {
+    public UserController(UserService userService, PreferenceService preferenceService,
+                          SessionService sessionService, AuditService auditService) {
         this.userService = userService;
+        this.preferenceService = preferenceService;
         this.sessionService = sessionService;
+        this.auditService = auditService;
     }
 
     @Operation(summary = "Register a new user account",
@@ -46,6 +58,7 @@ public class UserController {
     @PostMapping("/user/register")
     public ResponseEntity<User> register(@Valid @RequestBody User user) {
         User created = userService.register(user);
+        auditService.record(AuditService.REGISTER, created.getId(), created.getEmail(), created.getId(), null);
         URI location = UriComponentsBuilder.fromPath("/api/user/{username}")
                 .buildAndExpand(created.getUsername()).encode().toUri();
         return ResponseEntity.created(location).body(created);
@@ -82,9 +95,12 @@ public class UserController {
                                               @AuthenticationPrincipal CurrentUser currentUser,
                                               HttpServletRequest httpRequest,
                                               HttpServletResponse httpResponse) {
+        requireLoggedIn(currentUser);
         User updated = userService.updateUsername(currentUser.getId(), request.username());
         // The session holds a copy of the account, so refresh it or /api/auth/me shows the old name.
         sessionService.refreshCurrentSession(updated, httpRequest, httpResponse);
+        auditService.record(AuditService.PROFILE_UPDATED, currentUser.getId(), currentUser.getEmail(),
+                currentUser.getId(), "changed username");
         return ResponseEntity.ok(updated);
     }
 
@@ -97,9 +113,65 @@ public class UserController {
     @PutMapping("/user/me/password")
     public ResponseEntity<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request,
                                                @AuthenticationPrincipal CurrentUser currentUser) {
+        requireLoggedIn(currentUser);
         userService.changePassword(currentUser.getId(), request.currentPassword(), request.newPassword());
         // Runs after the password is saved: ends this and every other login so old sessions can't linger.
         sessionService.expireSessionsFor(currentUser.getEmail());
+        // Only the fact that it happened is recorded, never either password.
+        auditService.record(AuditService.PASSWORD_CHANGED, currentUser.getId(), currentUser.getEmail(),
+                currentUser.getId(), null);
+        return ResponseEntity.noContent().build();
+    }
+
+    // Normally unreachable: SecurityConfig already returns 401 before a handler runs.
+    private static void requireLoggedIn(CurrentUser currentUser) {
+        if (currentUser == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Not logged in");
+        }
+    }
+    
+    @Operation(summary = "Get your preferences",
+            description = "Requires login. Returns defaults for accounts that haven't set any yet.")
+    @ApiResponse(responseCode = "200", description = "Preferences returned")
+    @ApiResponse(responseCode = "401", description = "Not logged in")
+    @GetMapping("/user/me/preferences")
+    public ResponseEntity<PreferenceResponse> getPreferences(@AuthenticationPrincipal CurrentUser currentUser) {
+        requireLoggedIn(currentUser);
+        return ResponseEntity.ok(PreferenceResponse.from(preferenceService.getPreferences(currentUser.getId())));
+    }
+
+    @Operation(summary = "Update your preferences",
+            description = "Requires login and the X-XSRF-TOKEN header. Only the fields you send are changed; ")
+    @ApiResponse(responseCode = "200", description = "Preferences updated")
+    @ApiResponse(responseCode = "400", description = "Validation failed")
+    @ApiResponse(responseCode = "401", description = "Not logged in")
+    @PatchMapping("/user/me/preferences")
+    public ResponseEntity<PreferenceResponse> updatePreferences(
+            @Valid @RequestBody UpdatePreferenceRequest request,
+            @AuthenticationPrincipal CurrentUser currentUser) {
+        requireLoggedIn(currentUser);
+        return ResponseEntity.ok(PreferenceResponse.from(
+                preferenceService.updatePreferences(currentUser.getId(), request)));
+    }
+
+    @Operation(summary = "Delete your account",
+            description = "Requires login, the X-XSRF-TOKEN header and the current password. Permanently deletes the "
+                    + "account and all its itineraries, activities and impact results, then logs you out everywhere.")
+    @ApiResponse(responseCode = "204", description = "Account deleted")
+    @ApiResponse(responseCode = "400", description = "Validation failed or current password wrong")
+    @ApiResponse(responseCode = "401", description = "Not logged in")
+    @ApiResponse(responseCode = "409", description = "Last remaining admin cannot be deleted")
+    @DeleteMapping("/user/me")
+    public ResponseEntity<Void> deleteAccount(@Valid @RequestBody DeleteAccountRequest request,
+                                            @AuthenticationPrincipal CurrentUser currentUser,
+                                            HttpServletRequest httpRequest,
+                                            HttpServletResponse httpResponse) {
+        requireLoggedIn(currentUser);
+        userService.deleteAccount(currentUser.getId(), request.currentPassword());
+        auditService.record(AuditService.ACCOUNT_DELETED, currentUser.getId(), currentUser.getEmail(),
+        currentUser.getId(), "deleted own account");
+        // Only after the delete committed, so a failed delete doesn't log the user out.
+        sessionService.endAllSessions(currentUser.getEmail(), httpRequest, httpResponse);
         return ResponseEntity.noContent().build();
     }
 }

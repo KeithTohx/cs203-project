@@ -68,4 +68,28 @@ class ImpactResponseTest {
         assertNull(response.newsDescription());
         assertNull(response.newsPublishedAt());
     }
+
+    // ===== REJECTED TESTS =====
+
+    @Test
+    @DisplayName("Should report rejected when the user rejected the impact")
+    void from_ShouldBeRejected_WhenImpactIsRejected() {
+        Impact impact = new Impact();
+        impact.setRejected(true);
+
+        ImpactResponse response = ImpactResponse.from(impact);
+
+        assertTrue(response.rejected());
+    }
+
+    @Test
+    @DisplayName("Should report not rejected when rejected is null")
+    void from_ShouldNotBeRejected_WhenRejectedIsNull() {
+        // rows saved before the column existed have null, and clients should not have to handle that
+        Impact impact = new Impact();
+
+        ImpactResponse response = ImpactResponse.from(impact);
+
+        assertFalse(response.rejected());
+    }
 }

@@ -196,3 +196,46 @@ Content-Type: application/x-www-form-urlencoded
 X-XSRF-TOKEN: {{xsrf}}
 
 email=dave@example.com&password=newpassword123
+
+### ---------------------------------------------------------------------------
+### recommendations - CS203-23
+### needs a login first, see the login block above for how to fill in @xsrf
+### generate is a POST so it needs the header, reading them back is a plain GET
+###
+### generate only calls ollama for impacts it has not seen before. an impact that
+### already has a recommendation is served straight from the db, so a second run is
+### instant and gives the same answer
+### ---------------------------------------------------------------------------
+
+### karwei's hokkaido trip, expect the 4 seeded recommendations worst first
+GET {{host}}/api/itinerary/1/recommendation
+
+### the bangkok trip, this is the one where distance ranking shows its work
+GET {{host}}/api/itinerary/2/recommendation
+
+### generate for the bangkok trip, expect 200 and a list
+### with ollama stopped this still answers, it falls back to the top of our own shortlist
+POST {{host}}/api/recommendation/generate
+Content-Type: application/json
+X-XSRF-TOKEN: {{xsrf}}
+
+{
+    "itineraryId": 2
+}
+
+### validation, expect 400 because itineraryId is required
+POST {{host}}/api/recommendation/generate
+Content-Type: application/json
+X-XSRF-TOKEN: {{xsrf}}
+
+{
+}
+
+### a trip that does not exist, expect 404 and a readable message
+POST {{host}}/api/recommendation/generate
+Content-Type: application/json
+X-XSRF-TOKEN: {{xsrf}}
+
+{
+    "itineraryId": 999
+}

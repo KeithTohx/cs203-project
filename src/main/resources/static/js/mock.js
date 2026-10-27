@@ -68,6 +68,7 @@ const makeImpact = (id, impacted, newsId, activityId, activityName, reason) => {
         newsDescription: news.description,
         newsPublishedAt: news.publishedAt,
         activityId, activityName, reason,
+        rejected: false,
     };
 };
 const IMPACTS = {
@@ -382,6 +383,17 @@ export const mockApi = {
         return respondWith(pageOf(newestFirst(entries), page));
     },
     itineraryImpacts: id => requireLogin() || respondWith(IMPACTS[id] || []),
+    // like the backend, an impact on someone else's itinerary looks the same as one that does not exist
+    setImpactRejected: (id, rejected) => {
+        if (requireLogin()) return requireLogin();
+
+        const itineraryId = Object.keys(IMPACTS).find(key => IMPACTS[key].some(impact => impact.id === Number(id)));
+        if (!itineraryId || !myItinerary(itineraryId)) return fail(404, "Impact not found.");
+
+        const impact = IMPACTS[itineraryId].find(impact => impact.id === Number(id));
+        impact.rejected = rejected;
+        return respondWith(impact);
+    },
     // conversations are kept per itinerary, like the backend's chat memory
     chat: (itineraryId, message) => {
         if (requireLogin() || !myItinerary(itineraryId)) return requireLogin() || fail(404, "Itinerary not found.");

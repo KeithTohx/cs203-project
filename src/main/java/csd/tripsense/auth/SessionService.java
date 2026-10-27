@@ -12,6 +12,12 @@ import org.springframework.security.core.session.SessionRegistry;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.security.web.authentication.logout.SecurityContextLogoutHandler;
+import org.springframework.security.web.authentication.logout.CookieClearingLogoutHandler;
+
+
+import java.util.Objects;
+import java.util.function.Predicate;
 
 /**
  * Ends every active login for an account. Call it after an admin disables or demotes someone,
@@ -31,11 +37,23 @@ public class SessionService {
         this.sessionRegistry = sessionRegistry;
     }
 
-    /** @return how many sessions were ended */
+    /** By email (case-insensitive). @return how many sessions were ended */
     public int expireSessionsFor(String email) {
+        return expireWhere(user -> user.getEmail().equalsIgnoreCase(email));
+    }
+
+    /**
+     * By account id. Prefer this one: the id never changes, so it still finds the sessions if the
+     * email is ever made editable. Used by the admin features. @return how many sessions were ended
+     */
+    public int expireSessionsFor(Long userId) {
+        return expireWhere(user -> Objects.equals(user.getId(), userId));
+    }
+
+    private int expireWhere(Predicate<CurrentUser> matches) {
         int expired = 0;
         for (Object principal : sessionRegistry.getAllPrincipals()) {
-            if (principal instanceof CurrentUser user && user.getEmail().equalsIgnoreCase(email)) {
+            if (principal instanceof CurrentUser user && matches.test(user)) {
                 for (SessionInformation session : sessionRegistry.getAllSessions(principal, false)) {
                     session.expireNow();
                     expired++;
@@ -66,5 +84,13 @@ public class SessionService {
         context.setAuthentication(token);
         SecurityContextHolder.setContext(context);
         securityContextRepository.saveContext(context, request, response);
+    }
+
+    /** Ends every login of this account, including the current one, and clears the session cookie. */
+    public void endAllSessions(String email, HttpServletRequest request, HttpServletResponse response) {
+        expireSessionsFor(email);
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        new SecurityContextLogoutHandler().logout(request, response, auth);        // invalidates session, clears context
+        new CookieClearingLogoutHandler("JSESSIONID").logout(request, response, auth);
     }
 }

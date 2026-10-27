@@ -7,9 +7,12 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import csd.tripsense.impact.Impact;
 import csd.tripsense.itinerary.Itinerary;
+import csd.tripsense.country.Country;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -44,8 +47,20 @@ public class Activity {
     @Column(name = "date_end")
     private LocalDateTime dateEnd;
 
+    // nullable on purpose, activities created before this existed still work, the
+    // recommendation rules just skip them
+    @Enumerated(EnumType.STRING)
+    @Column(name = "category")
+    private ActivityCategory category;
+
     // deleting an activity deletes the impacts recorded against it (the foreign key is on impact)
     @OneToMany(mappedBy = "activity", cascade = CascadeType.REMOVE)
     @JsonIgnore
     private List<Impact> impacts;
+
+    // Which country this activity is in. Copied from the itinerary by ActivityService, never
+    // taken from the request. Lets the news evaluator find activities by country in one query.
+    @ManyToOne
+    @JoinColumn(name = "country_id")
+    private Country country;
 }

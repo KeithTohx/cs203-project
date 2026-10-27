@@ -1,6 +1,7 @@
 package csd.tripsense.activity;
 
 import java.util.List;
+import java.time.LocalDateTime;
 
 public interface ActivityService {
     
@@ -48,5 +49,14 @@ public interface ActivityService {
      * @throws ActivityNotFoundException if no Activity exists with the given ID
      */
     void deleteActivity(Long id);
+
+    /**
+     * Activities in a country that have not ended yet and have not been evaluated against the given news.
+     * @param newsId the unique identifier of the News
+     * @param countryId the unique identifier of the Country
+     * @param now the cut-off; activities ending before it are ignored
+     * @return activities still waiting for an impact decision on this news (empty if none)
+     */
+    List<Activity> getActivitiesPendingForNews(Long newsId, Long countryId, LocalDateTime now);
 
 }

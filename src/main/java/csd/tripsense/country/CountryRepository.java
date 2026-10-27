@@ -1,13 +1,13 @@
 package csd.tripsense.country;
 
+import java.util.Collection;
+import java.util.List;
+
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
-/**
- * We only need this interface declaration
- * Spring will automatically generate an implementation of the repo
- */
 @Repository
-public interface CountryRepository extends JpaRepository <Country, Long> {
+public interface CountryRepository extends JpaRepository<Country, Long> {
 
+    List<Country> findByFipsCodeIn(Collection<String> fipsCodes);
 }

@@ -3,6 +3,7 @@ package csd.tripsense.itinerary;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.time.LocalDateTime;
 
 import org.springframework.stereotype.Service;
 
@@ -49,7 +50,7 @@ public class ItineraryServiceImpl implements ItineraryService {
             if (itinerary.getId().equals(id)) return itinerary;
         }
 
-        return null;
+        throw new ItineraryNotFoundException(id);
     }
 
     @Override
@@ -89,5 +90,20 @@ public class ItineraryServiceImpl implements ItineraryService {
         }
         itineraries.deleteById(id);
     }
+
+        @Override
+        public List<Long> getCountryIdsWithActiveItineraries(LocalDateTime now) {
+            return itineraries.findCountryIdsWithActiveItineraries(now);
+        }
+
+        @Override
+        public List<Itinerary> getActiveItinerariesByCountry(Long countryId, LocalDateTime now) {
+            return itineraries.findActiveByCountry(countryId, now);
+        }
+
+        @Override
+        public List<Itinerary> getItinerariesPendingForNews(Long newsId, Long countryId, LocalDateTime now) {
+            return itineraries.findPendingForNews(newsId, countryId, now);
+        }
 
 }

@@ -599,6 +599,33 @@ summary {
     background: var(--bad-bg);
 }
 
+/* news the user marked as not relevant: kept visible so it can be restored, but no longer alarming */
+.imp.dismissed {
+    border-color: var(--border);
+    background: transparent;
+    color: var(--muted);
+}
+
+/* one affected activity (or the whole trip) with its "Not relevant" / "Restore" button at the end */
+.impact-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px 8px;
+    margin: 4px 0;
+}
+
+button.impact-action {
+    font-size: 13px;
+    padding: 2px 8px;
+}
+
+/* the error line under a card takes no space until something goes wrong */
+[data-impact-error]:empty {
+    display: none;
+}
+
 /* news title with its source bubble beside it */
 .imp-head {
     display: flex;
