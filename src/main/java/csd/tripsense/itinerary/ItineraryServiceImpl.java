@@ -50,7 +50,7 @@ public class ItineraryServiceImpl implements ItineraryService {
             if (itinerary.getId().equals(id)) return itinerary;
         }
 
-        return null;
+        throw new ItineraryNotFoundException(id);
     }
 
     @Override

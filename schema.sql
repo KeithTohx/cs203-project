@@ -129,3 +129,15 @@ create table news_country {
     foreign key (news_id) references news(id),
     foreign key (country_id) references country(id)
 }
+
+create table audit_log {
+    id integer primary key,
+    occurred_at timestamp not null,
+    actor_id integer,          -- who did it; null for a failed login (the person is unknown)
+    actor_email varchar,       -- for a failed login: the email that was tried (never the password)
+    action varchar not null,   -- LOGIN, LOGIN_FAILED, LOGOUT, REGISTER, PROFILE_UPDATED,
+                               -- ACCOUNT_DISABLED, ACCOUNT_ENABLED, ACCOUNT_DELETED,
+                               -- ITINERARY_CREATED, ITINERARY_UPDATED, ITINERARY_DELETED
+    target_id integer,         -- the ACCOUNT it was done to / about (no foreign key: the record must outlive it)
+    details varchar(500)
+}

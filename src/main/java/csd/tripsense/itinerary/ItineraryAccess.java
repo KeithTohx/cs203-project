@@ -12,13 +12,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * The one shared ownership rule for itineraries: a user may see and change their OWN itineraries;
- * an ADMIN may see and change all of them. Anyone else gets "not found" (404), exactly as if the
- * itinerary did not exist, so ids cannot be probed to find out what exists.
- *
- * Activities and impacts can reuse this: call requireAccess(activity.getItinerary(), me).
- */
+/** Ownership checks for personal trip data, including accounts with the ADMIN role. */
 @Component
 public class ItineraryAccess {
 
@@ -28,33 +22,27 @@ public class ItineraryAccess {
         this.userRepository = userRepository;
     }
 
-    public boolean isAdmin(CurrentUser me) {
-        return me != null && "ADMIN".equals(me.getRole());
-    }
-
-    /** Owner or admin. */
+    /** Only the owner. */
     public boolean canAccess(Itinerary itinerary, CurrentUser me) {
         requireLoggedIn(me);
-        return isAdmin(me)
-                || (itinerary.getUser() != null && Objects.equals(itinerary.getUser().getId(), me.getId()));
+        return itinerary != null && itinerary.getUser() != null
+                && Objects.equals(itinerary.getUser().getId(), me.getId());
     }
 
     /** Returns the itinerary if the caller may access it, otherwise throws 404. */
     public Itinerary requireAccess(Itinerary itinerary, CurrentUser me) {
         if (!canAccess(itinerary, me)) {
-            throw new ItineraryNotFoundException(itinerary.getId());
+            throw new ItineraryNotFoundException(itinerary == null ? null : itinerary.getId());
         }
         return itinerary;
     }
 
-    // an impact belongs to whoever owns its itinerary. one with no itinerary is admin only.
+    // An impact belongs to whoever owns its itinerary; orphan impacts are inaccessible.
     // anyone else gets "not found" (404), the same as for itineraries
     public Impact requireAccess(Impact impact, CurrentUser me) {
         requireLoggedIn(me);
 
-        boolean allowed = impact.getItinerary() == null
-                ? isAdmin(me)
-                : canAccess(impact.getItinerary(), me);
+        boolean allowed = canAccess(impact.getItinerary(), me);
 
         if (!allowed) {
             throw new ImpactNotFoundException(impact.getId());
@@ -62,16 +50,16 @@ public class ItineraryAccess {
         return impact;
     }
 
-    /** Keeps only the itineraries the caller may access (everything for an admin). */
+    /** Keeps only the itineraries the caller may access (only their own, including admins). */
     public List<Itinerary> visibleTo(List<Itinerary> itineraries, CurrentUser me) {
         requireLoggedIn(me);
         return itineraries.stream().filter(i -> canAccess(i, me)).toList();
     }
 
-    /** For "all itineraries of user X": only X themselves or an admin. Others get 404. */
-    public void requireSelfOrAdmin(Long userId, CurrentUser me) {
+    /** For "all itineraries of user X": only X themselves. Others get 404. */
+    public void requireSelf(Long userId, CurrentUser me) {
         requireLoggedIn(me);
-        if (!isAdmin(me) && !Objects.equals(me.getId(), userId)) {
+        if (!Objects.equals(me.getId(), userId)) {
             throw new ItineraryNotFoundException("User (ID: " + userId + ") has no existing itineraries.");
         }
     }

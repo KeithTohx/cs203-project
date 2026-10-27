@@ -4,6 +4,10 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Optional;
 
+import org.springframework.data.domain.Page;
+
+import org.springframework.data.domain.Pageable;
+
 public interface UserRepository extends JpaRepository<User, Long> {
 
     boolean existsByEmailIgnoreCase(String email);
@@ -14,6 +18,10 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     Optional<User> findByUsernameIgnoreCase(String username);
 
-    //This is done so that there is at least 1 admin in the Database.
-    long countByRole(String role);
+    /** Admin search: part of the email OR part of the username, any capitalisation. */
+    Page<User> findByEmailContainingIgnoreCaseOrUsernameContainingIgnoreCase(
+            String email, String username, Pageable pageable);
+    // Disabled administrators do not preserve administrative access.
+    @org.springframework.data.jpa.repository.Query("select count(u) from User u where cast(u.role as string) = :role and (u.enabled = true or u.enabled is null)")
+    long countEnabledByRole(@org.springframework.data.repository.query.Param("role") String role);
 }

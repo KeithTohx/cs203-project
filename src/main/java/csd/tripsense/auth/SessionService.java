@@ -16,6 +16,9 @@ import org.springframework.security.web.authentication.logout.SecurityContextLog
 import org.springframework.security.web.authentication.logout.CookieClearingLogoutHandler;
 
 
+import java.util.Objects;
+import java.util.function.Predicate;
+
 /**
  * Ends every active login for an account. Call it after an admin disables or demotes someone,
  * or when a user changes their password, so the change takes effect immediately instead of
@@ -34,11 +37,23 @@ public class SessionService {
         this.sessionRegistry = sessionRegistry;
     }
 
-    /** @return how many sessions were ended */
+    /** By email (case-insensitive). @return how many sessions were ended */
     public int expireSessionsFor(String email) {
+        return expireWhere(user -> user.getEmail().equalsIgnoreCase(email));
+    }
+
+    /**
+     * By account id. Prefer this one: the id never changes, so it still finds the sessions if the
+     * email is ever made editable. Used by the admin features. @return how many sessions were ended
+     */
+    public int expireSessionsFor(Long userId) {
+        return expireWhere(user -> Objects.equals(user.getId(), userId));
+    }
+
+    private int expireWhere(Predicate<CurrentUser> matches) {
         int expired = 0;
         for (Object principal : sessionRegistry.getAllPrincipals()) {
-            if (principal instanceof CurrentUser user && user.getEmail().equalsIgnoreCase(email)) {
+            if (principal instanceof CurrentUser user && matches.test(user)) {
                 for (SessionInformation session : sessionRegistry.getAllSessions(principal, false)) {
                     session.expireNow();
                     expired++;

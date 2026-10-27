@@ -1,198 +1,105 @@
 package csd.tripsense.user;
 
-import java.util.List;
-import java.util.Optional;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import org.mockito.InOrder;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import static org.mockito.Mockito.inOrder;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.web.server.ResponseStatusException;
-
 import csd.tripsense.chat.ChatbotService;
 import csd.tripsense.impact.ImpactRepository;
-import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import csd.tripsense.user.AccountRuleException;
 
-/**
- * LOCATION: src/test/java/csd/tripsense/user/UserServiceImplTest.java
- *
- * Unit tests for UserServiceImpl.deleteAccount (added for the delete-account story)
- * Tests the password check, the last-admin rule, the order of the deletes, and that a rejected
- * request deletes nothing
- * No Spring and no database: every dependency is a Mockito mock
- * Other methods in UserServiceImpl (register, updateUsername, changePassword) are not covered here
- * Does not cover the JPA cascades or the transaction rollback, which need a real database
- *
- * Source statement in deleteAccount                         -> Test that covers it
- * findById(userId)                                          -> deleteAccount_ShouldThrowUserNotFoundException_WhenUserDoesNotExist
- * !passwordEncoder.matches(...) throws 400                  -> deleteAccount_ShouldThrow400_WhenPasswordIsWrong
- * "ADMIN".equals(role) && countByRole("ADMIN") <= 1 (409)   -> deleteAccount_ShouldThrow409_WhenLastAdmin
- * countByRole("ADMIN") returns 2 or more                    -> deleteAccount_ShouldDeleteAdmin_WhenAnotherAdminExists
- * "ADMIN".equals(role) is false, so no count query          -> deleteAccount_ShouldNotCountAdmins_WhenUserIsNotAdmin
- * deleteAllConversationsFor, deleteByUserId, deleteAll,
- *   flush, delete(user) in that order                       -> deleteAccount_ShouldDeleteEverythingInOrder_WhenPasswordIsCorrect
- */
-@ExtendWith(MockitoExtension.class)
-@DisplayName("UserService Unit Tests")
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 class UserServiceImplTest {
 
-    @Mock
     private UserRepository userRepository;
-
-    @Mock
     private PasswordEncoder passwordEncoder;
-
-    @Mock
-    private ItineraryRepository itineraryRepository;
-
-    @Mock
-    private ImpactRepository impactRepository;
-
-    @Mock
-    private ChatbotService chatbotService;
-
-    @InjectMocks
     private UserServiceImpl userService;
-
-    private User testUser;
-    private User testAdmin;
 
     @BeforeEach
     void setUp() {
-        testUser = new User("bob@example.com", "bob", "hash", "USER");
-        testAdmin = new User("admin@example.com", "admin", "hash", "ADMIN");
+        userRepository = mock(UserRepository.class);
+        passwordEncoder = new BCryptPasswordEncoder();
+        userService = new UserServiceImpl(userRepository, passwordEncoder,
+                mock(ItineraryRepository.class),
+                mock(ImpactRepository.class),
+                mock(ChatbotService.class));
     }
 
-    // ===== SUCCESSFUL DELETE TESTS =====
-
-    @Test
-    @DisplayName("Should delete chat, impacts, itineraries and then the user, in that order, when password is correct")
-    void deleteAccount_ShouldDeleteEverythingInOrder_WhenPasswordIsCorrect() {
-        // Arrange
-        Itinerary trip1 = new Itinerary();
-        Itinerary trip2 = new Itinerary();
-        List<Itinerary> trips = List.of(trip1, trip2);
-
-        when(userRepository.findById(4L)).thenReturn(Optional.of(testUser));
-        when(passwordEncoder.matches("password123", "hash")).thenReturn(true);
-        when(itineraryRepository.findByUserId(4L)).thenReturn(trips);
-
-        // Act
-        userService.deleteAccount(4L, "password123");
-
-        // Assert - children are deleted first and the user row last
-        InOrder order = inOrder(chatbotService, impactRepository, itineraryRepository, userRepository);
-        order.verify(chatbotService).deleteAllConversationsFor(4L);   // chat history
-        order.verify(impactRepository).deleteByUserId(4L);            // user's impacts
-        order.verify(itineraryRepository).deleteAll(trips);           // itineraries (cascade removes activities)
-        order.verify(itineraryRepository).flush();                    // run the deletes before the parent row
-        order.verify(userRepository).delete(testUser);                // the account itself
+    private static void assertStatus(Throwable e, AccountRuleException.Kind expected) {
+        assertThat(e).isInstanceOfSatisfying(AccountRuleException.class,
+                r -> assertThat(r.getKind()).isEqualTo(expected));
     }
 
     @Test
-    @DisplayName("Should not count admins when the user is not an admin")
-    void deleteAccount_ShouldNotCountAdmins_WhenUserIsNotAdmin() {
-        // Arrange
-        when(userRepository.findById(4L)).thenReturn(Optional.of(testUser));
-        when(passwordEncoder.matches("password123", "hash")).thenReturn(true);
+    void register_storesBcryptHashNotPlaintext_andForcesRoleUser() {
+        User request = new User("john@example.com", "john", "password123", "ADMIN");
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        // Act
-        userService.deleteAccount(4L, "password123");
+        userService.register(request);
 
-        // Assert - the "ADMIN".equals(role) check short-circuits the count query
-        verify(userRepository, never()).countByRole(anyString());
-        verify(userRepository, times(1)).delete(testUser);
-    }
-
-    // ===== PASSWORD CHECK TESTS =====
-
-    @Test
-    @DisplayName("Should throw 400 and delete nothing when password is wrong")
-    void deleteAccount_ShouldThrow400_WhenPasswordIsWrong() {
-        // Arrange
-        when(userRepository.findById(4L)).thenReturn(Optional.of(testUser));
-        when(passwordEncoder.matches("wrong", "hash")).thenReturn(false);
-
-        // Act
-        ResponseStatusException exception = assertThrows(ResponseStatusException.class,
-            () -> userService.deleteAccount(4L, "wrong"));
-
-        // Assert
-        assertEquals(400, exception.getStatusCode().value());
-        assertEquals("current password is incorrect", exception.getReason());
-        verifyNoInteractions(chatbotService, impactRepository, itineraryRepository);
-        verify(userRepository, never()).delete(any(User.class));
-    }
-
-    // ===== LAST ADMIN TESTS =====
-
-    @Test
-    @DisplayName("Should throw 409 and delete nothing when the user is the last admin")
-    void deleteAccount_ShouldThrow409_WhenLastAdmin() {
-        // Arrange
-        when(userRepository.findById(3L)).thenReturn(Optional.of(testAdmin));
-        when(passwordEncoder.matches("admin123", "hash")).thenReturn(true);
-        when(userRepository.countByRole("ADMIN")).thenReturn(1L);
-
-        // Act
-        ResponseStatusException exception = assertThrows(ResponseStatusException.class,
-            () -> userService.deleteAccount(3L, "admin123"));
-
-        // Assert
-        assertEquals(409, exception.getStatusCode().value());
-        verifyNoInteractions(chatbotService, impactRepository, itineraryRepository);
-        verify(userRepository, never()).delete(any(User.class));
+        ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).saveAndFlush(captor.capture());
+        User saved = captor.getValue();
+        assertThat(saved.getPassword()).isNotEqualTo("password123").startsWith("$2");
+        assertThat(passwordEncoder.matches("password123", saved.getPassword())).isTrue();
+        assertThat(saved.getRole()).isEqualTo("USER");
     }
 
     @Test
-    @DisplayName("Should delete an admin when another admin exists")
-    void deleteAccount_ShouldDeleteAdmin_WhenAnotherAdminExists() {
-        // Arrange
-        when(userRepository.findById(3L)).thenReturn(Optional.of(testAdmin));
-        when(passwordEncoder.matches("admin123", "hash")).thenReturn(true);
-        when(userRepository.countByRole("ADMIN")).thenReturn(2L);
+    void register_withDuplicateEmail_throws409AndDoesNotSave() {
+        when(userRepository.existsByEmailIgnoreCase("john@example.com")).thenReturn(true);
 
-        // Act
-        userService.deleteAccount(3L, "admin123");
-
-        // Assert
-        verify(userRepository, times(1)).countByRole("ADMIN");
-        verify(userRepository, times(1)).delete(testAdmin);
+        assertThatThrownBy(() -> userService.register(new User("john@example.com", "john", "password123", "USER")))
+                .satisfies(e -> assertStatus(e, AccountRuleException.Kind.CONFLICT))
+                .hasMessageContaining("email");
+        verify(userRepository, never()).saveAndFlush(any(User.class));
     }
 
-    // ===== USER NOT FOUND TESTS =====
+    @Test
+    void register_withDuplicateUsername_throws409AndDoesNotSave() {
+        when(userRepository.existsByUsernameIgnoreCase("john")).thenReturn(true);
+
+        assertThatThrownBy(() -> userService.register(new User("john@example.com", "john", "password123", "USER")))
+                .satisfies(e -> assertStatus(e, AccountRuleException.Kind.CONFLICT))
+                .hasMessageContaining("username");
+        verify(userRepository, never()).saveAndFlush(any(User.class));
+    }
 
     @Test
-    @DisplayName("Should throw UserNotFoundException when user does not exist")
-    void deleteAccount_ShouldThrowUserNotFoundException_WhenUserDoesNotExist() {
-        // Arrange
-        Long nonExistentId = 999L;
-        when(userRepository.findById(nonExistentId)).thenReturn(Optional.empty());
+    void register_whenDatabaseRejectsDuplicate_throws409() {
+        when(userRepository.saveAndFlush(any(User.class))).thenThrow(new DataIntegrityViolationException("unique"));
 
-        // Act
-        UserNotFoundException exception = assertThrows(UserNotFoundException.class,
-            () -> userService.deleteAccount(nonExistentId, "password123"));
+        assertThatThrownBy(() -> userService.register(new User("john@example.com", "john", "password123", "USER")))
+                .satisfies(e -> assertStatus(e, AccountRuleException.Kind.CONFLICT));
+    }
 
-        // Assert
-        assertNotNull(exception);
-        verify(userRepository, times(1)).findById(nonExistentId);
-        verifyNoInteractions(passwordEncoder, chatbotService, impactRepository, itineraryRepository);
+    @Test
+    void register_withPasswordOver72Bytes_throws400() {
+        String longPassword = "\u00e9".repeat(40);   // 40 characters, 80 bytes
+
+        assertThatThrownBy(() -> userService.register(new User("john@example.com", "john", longPassword, "USER")))
+                .satisfies(e -> assertStatus(e, AccountRuleException.Kind.INVALID_INPUT));
+        verify(userRepository, never()).saveAndFlush(any(User.class));
+    }
+
+    @Test
+    void getByUsername_whenMissing_throwsNotFound() {
+        when(userRepository.findByUsernameIgnoreCase("ghost")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.getByUsername("ghost"))
+                .isInstanceOf(UserNotFoundException.class);
     }
 }
