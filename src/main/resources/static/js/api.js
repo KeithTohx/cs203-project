@@ -57,6 +57,9 @@ const realApi = {
   // the account is always the logged-in one, from the session. the email is the login, so only the username changes
   updateMe:   details => request("/api/user/me", "PATCH", details),                   // {username} -> the account
   changePassword: passwords => request("/api/user/me/password", "PUT", passwords),    // {currentPassword, newPassword} -> 204, then every session is ended
+  deleteMe:   currentPassword => request("/api/user/me", "DELETE", {currentPassword}),  // -> 204, the account and everything in it is gone and every session is ended
+  preferences:() => request("/api/user/me/preferences"),                               // -> the saved preferences, or the defaults if none were set
+  updatePreferences:changes => request("/api/user/me/preferences", "PATCH", changes),  // only the fields sent change -> the preferences. solo with children or elderly is a 400
   itineraries:userId => request(`/api/user/${userId}/itinerary`),   // that user's own itineraries
   itinerary:  id => request(`/api/itinerary/${id}`),
   addItinerary:itinerary => request("/api/itinerary", "POST", itinerary),
