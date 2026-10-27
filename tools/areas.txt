@@ -1,0 +1,89 @@
+# destinations we search around directly, on top of the worldwide pass
+# label | nominatim query | country
+#
+# label is matched against activity.address so it must be a word that appears there
+# country must match the country table exactly, see countries.sql
+#
+# the worldwide pass in build-options.py ranks by wikipedia sitelinks, which follows where
+# wikipedia editors are rather than where tourists go. that leaves asia thin and small resort
+# towns missing entirely, so those get a radius search here. our own seed data lives in this
+# list too, eg activity 1 is in Niseko and a seeded recommendation points at a Niseko museum
+
+# our sample itineraries
+Niseko|Niseko, Hokkaido, Japan|Japan
+Sapporo|Sapporo, Japan|Japan
+Tokyo|Shinjuku, Tokyo, Japan|Japan
+Singapore|Singapore|Singapore
+Bangkok|Bangkok, Thailand|Thailand
+Krabi|Krabi, Thailand|Thailand
+Chiang Mai|Chiang Mai, Thailand|Thailand
+Seoul|Seoul, South Korea|South Korea
+Chuncheon|Chuncheon, South Korea|South Korea
+Bali|Ubud, Bali, Indonesia|Indonesia
+Quang Ninh|Ha Long, Quang Ninh, Vietnam|Vietnam
+
+# japan
+Kyoto|Kyoto, Japan|Japan
+Osaka|Osaka, Japan|Japan
+Hakone|Hakone, Kanagawa, Japan|Japan
+Okinawa|Naha, Okinawa, Japan|Japan
+Hiroshima|Hiroshima, Japan|Japan
+Fukuoka|Fukuoka, Japan|Japan
+
+# korea
+Busan|Busan, South Korea|South Korea
+Jeju|Jeju City, South Korea|South Korea
+
+# greater china
+Beijing|Beijing, China|People's Republic of China
+Shanghai|Shanghai, China|People's Republic of China
+Xian|Xi'an, Shaanxi, China|People's Republic of China
+Guilin|Guilin, Guangxi, China|People's Republic of China
+Chengdu|Chengdu, Sichuan, China|People's Republic of China
+Hangzhou|Hangzhou, Zhejiang, China|People's Republic of China
+Hong Kong|Hong Kong|Hong Kong
+Macau|Macau|Macau
+Taipei|Taipei, Taiwan|Taiwan
+Kaohsiung|Kaohsiung, Taiwan|Taiwan
+
+# thailand
+Phuket|Phuket, Thailand|Thailand
+Pattaya|Pattaya, Chonburi, Thailand|Thailand
+Ayutthaya|Ayutthaya, Thailand|Thailand
+Chiang Rai|Chiang Rai, Thailand|Thailand
+
+# vietnam
+Hanoi|Hanoi, Vietnam|Vietnam
+Ho Chi Minh City|Ho Chi Minh City, Vietnam|Vietnam
+Hoi An|Hoi An, Quang Nam, Vietnam|Vietnam
+Da Nang|Da Nang, Vietnam|Vietnam
+
+# mainland southeast asia
+Siem Reap|Siem Reap, Cambodia|Cambodia
+Phnom Penh|Phnom Penh, Cambodia|Cambodia
+Luang Prabang|Luang Prabang, Laos|Laos
+Vientiane|Vientiane, Laos|Laos
+Yangon|Yangon, Myanmar|Myanmar
+Bagan|Bagan, Mandalay, Myanmar|Myanmar
+
+# maritime southeast asia
+Kuala Lumpur|Kuala Lumpur, Malaysia|Malaysia
+Penang|George Town, Penang, Malaysia|Malaysia
+Langkawi|Langkawi, Kedah, Malaysia|Malaysia
+Kota Kinabalu|Kota Kinabalu, Sabah, Malaysia|Malaysia
+Malacca|Malacca City, Malaysia|Malaysia
+Manila|Manila, Philippines|Philippines
+Cebu|Cebu City, Philippines|Philippines
+Boracay|Boracay, Aklan, Philippines|Philippines
+Jakarta|Jakarta, Indonesia|Indonesia
+Yogyakarta|Yogyakarta, Indonesia|Indonesia
+Lombok|Mataram, Lombok, Indonesia|Indonesia
+
+# south asia
+Delhi|New Delhi, India|India
+Mumbai|Mumbai, India|India
+Jaipur|Jaipur, Rajasthan, India|India
+Agra|Agra, Uttar Pradesh, India|India
+Goa|Panaji, Goa, India|India
+Colombo|Colombo, Sri Lanka|Sri Lanka
+Kathmandu|Kathmandu, Nepal|Nepal
