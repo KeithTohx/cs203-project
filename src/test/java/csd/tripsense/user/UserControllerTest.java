@@ -1,6 +1,10 @@
 package csd.tripsense.user;
 
 import csd.tripsense.audit.AuditService;
+import csd.tripsense.user.preference.PreferenceService;
+import csd.tripsense.user.preference.UserPreference;
+import csd.tripsense.user.preference.UpdatePreferenceRequest;
+import csd.tripsense.user.preference.RiskTolerance;
 import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.auth.SessionService;
 import org.junit.jupiter.api.AfterEach;
@@ -39,6 +43,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class UserControllerTest {
 
     private UserService userService;
+    private PreferenceService preferenceService;
     private SessionService sessionService;
     private AuditService auditService;
     private MockMvc mockMvc;
@@ -48,9 +53,10 @@ class UserControllerTest {
     @BeforeEach
     void setUp() {
         userService = mock(UserService.class);
+        preferenceService = mock(PreferenceService.class);
         sessionService = mock(SessionService.class);
         auditService = mock(AuditService.class);
-        mockMvc = MockMvcBuilders.standaloneSetup(new UserController(userService, sessionService, auditService))
+        mockMvc = MockMvcBuilders.standaloneSetup(new UserController(userService, preferenceService, sessionService, auditService))
                 .setCustomArgumentResolvers(new AuthenticationPrincipalArgumentResolver())
                 .build();
     }
@@ -231,4 +237,51 @@ class UserControllerTest {
 
         verify(userService, never()).changePassword(any(), any(), any());
     }
+
+    @Test
+    void getPreferences_returnsTheLoggedInUsersPreferences() throws Exception {
+        loginAs(alice);
+        when(preferenceService.getPreferences(7L))
+                .thenReturn(new UserPreference(new User("alice@example.com", "alice", "hash", "USER")));
+
+        mockMvc.perform(get("/api/user/me/preferences"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.riskTolerance").value("MEDIUM"));
+
+        verify(preferenceService).getPreferences(7L);
+    }
+
+    @Test
+    void updatePreferences_targetsTheLoggedInUser() throws Exception {
+        loginAs(alice);
+        UserPreference preferences = new UserPreference(new User("alice@example.com", "alice", "hash", "USER"));
+        preferences.setRiskTolerance(RiskTolerance.LOW);
+        when(preferenceService.updatePreferences(eq(7L), any())).thenReturn(preferences);
+
+        mockMvc.perform(patch("/api/user/me/preferences").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"riskTolerance\":\"LOW\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.riskTolerance").value("LOW"));
+
+        verify(preferenceService).updatePreferences(7L,
+                new UpdatePreferenceRequest(RiskTolerance.LOW, null, null, null, null, null));
+    }
+
+    @Test
+    void getPreferences_whenNotLoggedIn_returns401() throws Exception {
+        mockMvc.perform(get("/api/user/me/preferences"))
+                .andExpect(status().isUnauthorized());
+
+        verify(preferenceService, never()).getPreferences(any());
+    }
+
+    @Test
+    void updatePreferences_whenNotLoggedIn_returns401() throws Exception {
+        mockMvc.perform(patch("/api/user/me/preferences").contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isUnauthorized());
+
+        verify(preferenceService, never()).updatePreferences(any(), any());
+    }
+
 }
