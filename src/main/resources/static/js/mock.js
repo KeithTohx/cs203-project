@@ -88,6 +88,18 @@ const CHATS = {
     ],
 };
 
+// user id -> saved preferences. users without an entry get the defaults, like on the backend
+const PREFERENCES = {};
+const defaultPreferences = () => ({
+    riskTolerance: "MEDIUM",
+    flexibilityLevel: "SOMEWHAT_FLEXIBLE",
+    explanationDetail: "BRIEF",
+    travelGroup: "SOLO",
+    travellingWithChildren: false,
+    travellingWithElderly: false,
+    updatedAt: new Date().toISOString(),
+});
+
 const myItinerary = id => ITINERARIES.find(itinerary => itinerary.id === Number(id) && itinerary.userId === me?.id);
 const myActivity = id => ACTIVITIES.find(activity => activity.id === Number(id) && myItinerary(activity.itineraryId));
 
@@ -128,6 +140,29 @@ export const mockApi = {
         sessionStorage.removeItem("mockUserId");
         return respondWith(null);
     },
+    preferences: () => {
+        const notLoggedIn = requireLogin();
+        if (notLoggedIn) return notLoggedIn;
+
+        return respondWith(PREFERENCES[me.id] ?? defaultPreferences());
+    },
+    // like the backend: fields left out keep their value, and the end result is checked as a whole
+    updatePreferences: changes => {
+        const notLoggedIn = requireLogin();
+        if (notLoggedIn) return notLoggedIn;
+
+        const sentFields = Object.fromEntries(Object.entries(changes).filter(([, value]) => value != null));
+        const updated = { ...(PREFERENCES[me.id] ?? defaultPreferences()), ...sentFields };
+
+        const hasCompanions = updated.travellingWithChildren || updated.travellingWithElderly;
+        if (updated.travelGroup === "SOLO" && hasCompanions) {
+            return fail(400, "children or elderly can't be set when travelling solo; change the travel group first");
+        }
+
+        updated.updatedAt = new Date().toISOString();
+        PREFERENCES[me.id] = updated;
+        return respondWith(updated);
+    },
     // like the backend: needs the current password, the last admin cannot go, and the user's
     // itineraries (with their activities, impacts and chats) are removed along with the account
     deleteMe: currentPassword => {
@@ -148,6 +183,7 @@ export const mockApi = {
             delete CHATS[itinerary.id];
         }
 
+        delete PREFERENCES[me.id];
         USERS.splice(USERS.indexOf(me), 1);
         me = null;
         sessionStorage.removeItem("mockUserId");

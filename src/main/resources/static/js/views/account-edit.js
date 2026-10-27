@@ -1,6 +1,7 @@
 // One screen per section. On success: show a message back on #/account.
 import { api } from "../api.js";
-import { escapeHtml, flash, formPage, passwordProblem, PASSWORD_MAX, PASSWORD_MIN } from "../util.js";
+import { PREFERENCE_OPTIONS } from "../preference-options.js";
+import { escapeHtml, flash, formPage, passwordProblem, PASSWORD_MAX, PASSWORD_MIN, showError } from "../util.js";
 
 // same rules as the backend's UpdateProfileRequest, so the browser catches mistakes before saving.
 // the "-" is escaped because pattern attributes use the strict "v" regex mode
@@ -48,6 +49,90 @@ export function showChangePassword(root, user, reauth) {
             reauth();
         },
     });
+}
+
+// one dropdown for a preference, with the saved value already chosen
+const createPreferenceSelect = (field, labelText, savedValue) => {
+    const options = PREFERENCE_OPTIONS[field].map(option => `
+        <option value="${escapeHtml(option.value)}"${option.value === savedValue ? " selected" : ""}>
+            ${escapeHtml(option.label)}
+        </option>
+    `).join("");
+
+    return `
+        <label for="${field}">${labelText}</label>
+        <select id="${field}" name="${field}">
+            ${options}
+        </select>
+    `;
+};
+
+// one tick box for a preference that is either on or off
+const createPreferenceCheckbox = (field, labelText, isChecked) => `
+    <label class="check" for="${field}">
+        <input id="${field}" name="${field}" type="checkbox"${isChecked ? " checked" : ""}>
+        ${labelText}
+    </label>
+`;
+
+// the preferences only shape how the AI assistant explains news, so the page says that up front.
+// the saved values are loaded first so the form opens with them already filled in
+export async function showEditPreferences(root, user, reauth) {
+    root.innerHTML = `<div class="msg">Loading…</div>`;
+
+    let saved;
+    try {
+        saved = await api.preferences();
+    } catch (error) {
+        return showError(root, error, reauth);
+    }
+
+    const { form } = formPage(root, {
+        title: "Travel preferences", cancelLink: "#/account", onAuthLost: reauth, fieldsHtml: `
+    <p class="meta">
+        These shape how the AI assistant explains news about your trips.
+        They never hide news that affects your itinerary.
+    </p>
+
+    ${createPreferenceSelect("riskTolerance", "How cautious are you?", saved.riskTolerance)}
+    ${createPreferenceSelect("flexibilityLevel", "How flexible are your plans?", saved.flexibilityLevel)}
+    ${createPreferenceSelect("explanationDetail", "How much detail do you want?", saved.explanationDetail)}
+    ${createPreferenceSelect("travelGroup", "Who do you usually travel with?", saved.travelGroup)}
+
+    <fieldset id="companions">
+        <legend>Travelling with</legend>
+        ${createPreferenceCheckbox("travellingWithChildren", "Children", saved.travellingWithChildren)}
+        ${createPreferenceCheckbox("travellingWithElderly", "Elderly travellers", saved.travellingWithElderly)}
+        <p class="meta hint" id="companions-hint">Only for family trips.</p>
+    </fieldset>`,
+        onSubmit: async inputs => {
+            await api.updatePreferences({
+                riskTolerance: inputs.riskTolerance.value,
+                flexibilityLevel: inputs.flexibilityLevel.value,
+                explanationDetail: inputs.explanationDetail.value,
+                travelGroup: inputs.travelGroup.value,
+                travellingWithChildren: inputs.travellingWithChildren.checked,
+                travellingWithElderly: inputs.travellingWithElderly.checked,
+            });
+            flash("Preferences saved.");
+            location.hash = "/account";
+        },
+    });
+
+    // the backend refuses children or elderly on a solo trip, so the boxes are cleared and
+    // switched off while "On my own" is picked, instead of letting the save fail
+    const travelGroup = form.elements.travelGroup;
+    const companions = form.querySelector("#companions");
+    const updateCompanions = () => {
+        const isSolo = travelGroup.value === "SOLO";
+        companions.disabled = isSolo;
+        if (isSolo) {
+            form.elements.travellingWithChildren.checked = false;
+            form.elements.travellingWithElderly.checked = false;
+        }
+    };
+    travelGroup.addEventListener("change", updateCompanions);
+    updateCompanions();
 }
 
 // the current password is the confirmation, the same way changing the password works,

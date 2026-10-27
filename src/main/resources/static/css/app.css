@@ -303,6 +303,36 @@ select {
     color: var(--text);
 }
 
+/* a group of related inputs under one heading, without the browser's default box around it */
+fieldset {
+    border: none;
+    padding: 0;
+    margin: 14px 0 0;
+}
+
+legend {
+    font-weight: 600;
+    padding: 0;
+}
+
+/* a tick box with its text beside it, instead of the full width layout other inputs get */
+label.check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 400;
+    margin: 8px 0;
+}
+
+label.check input {
+    width: auto;
+    margin: 0;
+}
+
+fieldset:disabled label.check {
+    color: var(--muted);
+}
+
 button {
     font: inherit;
     font-weight: 600;
