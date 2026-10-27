@@ -31,6 +31,8 @@ public interface UserService {
      */
     void changePassword(Long userId, String currentPassword, String newPassword);
 
+
+
     /**
      * Permanently deletes the account and everything it owns (itineraries, activities, impacts).
      * @throws UserNotFoundException if the account no longer exists

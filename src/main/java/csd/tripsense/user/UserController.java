@@ -2,6 +2,9 @@ package csd.tripsense.user;
 
 import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.auth.SessionService;
+import csd.tripsense.user.preference.PreferenceResponse;
+import csd.tripsense.user.preference.PreferenceService;
+import csd.tripsense.user.preference.UpdatePreferenceRequest;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import jakarta.servlet.http.HttpServletRequest;
@@ -32,10 +35,12 @@ import java.net.URI;
 public class UserController {
 
     private final UserService userService;
+    private final PreferenceService preferenceService;
     private final SessionService sessionService;
 
-    public UserController(UserService userService, SessionService sessionService) {
+    public UserController(UserService userService, PreferenceService preferenceService, SessionService sessionService) {
         this.userService = userService;
+        this.preferenceService = preferenceService;
         this.sessionService = sessionService;
     }
 
@@ -102,6 +107,28 @@ public class UserController {
         // Runs after the password is saved: ends this and every other login so old sessions can't linger.
         sessionService.expireSessionsFor(currentUser.getEmail());
         return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "Get your preferences",
+            description = "Requires login. Returns defaults for accounts that haven't set any yet.")
+    @ApiResponse(responseCode = "200", description = "Preferences returned")
+    @ApiResponse(responseCode = "401", description = "Not logged in")
+    @GetMapping("/user/me/preferences")
+    public ResponseEntity<PreferenceResponse> getPreferences(@AuthenticationPrincipal CurrentUser currentUser) {
+        return ResponseEntity.ok(PreferenceResponse.from(preferenceService.getPreferences(currentUser.getId())));
+    }
+
+    @Operation(summary = "Update your preferences",
+            description = "Requires login and the X-XSRF-TOKEN header. Only the fields you send are changed; ")
+    @ApiResponse(responseCode = "200", description = "Preferences updated")
+    @ApiResponse(responseCode = "400", description = "Validation failed")
+    @ApiResponse(responseCode = "401", description = "Not logged in")
+    @PatchMapping("/user/me/preferences")
+    public ResponseEntity<PreferenceResponse> updatePreferences(
+            @Valid @RequestBody UpdatePreferenceRequest request,
+            @AuthenticationPrincipal CurrentUser currentUser) {
+        return ResponseEntity.ok(PreferenceResponse.from(
+                preferenceService.updatePreferences(currentUser.getId(), request)));
     }
 
     @Operation(summary = "Delete your account",
