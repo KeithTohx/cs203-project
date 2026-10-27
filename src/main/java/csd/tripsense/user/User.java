@@ -4,10 +4,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.Column;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.EnumType;
-import jakarta.persistence.OneToOne;
-import jakarta.persistence.CascadeType;
-import jakarta.persistence.FetchType;
-import csd.tripsense.user.preference.UserPreference;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -51,11 +47,7 @@ public class User {
     @Enumerated(EnumType.STRING)
     private Role role = Role.USER;
 
-    @com.fasterxml.jackson.annotation.JsonIgnore
-    @OneToOne(mappedBy = "user", cascade = CascadeType.REMOVE, fetch = FetchType.LAZY)
-    private UserPreference preferences;
-
-    // null (rows seeded by data-dev.sql, or created before this column existed) counts as enabled.
+    // null (rows seeded by data.sql, or created before this column existed) counts as enabled.
     @Column
     @JsonProperty(access = JsonProperty.Access.READ_ONLY)
     private Boolean enabled = true;

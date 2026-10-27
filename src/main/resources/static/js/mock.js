@@ -159,8 +159,7 @@ export const mockApi = {
         Object.assign(itinerary, { name: changes.name, dateStart: changes.dateStart, dateEnd: changes.dateEnd, countryId: country.id, countryName: country.name });
         return respondWith(itinerary);
     },
-    itineraryActivities: id => requireLogin() || (!myItinerary(id) ? fail(404, "Itinerary not found.")
-        : respondWith(ACTIVITIES.filter(activity => activity.itineraryId === Number(id)))),
+    itineraryActivities: id => requireLogin() || respondWith(ACTIVITIES.filter(activity => activity.itineraryId === Number(id))),
     activity: id => requireLogin() || respondWith(myActivity(id) ?? null),
     addActivity: newActivity => {
         if (requireLogin() || !myItinerary(newActivity.itinerary.id)) return requireLogin() || fail(404, "Itinerary not found.");
@@ -181,29 +180,10 @@ export const mockApi = {
         ACTIVITIES.splice(ACTIVITIES.indexOf(activity), 1);
         return respondWith(null);
     },
-    adminUsers: (search = "", page = 0) => {
-        if (!me) return fail(401, "Not logged in");
-        if (me.role !== "ADMIN") return fail(403, "Admins only.");
-        const accounts = USERS.filter(user => [user.username, user.email]
-            .some(value => value.toLowerCase().includes(search.toLowerCase())));
-        return respondWith({content: accounts.slice(page * 20, (page + 1) * 20).map(withoutPassword),
-            page, size: 20, totalElements: accounts.length, totalPages: Math.ceil(accounts.length / 20)});
-    },
-    changeUserRole: (id, role) => {
-        if (!me) return fail(401, "Not logged in");
-        if (me.role !== "ADMIN") return fail(403, "Admins only.");
-        if (Number(id) === me.id) return fail(400, "Admins cannot change their own role.");
-        if (!["USER", "ADMIN"].includes(role)) return fail(400, "Unknown role.");
-        const account = USERS.find(user => user.id === Number(id));
-        if (!account) return fail(404, "Account not found.");
-        if (account.role === "ADMIN" && role !== "ADMIN"
-            && USERS.filter(user => user.role === "ADMIN" && user.enabled !== false).length <= 1) {
-            return fail(409, "The last enabled admin cannot be demoted.");
-        }
-        account.role = role;
-        return respondWith(withoutPassword(account));
-    },
-    itineraryImpacts: id => requireLogin() || (!myItinerary(id) ? fail(404, "Itinerary not found.") : respondWith(IMPACTS[id] || [])),
+    adminUsers: () => requireLogin() || (me.role !== "ADMIN"
+        ? fail(403, "Admins only.")
+        : respondWith(USERS.map(withoutPassword))),
+    itineraryImpacts: id => requireLogin() || respondWith(IMPACTS[id] || []),
     // like the backend, an impact on someone else's itinerary looks the same as one that does not exist
     setImpactRejected: (id, rejected) => {
         if (requireLogin()) return requireLogin();

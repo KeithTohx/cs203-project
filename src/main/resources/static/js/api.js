@@ -73,8 +73,8 @@ const realApi = {
   chat:       (itineraryId, message) => request(`/api/itinerary/${itineraryId}/chat`, "POST", {message}),   // -> {role: "assistant", content}
   chatHistory:itineraryId => request(`/api/itinerary/${itineraryId}/chat/history`),   // -> [{role: "user" | "assistant", content}], oldest first
   resetChat:  itineraryId => request(`/api/itinerary/${itineraryId}/chat`, "DELETE"),
-  adminUsers: (search = "", page = 0) => request(`/api/admin/users?${new URLSearchParams({search, page, size: 20})}`),
-  changeUserRole: (id, role) => request(`/api/admin/users/${id}/role`, "POST", {role}),                                              // admin only: every account, without passwords
+  // planned, not on the backend yet
+  adminUsers: () => request("/api/user"),                                              // admin only: every account, without passwords
 };
 
 // Mock mode only on localhost, via http://localhost:8080/?mock

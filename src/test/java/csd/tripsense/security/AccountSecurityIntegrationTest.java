@@ -1,17 +1,10 @@
 package csd.tripsense.security;
 
-import csd.tripsense.activity.*;
 import csd.tripsense.admin.*;
 import csd.tripsense.auth.CurrentUser;
-import csd.tripsense.country.*;
-import csd.tripsense.impact.*;
 import csd.tripsense.itinerary.*;
-import csd.tripsense.news.*;
 import csd.tripsense.user.*;
-import csd.tripsense.user.preference.*;
 import org.junit.jupiter.api.*;
-import org.springframework.ai.chat.memory.ChatMemoryRepository;
-import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -22,13 +15,11 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import java.nio.file.*;
-import java.util.List;
 import static org.assertj.core.api.Assertions.*;
 
 @SpringBootTest(properties = {
         "gdelt.ingest.enabled=false", "impact.eval.enabled=false", "spring.sql.init.mode=never",
-        "spring.jpa.hibernate.ddl-auto=create-drop", "spring.datasource.hikari.maximum-pool-size=1",
-        "app.bootstrap-admin.email=", "app.bootstrap-admin.username=", "app.bootstrap-admin.password="
+        "spring.jpa.hibernate.ddl-auto=create-drop", "spring.datasource.hikari.maximum-pool-size=1"
 })
 class AccountSecurityIntegrationTest {
     private static final Path DATABASE = database();
@@ -42,14 +33,6 @@ class AccountSecurityIntegrationTest {
     }
 
     @Autowired UserRepository users;
-    @Autowired UserService userService;
-    @Autowired UserPreferenceRepository preferences;
-    @Autowired CountryRepository countries;
-    @Autowired ItineraryRepository trips;
-    @Autowired ActivityRepository activities;
-    @Autowired NewsRepository news;
-    @Autowired ImpactRepository impacts;
-    @Autowired ChatMemoryRepository conversations;
     @Autowired JdbcTemplate jdbc;
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired AdminService admins;
@@ -73,33 +56,6 @@ class AccountSecurityIntegrationTest {
 
     @AfterEach
     void clearContext() { SecurityContextHolder.clearContext(); }
-
-    @Test
-    void selfDeletionRemovesPreferencesTripsActivitiesImpactsAndChatWithForeignKeysEnabled() {
-        assertThat(jdbc.queryForObject("pragma foreign_keys", Integer.class)).isEqualTo(1);
-        Long id = new TransactionTemplate(transactionManager).execute(status -> {
-            User user = users.saveAndFlush(new User("delete@example.com", "deleteperson",
-                    new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder().encode("password123"), "USER"));
-            preferences.saveAndFlush(new UserPreference(user));
-            Country country = new Country(); country.setName("Test country"); country = countries.saveAndFlush(country);
-            Itinerary trip = new Itinerary(); trip.setUser(user); trip.setCountry(country); trip.setName("Test trip");
-            trip = trips.saveAndFlush(trip);
-            Activity activity = new Activity(); activity.setItinerary(trip); activity.setName("Test activity");
-            activity = activities.saveAndFlush(activity);
-            News article = new News(); article.setTitle("Test news"); article = news.saveAndFlush(article);
-            Impact impact = new Impact(); impact.setUser(user); impact.setItinerary(trip);
-            impact.setActivity(activity); impact.setNews(article); impacts.saveAndFlush(impact);
-            return user.getId();
-        });
-        conversations.saveAll(id + ":1", List.of(new UserMessage("private message")));
-        userService.deleteAccount(id, "password123");
-        assertThat(users.existsById(id)).isFalse();
-        assertThat(preferences.findByUserId(id)).isEmpty();
-        assertThat(trips.findByUserId(id)).isEmpty();
-        assertThat(impacts.findByUserId(id)).isEmpty();
-        assertThat(jdbc.queryForObject("select count(*) from activity", Long.class)).isZero();
-        assertThat(conversations.findByConversationId(id + ":1")).isEmpty();
-    }
 
     @Test
     void serviceRoleAuthorizationRejectsNonAdmins() {

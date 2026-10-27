@@ -122,16 +122,23 @@ public class UserServiceImpl implements UserService {
         if (!passwordEncoder.matches(currentPassword, user.getPassword())) {
             throw new AccountRuleException(AccountRuleException.Kind.INVALID_INPUT, "current password is incorrect");
         }
-        deleteUserAndData(userId, user);
+        if ("ADMIN".equals(user.getRole()) && user.isEnabled() && userRepository.countEnabledByRole("ADMIN") <= 1) {
+            throw new AccountRuleException(AccountRuleException.Kind.CONFLICT, "the last admin account cannot be deleted");
+        }
+
+        chatbotService.deleteAllConversationsFor(userId);   // chat history is personal data too
+
+        impactRepository.deleteByUserId(userId);
+        itineraryRepository.deleteAll(itineraryRepository.findByUserId(userId));  // cascades to activities and impacts
+        itineraryRepository.flush();
+        userRepository.delete(user);
     }
 
     @Override
     @Transactional
     public void deleteUserAndData(Long userId) {
-        deleteUserAndData(userId, findById(userId));
-    }
+        User user = findById(userId);
 
-    private void deleteUserAndData(Long userId, User user) {
         if ("ADMIN".equals(user.getRole()) && user.isEnabled() && userRepository.countEnabledByRole("ADMIN") <= 1) {
             throw new AccountRuleException(AccountRuleException.Kind.CONFLICT, "the last admin account cannot be deleted");
         }
