@@ -37,8 +37,26 @@ async function loadPreferenceSummary(container, onAuthLost) {
     }
 }
 
+// preferences only shape how the AI explains news about itineraries, and admins do not have any
+const createPreferenceCard = () => `
+    <section class="card">
+        <div class="row">
+            <h2>Travel preferences</h2>
+            <a class="btn" href="#/account/preferences">Edit</a>
+        </div>
+        <div id="preference-summary">
+            <p class="meta">Loading…</p>
+        </div>
+    </section>
+`;
+
 export function showAccount(root, user, onAuthLost) {
         const flashMessage = takeFlash();
+        const isAdmin = user.role === "ADMIN";
+        const deleteDescription = isAdmin
+            ? "Permanently removes your account."
+            : "Permanently removes your account, itineraries and chat history.";
+
         root.innerHTML = `<h1>Your account</h1>
     ${flashMessage ? `<p class="ok" role="status">${escapeHtml(flashMessage)}</p>` : ""}
     <section class="card">
@@ -55,23 +73,15 @@ export function showAccount(root, user, onAuthLost) {
         </div>
         <p class="meta">••••••••</p>
     </section>
-    <section class="card">
-        <div class="row">
-            <h2>Travel preferences</h2>
-            <a class="btn" href="#/account/preferences">Edit</a>
-        </div>
-        <div id="preference-summary">
-            <p class="meta">Loading…</p>
-        </div>
-    </section>
+    ${isAdmin ? "" : createPreferenceCard()}
     <section class="card danger-zone">
         <div class="row">
             <h2>Delete account</h2>
             <a class="btn danger" href="#/account/delete">Delete</a>
         </div>
-        <p class="meta">Permanently removes your account, itineraries and chat history.</p>
+        <p class="meta">${deleteDescription}</p>
     </section>
     `;
 
-    loadPreferenceSummary(root.querySelector("#preference-summary"), onAuthLost);
+    if (!isAdmin) loadPreferenceSummary(root.querySelector("#preference-summary"), onAuthLost);
 }

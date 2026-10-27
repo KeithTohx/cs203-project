@@ -9,8 +9,9 @@ const USERS = [
     { id: 3, username: "admin", email: "admin@example.com", password: "admin123", role: "ADMIN" },
     { id: 4, username: "bob", email: "bob@example.com", password: "password123", role: "USER" },
     { id: 5, username: "carol", email: "carol@example.com", password: "password123", role: "USER" },
-    { id: 6, username: "dave", email: "dave@example.com", password: "password123", role: "USER" },
+    { id: 6, username: "dave", email: "dave@example.com", password: "password123", role: "USER", enabled: false },
 ];
+for (const user of USERS) user.enabled ??= true;
 const withoutPassword = ({ password, ...user }) => user;
 let me = USERS.find(user => user.id === Number(sessionStorage.getItem("mockUserId"))) || null;
 // Returns a rejected promise when nobody is logged in, otherwise null.
@@ -103,21 +104,92 @@ const defaultPreferences = () => ({
 const myItinerary = id => ITINERARIES.find(itinerary => itinerary.id === Number(id) && itinerary.userId === me?.id);
 const myActivity = id => ACTIVITIES.find(activity => activity.id === Number(id) && myItinerary(activity.itineraryId));
 
+// the audit log, oldest first like ids on the backend. the admin pages read it newest first.
+// same fields as AuditEntryResponse, and like the backend it stores plain ids so it outlives deleted accounts
+const AUDIT = [];
+const record = (action, actorId, actorEmail, targetId, details = null, occurredAt = new Date().toISOString()) =>
+    AUDIT.push({ id: AUDIT.length + 1, occurredAt, actorId, actorEmail, action, targetId, details });
+
+// a little history so the admin pages are not empty on first load
+record("REGISTER", 1, "john@example.com", 1, null, "2026-10-01T09:12:00");
+record("LOGIN", 1, "john@example.com", 1, null, "2026-10-01T09:13:00");
+record("ITINERARY_CREATED", 1, "john@example.com", 1, "itinerary 1 'Japan Ski Trip'", "2026-10-01T09:20:00");
+record("LOGIN_FAILED", null, "alice@example.com", 2, null, "2026-10-12T22:41:00");
+record("LOGIN", 2, "alice@example.com", 2, null, "2026-10-12T22:42:00");
+record("ITINERARY_UPDATED", 2, "alice@example.com", 2, "itinerary 2 'Thailand Beach Holiday'", "2026-10-12T22:50:00");
+record("ACCOUNT_DISABLED", 3, "admin@example.com", 6, "disabled user 'dave'", "2026-10-19T17:30:00");
+record("LOGIN_FAILED", null, "dave@example.com", 6, "account is disabled", "2026-10-20T08:05:00");
+
+// smaller than the backend's 20, so the pager shows up with this little mock data
+const PAGE_SIZE = 5;
+const pageOf = (items, page, size = PAGE_SIZE) => {
+    const totalPages = Math.ceil(items.length / size);
+    const safePage = Math.max(0, page);
+    return {
+        content: items.slice(safePage * size, (safePage + 1) * size),
+        page: safePage,
+        size,
+        totalElements: items.length,
+        totalPages,
+    };
+};
+const newestFirst = entries => [...entries].sort((first, second) => second.id - first.id);
+
+// Returns a rejected promise unless an admin is logged in, otherwise null.
+const requireAdmin = () => requireLogin() || (me.role !== "ADMIN" ? fail(403, "Admins only.") : null);
+// same idea for things only normal users have, like preferences
+const requireUser = () => requireLogin() || (me.role !== "USER" ? fail(403, "Only for user accounts.") : null);
+const findUser = id => USERS.find(user => user.id === Number(id));
+const userNotFound = id => fail(404, `No user found with id ${id}`);
+
+// the account and everything it owns: itineraries with their activities, impacts and chats, and its preferences
+const removeAccount = account => {
+    const ownedItineraries = ITINERARIES.filter(itinerary => itinerary.userId === account.id);
+    for (const itinerary of ownedItineraries) {
+        ITINERARIES.splice(ITINERARIES.indexOf(itinerary), 1);
+        for (let index = ACTIVITIES.length - 1; index >= 0; index--) {
+            if (ACTIVITIES[index].itineraryId === itinerary.id) ACTIVITIES.splice(index, 1);
+        }
+        delete IMPACTS[itinerary.id];
+        delete CHATS[itinerary.id];
+    }
+
+    delete PREFERENCES[account.id];
+    USERS.splice(USERS.indexOf(account), 1);
+};
+
 export const mockApi = {
+    // like the backend: a disabled account gets the same answer as a wrong password, so nothing is given away
     login: (email, password) => {
-        const user = USERS.find(candidate => candidate.email.toLowerCase() === email.toLowerCase() && candidate.password === password);
-        if (!user) return fail(401, "Invalid email or password.");
-        me = user; sessionStorage.setItem("mockUserId", user.id); return respondWith(null);
+        const aimedAt = USERS.find(candidate => candidate.email.toLowerCase() === email.toLowerCase());
+        const passwordMatches = aimedAt && aimedAt.password === password;
+
+        if (!passwordMatches || !aimedAt.enabled) {
+            const details = passwordMatches ? "account is disabled" : null;
+            record("LOGIN_FAILED", null, email, aimedAt?.id ?? null, details);
+            return fail(401, "Invalid email or password.");
+        }
+
+        me = aimedAt;
+        sessionStorage.setItem("mockUserId", me.id);
+        record("LOGIN", me.id, me.email, me.id);
+        return respondWith(null);
     },
     register: details => {
         const taken = field => USERS.some(user => user[field].toLowerCase() === details[field].toLowerCase());
         if (taken("email")) return fail(409, `email '${details.email}' is already taken`);
         if (taken("username")) return fail(409, `username '${details.username}' is already taken`);
-        const user = { id: Math.max(...USERS.map(user => user.id)) + 1, ...details, role: "USER" };
+        const user = { id: Math.max(...USERS.map(user => user.id)) + 1, ...details, role: "USER", enabled: true };
         USERS.push(user);
+        record("REGISTER", user.id, user.email, user.id);
         return respondWith(withoutPassword(user));
     },
-    logout: () => { me = null; sessionStorage.removeItem("mockUserId"); return respondWith(null); },
+    logout: () => {
+        if (me) record("LOGOUT", me.id, me.email, me.id);
+        me = null;
+        sessionStorage.removeItem("mockUserId");
+        return respondWith(null);
+    },
     me: () => requireLogin() || respondWith(withoutPassword(me)),
     // like the backend: only the username changes, and a name taken by someone else is a 409
     updateMe: details => {
@@ -127,6 +199,7 @@ export const mockApi = {
         if (takenBy && takenBy.id !== me.id) return fail(409, `username '${details.username}' is already taken`);
 
         me.username = details.username;
+        record("PROFILE_UPDATED", me.id, me.email, me.id, "changed username");
         return respondWith(withoutPassword(me));
     },
     // like the backend: a password change ends the session, so the user has to log in again
@@ -136,20 +209,21 @@ export const mockApi = {
         if (passwords.newPassword === me.password) return fail(400, "new password must be different from the current password");
 
         me.password = passwords.newPassword;
+        record("PASSWORD_CHANGED", me.id, me.email, me.id);
         me = null;
         sessionStorage.removeItem("mockUserId");
         return respondWith(null);
     },
     preferences: () => {
-        const notLoggedIn = requireLogin();
-        if (notLoggedIn) return notLoggedIn;
+        const notAllowed = requireUser();
+        if (notAllowed) return notAllowed;
 
         return respondWith(PREFERENCES[me.id] ?? defaultPreferences());
     },
     // like the backend: fields left out keep their value, and the end result is checked as a whole
     updatePreferences: changes => {
-        const notLoggedIn = requireLogin();
-        if (notLoggedIn) return notLoggedIn;
+        const notAllowed = requireUser();
+        if (notAllowed) return notAllowed;
 
         const sentFields = Object.fromEntries(Object.entries(changes).filter(([, value]) => value != null));
         const updated = { ...(PREFERENCES[me.id] ?? defaultPreferences()), ...sentFields };
@@ -173,18 +247,8 @@ export const mockApi = {
         const adminCount = USERS.filter(user => user.role === "ADMIN").length;
         if (me.role === "ADMIN" && adminCount <= 1) return fail(409, "the last admin account cannot be deleted");
 
-        const ownedItineraries = ITINERARIES.filter(itinerary => itinerary.userId === me.id);
-        for (const itinerary of ownedItineraries) {
-            ITINERARIES.splice(ITINERARIES.indexOf(itinerary), 1);
-            for (let index = ACTIVITIES.length - 1; index >= 0; index--) {
-                if (ACTIVITIES[index].itineraryId === itinerary.id) ACTIVITIES.splice(index, 1);
-            }
-            delete IMPACTS[itinerary.id];
-            delete CHATS[itinerary.id];
-        }
-
-        delete PREFERENCES[me.id];
-        USERS.splice(USERS.indexOf(me), 1);
+        removeAccount(me);
+        record("ACCOUNT_DELETED", me.id, me.email, me.id, "deleted their own account");
         me = null;
         sessionStorage.removeItem("mockUserId");
         return respondWith(null);
@@ -199,6 +263,7 @@ export const mockApi = {
         const nextId = Math.max(0, ...ITINERARIES.map(itinerary => itinerary.id)) + 1;
         const itinerary = makeItinerary(nextId, me.id, newItinerary.name, country.name, newItinerary.dateStart, newItinerary.dateEnd);
         ITINERARIES.push(itinerary);
+        record("ITINERARY_CREATED", me.id, me.email, me.id, `itinerary ${itinerary.id} '${itinerary.name}'`);
         return respondWith(itinerary);
     },
     // Removes the itinerary's activities and impacts with it.
@@ -210,6 +275,7 @@ export const mockApi = {
             if (ACTIVITIES[index].itineraryId === itinerary.id) ACTIVITIES.splice(index, 1);
         }
         delete IMPACTS[itinerary.id];
+        record("ITINERARY_DELETED", me.id, me.email, me.id, `itinerary ${itinerary.id} '${itinerary.name}'`);
         return respondWith(null);
     },
     updateItinerary: (id, changes) => {
@@ -217,6 +283,7 @@ export const mockApi = {
         if (requireLogin() || !itinerary) return requireLogin() || fail(404, "Itinerary not found.");
         const country = COUNTRIES.find(candidate => candidate.id === changes.country.id);
         Object.assign(itinerary, { name: changes.name, dateStart: changes.dateStart, dateEnd: changes.dateEnd, countryId: country.id, countryName: country.name });
+        record("ITINERARY_UPDATED", me.id, me.email, me.id, `itinerary ${itinerary.id} '${itinerary.name}'`);
         return respondWith(itinerary);
     },
     itineraryActivities: id => requireLogin() || respondWith(ACTIVITIES.filter(activity => activity.itineraryId === Number(id))),
@@ -240,9 +307,80 @@ export const mockApi = {
         ACTIVITIES.splice(ACTIVITIES.indexOf(activity), 1);
         return respondWith(null);
     },
-    adminUsers: () => requireLogin() || (me.role !== "ADMIN"
-        ? fail(403, "Admins only.")
-        : respondWith(USERS.map(withoutPassword))),
+    // like the backend: search matches part of the email or username, in id order
+    // like the backend: only email and username are searched, the page looks ids up itself
+    adminUsers: ({ search = "", page = 0, size = 20 } = {}) => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const term = search.trim().toLowerCase();
+        const matches = USERS
+            .filter(user => !term || user.email.toLowerCase().includes(term) || user.username.toLowerCase().includes(term))
+            .sort((first, second) => first.id - second.id)
+            .map(withoutPassword);
+        return respondWith(pageOf(matches, page, size));
+    },
+    adminUser: id => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const account = findUser(id);
+        return account ? respondWith(withoutPassword(account)) : userNotFound(id);
+    },
+    disableUser: id => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+        if (Number(id) === me.id) return fail(400, "admins cannot disable their own account");
+
+        const account = findUser(id);
+        if (!account) return userNotFound(id);
+
+        account.enabled = false;
+        record("ACCOUNT_DISABLED", me.id, me.email, account.id, `disabled user '${account.username}'`);
+        return respondWith(withoutPassword(account));
+    },
+    enableUser: id => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const account = findUser(id);
+        if (!account) return userNotFound(id);
+
+        account.enabled = true;
+        record("ACCOUNT_ENABLED", me.id, me.email, account.id, `enabled user '${account.username}'`);
+        return respondWith(withoutPassword(account));
+    },
+    adminDeleteUser: id => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+        if (Number(id) === me.id) return fail(400, "admins cannot delete their own account");
+
+        const account = findUser(id);
+        if (!account) return userNotFound(id);
+
+        removeAccount(account);
+        record("ACCOUNT_DELETED", me.id, me.email, account.id, `deleted user '${account.username}'`);
+        return respondWith(null);
+    },
+    // what one account did and what was done to it. kept after the account is deleted, like on the backend
+    userActivity: (id, { action = "", page = 0 } = {}) => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const userId = Number(id);
+        const entries = AUDIT.filter(entry =>
+            (entry.actorId === userId || entry.targetId === userId) && (!action || entry.action === action));
+        return respondWith(pageOf(newestFirst(entries), page));
+    },
+    auditLog: ({ email = "", action = "", page = 0 } = {}) => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const term = email.trim().toLowerCase();
+        const entries = AUDIT.filter(entry =>
+            (!term || (entry.actorEmail ?? "").toLowerCase().includes(term)) && (!action || entry.action === action));
+        return respondWith(pageOf(newestFirst(entries), page));
+    },
     itineraryImpacts: id => requireLogin() || respondWith(IMPACTS[id] || []),
     // conversations are kept per itinerary, like the backend's chat memory
     chat: (itineraryId, message) => {

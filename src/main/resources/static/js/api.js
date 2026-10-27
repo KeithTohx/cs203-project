@@ -75,8 +75,14 @@ const realApi = {
   chat:       (itineraryId, message) => request(`/api/itinerary/${itineraryId}/chat`, "POST", {message}),   // -> {role: "assistant", content}
   chatHistory:itineraryId => request(`/api/itinerary/${itineraryId}/chat/history`),   // -> [{role: "user" | "assistant", content}], oldest first
   resetChat:  itineraryId => request(`/api/itinerary/${itineraryId}/chat`, "DELETE"),
-  // planned, not on the backend yet
-  adminUsers: () => request("/api/user"),                                              // admin only: every account, without passwords
+  // admin only. lists come one page at a time -> {content, page, size, totalElements, totalPages}, page counts from 0
+  adminUsers: ({search = "", page = 0, size = 20} = {}) => request(`/api/admin/users?${new URLSearchParams({search, page, size})}`),   // search matches part of the email or username
+  adminUser:  id => request(`/api/admin/users/${id}`),                                 // -> {id, username, email, role, enabled}
+  disableUser:id => request(`/api/admin/users/${id}/disable`, "POST"),                 // the account cannot log in and its sessions end, but its data stays
+  enableUser: id => request(`/api/admin/users/${id}/enable`, "POST"),
+  adminDeleteUser:id => request(`/api/admin/users/${id}`, "DELETE"),                   // -> 204, the account and everything in it is gone. not allowed on yourself
+  userActivity:(id, {action = "", page = 0} = {}) => request(`/api/admin/users/${id}/actions?${new URLSearchParams({action, page})}`),   // what the account did and what was done to it, newest first
+  auditLog:   ({email = "", action = "", page = 0} = {}) => request(`/api/admin/audit?${new URLSearchParams({email, action, page})}`),   // everyone's actions, newest first
 };
 
 // Mock mode only on localhost, via http://localhost:8080/?mock

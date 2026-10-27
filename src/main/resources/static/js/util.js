@@ -3,6 +3,8 @@ export const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, char 
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 export const formatDate = date => date ? new Date(date).toLocaleDateString(undefined,
     { day: "numeric", month: "short", year: "numeric" }) : "";
+export const formatDateTime = date => date ? new Date(date).toLocaleString(undefined,
+    { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
 export const dateRange = (start, end) => {
     if (!start) return "";
     return !end || formatDate(start) === formatDate(end) ? formatDate(start) : `${formatDate(start)} – ${formatDate(end)}`;
@@ -67,6 +69,30 @@ export function formPage(root, { title, fieldsHtml, onSubmit, onAuthLost, cancel
     };
     return { form, errorMessage };
 }
+// Previous / Next for one page of results from the backend ({ page, totalPages }, page counts from 0).
+// each button carries the page it goes to in data-page, so a view handles every click in one place
+export const createPager = result => {
+    if (result.totalPages <= 1) return "";
+
+    const isFirst = result.page === 0;
+    const isLast = result.page >= result.totalPages - 1;
+
+    return `
+        <div class="pager">
+            <button class="ghost small" type="button" data-page="${result.page - 1}"${isFirst ? " disabled" : ""}>Previous</button>
+            <span class="meta">Page ${result.page + 1} of ${result.totalPages}</span>
+            <button class="ghost small" type="button" data-page="${result.page + 1}"${isLast ? " disabled" : ""}>Next</button>
+        </div>
+    `;
+};
+// waits until typing stops before running, so a search box does not send a request per key
+export const debounce = (action, waitMs = 300) => {
+    let timer;
+    return (...args) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => action(...args), waitMs);
+    };
+};
 // Two-click confirm for buttons that remove things, so a misclick doesn't lose anything.
 // The first click shows `confirmText`; a second click runs onConfirm. It goes back to normal when the mouse
 // leaves the button or focus moves away; touch and keyboard (which have no "leave") get a 4 second timeout.

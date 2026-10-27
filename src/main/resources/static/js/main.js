@@ -7,6 +7,8 @@ import { showAccount } from "./views/account.js";
 import { showEditDetails, showChangePassword, showDeleteAccount, showEditPreferences } from "./views/account-edit.js";
 import { showEditItinerary } from "./views/itinerary-edit.js";
 import { showAdminUsers } from "./views/admin-users.js";
+import { showAdminUser } from "./views/admin-user.js";
+import { showAdminAudit } from "./views/admin-audit.js";
 
 const root = document.getElementById("root");
 const nav = document.getElementById("nav");
@@ -26,8 +28,10 @@ const routes = [
 	{ path: "/itineraries/:id/edit", role: "USER", view: context => showEditItinerary(context.root, context.user, context.reauth, context.params.id) },
 	{ path: "/itineraries/:id/activities/new", role: "USER", view: context => showEditItinerary(context.root, context.user, context.reauth, context.params.id, true) },
 	{ path: "/admin/users", nav: "Users", role: "ADMIN", view: context => showAdminUsers(context.root, context.user, context.reauth) },
+	{ path: "/admin/users/:id", role: "ADMIN", view: context => showAdminUser(context.root, context.user, context.reauth, context.params.id) },
+	{ path: "/admin/audit", nav: "Activity", role: "ADMIN", view: context => showAdminAudit(context.root, context.user, context.reauth) },
 	{ path: "/account", nav: "Account", view: context => showAccount(context.root, context.user, context.reauth) },
-	{ path: "/account/preferences", view: context => showEditPreferences(context.root, context.user, context.reauth) },
+	{ path: "/account/preferences", role: "USER", view: context => showEditPreferences(context.root, context.user, context.reauth) },
 	{ path: "/account/details", view: context => showEditDetails(context.root, context.user, context.reauth) },
 	{ path: "/account/password", view: context => showChangePassword(context.root, context.user, context.reauth) },
 	{ path: "/account/delete", view: context => showDeleteAccount(context.root, context.user, context.reauth) },

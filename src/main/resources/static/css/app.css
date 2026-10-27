@@ -994,3 +994,53 @@ table.users .tag {
     background: var(--accent);
     color: #fff;
 }
+
+/* Previous / Next under a table that comes one page at a time */
+.pager {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.pager button {
+    margin-top: 0;
+}
+
+/* search box and dropdown side by side above a table, stacked on narrow screens */
+.filters {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+}
+
+.filters input,
+.filters select,
+.filter select {
+    width: auto;
+    min-width: 200px;
+}
+
+/* the audit table's details wrap onto more lines, but never get squeezed narrower than a few words */
+table.users td:last-child {
+    min-width: 160px;
+    overflow-wrap: break-word;
+}
+
+/* tags in a table or a details list line up with the text around them, and never break in two */
+table.users .tag {
+    white-space: nowrap;
+}
+
+dd .tag {
+    margin-left: 0;
+}
+
+/* a note under a details list, e.g. why an account cannot be disabled */
+dl + .hint {
+    margin-top: 14px;
+}
+
+.msg + .card {
+    margin-top: 12px;
+}
