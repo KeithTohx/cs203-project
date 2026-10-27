@@ -30,4 +30,14 @@ public interface UserService {
      *         the new password is longer than 72 bytes, or it is the same as the current one
      */
     void changePassword(Long userId, String currentPassword, String newPassword);
+
+
+
+    /**
+     * Permanently deletes the account and everything it owns (itineraries, activities, impacts).
+     * @throws UserNotFoundException if the account no longer exists
+     * @throws org.springframework.web.server.ResponseStatusException (400) if the password is wrong,
+     *         (409) if this is the last remaining admin
+     */
+    void deleteAccount(Long userId, String currentPassword);
 }

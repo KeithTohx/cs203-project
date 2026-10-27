@@ -51,5 +51,11 @@ public class Impact {
     @Column(length = 500)
     private String reason;
 
+    // set when the user disagrees with the verdict. kept on the row instead of deleting it,
+    // because a deleted row would just be evaluated again and the impact would come back.
+    // null on older rows, which counts as not rejected
+    @Column
+    private Boolean rejected;
+
 }
 

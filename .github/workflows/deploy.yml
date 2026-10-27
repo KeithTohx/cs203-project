@@ -23,7 +23,9 @@ jobs:
           script: |
             set -e
             cd /opt/tripsense
-            git pull --ff-only
+            # force server to match main
+            git fetch --prune origin
+            git reset --hard origin/main
             ./mvnw -B -q package -DskipTests
             sudo systemctl restart tripsense
             # poll rather than a fixed wait, startup has already grown 9s -> 14s

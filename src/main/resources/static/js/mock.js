@@ -39,18 +39,45 @@ const ACTIVITIES = [
     makeActivity(8, 2, "Island hopping", "Phi Phi Islands", "2026-11-09T08:00:00", "2026-11-09T17:00:00"),
     // itinerary 6 has no activities, to test the empty state
 ];
+// news id -> the article fields an impact carries. 3 has no source so the label falls back to the
+// link's site name, and 2 has no link so its bubble isn't clickable
+const NEWS = {
+    1: { title: "Magnitude 6.8 earthquake strikes near Hokkaido", source: "Japan Meteorological Agency",
+        url: "https://www.jma.go.jp/jma/indexe.html", publishedAt: "2026-12-14T08:30:00",
+        description: "A strong earthquake hit southern Hokkaido early this morning. Rail services are suspended while tracks are inspected, and several ski resorts have paused lifts." },
+    2: { title: "Universal Studios Singapore to close for maintenance", source: "The Straits Times",
+        url: null, publishedAt: "2026-12-30T10:00:00", description: null },
+    3: { title: "Cherry blossom forecast: early bloom & record crowds", source: null,
+        url: "https://www.japan-guide.com/sakura", publishedAt: "2027-02-20T09:00:00",
+        description: "Forecasters expect blossoms in Tokyo up to a week early, with record visitor numbers at popular parks." },
+    4: { title: "Flooding closes Bangkok tourist areas", source: "Bangkok Post",
+        url: "https://www.bangkokpost.com/", publishedAt: "2026-11-01T14:00:00",
+        description: "Heavy rain has flooded parts of central Bangkok, closing some attractions near the river." },
+    5: { title: "Grand Palace closed for royal ceremony", source: "Bangkok Post",
+        url: "https://www.bangkokpost.com/", publishedAt: "2026-10-28T07:00:00", description: null },
+};
 // Same flat shape as ImpactResponse on the backend.
-const makeImpact = (id, impacted, newsId, newsTitle, activityId, activityName, reason) =>
-    ({ id, impacted, newsId, newsTitle, activityId, activityName, reason });
-const QUAKE = "Magnitude 6.8 earthquake strikes near Hokkaido";
+const makeImpact = (id, impacted, newsId, activityId, activityName, reason) => {
+    const news = NEWS[newsId];
+    return {
+        id, impacted, newsId,
+        newsTitle: news.title,
+        newsSource: news.source,
+        newsUrl: news.url,
+        newsDescription: news.description,
+        newsPublishedAt: news.publishedAt,
+        activityId, activityName, reason,
+        rejected: false,
+    };
+};
 const IMPACTS = {
-    1: [makeImpact(1, true, 1, QUAKE, 1, "Ski at Niseko", "Some ski resorts suspending lifts."),
-    makeImpact(2, true, 1, QUAKE, 2, "Onsen visit", null),
-    makeImpact(3, true, 1, QUAKE, null, null, "Flights into Sapporo may be delayed.")],
-    3: [makeImpact(6, true, 2, "Universal Studios Singapore to close for maintenance", 4, "Universal Studios Singapore", "Dates to be confirmed.")],
-    6: [makeImpact(11, true, 3, "Cherry blossom forecast: early bloom & record crowds", null, null, "Expect queues at popular parks in late March.")],
-    2: [makeImpact(4, true, 4, "Flooding closes Bangkok tourist areas", 7, "Grand Palace visit", "Some attractions closed."),
-    makeImpact(5, false, 5, "Grand Palace closed for royal ceremony", 7, "Grand Palace visit", "Closure is before your visit.")],
+    1: [makeImpact(1, true, 1, 1, "Ski at Niseko", "Some ski resorts suspending lifts."),
+    makeImpact(2, true, 1, 2, "Onsen visit", null),
+    makeImpact(3, true, 1, null, null, "Flights into Sapporo may be delayed.")],
+    3: [makeImpact(6, true, 2, 4, "Universal Studios Singapore", "Dates to be confirmed.")],
+    6: [makeImpact(11, true, 3, null, null, "Expect queues at popular parks in late March.")],
+    2: [makeImpact(4, true, 4, 7, "Grand Palace visit", "Some attractions closed."),
+    makeImpact(5, false, 5, 7, "Grand Palace visit", "Closure is before your visit.")],
     // itinerary 9 has no impacts, to test the empty state
 };
 
@@ -157,6 +184,17 @@ export const mockApi = {
         ? fail(403, "Admins only.")
         : respondWith(USERS.map(withoutPassword))),
     itineraryImpacts: id => requireLogin() || respondWith(IMPACTS[id] || []),
+    // like the backend, an impact on someone else's itinerary looks the same as one that does not exist
+    setImpactRejected: (id, rejected) => {
+        if (requireLogin()) return requireLogin();
+
+        const itineraryId = Object.keys(IMPACTS).find(key => IMPACTS[key].some(impact => impact.id === Number(id)));
+        if (!itineraryId || !myItinerary(itineraryId)) return fail(404, "Impact not found.");
+
+        const impact = IMPACTS[itineraryId].find(impact => impact.id === Number(id));
+        impact.rejected = rejected;
+        return respondWith(impact);
+    },
     // conversations are kept per itinerary, like the backend's chat memory
     chat: (itineraryId, message) => {
         if (requireLogin() || !myItinerary(itineraryId)) return requireLogin() || fail(404, "Itinerary not found.");

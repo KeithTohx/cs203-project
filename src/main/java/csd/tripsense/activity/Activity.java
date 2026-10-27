@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import csd.tripsense.impact.Impact;
 import csd.tripsense.itinerary.Itinerary;
+import csd.tripsense.country.Country;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -56,4 +57,10 @@ public class Activity {
     @OneToMany(mappedBy = "activity", cascade = CascadeType.REMOVE)
     @JsonIgnore
     private List<Impact> impacts;
+
+    // Which country this activity is in. Copied from the itinerary by ActivityService, never
+    // taken from the request. Lets the news evaluator find activities by country in one query.
+    @ManyToOne
+    @JoinColumn(name = "country_id")
+    private Country country;
 }

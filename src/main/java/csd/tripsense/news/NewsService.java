@@ -4,6 +4,8 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 
+import java.time.LocalDateTime;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
@@ -46,5 +48,13 @@ public interface NewsService {
      * Which of these URLs are already stored?
      */
     Set<String> findExistingUrls(Collection<String> urls);
+
+        /**
+       * News about a country published at or after a cut-off.
+       * @param countryId the unique identifier of the Country
+       * @param since earliest publishedAt to include
+       * @return matching news, newest first (empty if none)
+       */
+      List<News> getNewsByCountrySince(Long countryId, LocalDateTime since);
 
 }

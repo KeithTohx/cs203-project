@@ -1,13 +1,18 @@
 -- Seed data for local testing. INSERT OR IGNORE with fixed ids makes it safe to re-run on every restart. 
 -- Parents are inserted before children because of the foreign keys.
 
-INSERT OR IGNORE INTO country (id, name) VALUES
-    (1, 'Japan'),
-    (2, 'Singapore'),
-    (3, 'Thailand'),
-    (4, 'South Korea'),
-    (5, 'Indonesia'),
-    (6, 'Vietnam');
+INSERT OR IGNORE INTO country (id, name, fips_code) VALUES
+    (1, 'Japan', 'JA'),
+    (2, 'Singapore', 'SN'),
+    (3, 'Thailand', 'TH'),
+    (4, 'South Korea', 'KS'),
+    (5, 'Indonesia', 'ID'),
+    (6, 'Vietnam', 'VM');
+
+UPDATE country
+SET fips_code = CASE id WHEN 1 THEN 'JA' WHEN 2 THEN 'SN' WHEN 3 THEN 'TH'
+                        WHEN 4 THEN 'KS' WHEN 5 THEN 'ID' WHEN 6 THEN 'VM' END
+WHERE fips_code IS NULL AND id IN (1, 2, 3, 4, 5, 6);
 
 -- Passwords are BCrypt hashes (login compares against the hash, so plaintext would never match).
 -- Plain-text values for local testing: karwei/alice/bob/carol/dave = password123, admin = admin123.
@@ -50,28 +55,38 @@ INSERT OR IGNORE INTO activity (id, itinerary_id, name, address, date_start, dat
 INSERT OR IGNORE INTO news (id, title, description, source, url, published_at) VALUES
     (1, 'Magnitude 6.8 earthquake strikes near Hokkaido',
         'A strong earthquake hit southern Hokkaido, with aftershocks expected and some ski resorts suspending lifts.',
-        'Japan Meteorological Agency', 'https://example.com/news/hokkaido-quake', '2026-09-20 08:30:00'),
+        'Japan Meteorological Agency', 'https://www.jma.go.jp/jma/indexe.html', '2026-09-20 08:30:00'),
     (2, 'Flooding closes Bangkok tourist areas',
         'Heavy rain has flooded several districts in central Bangkok, closing some attractions.',
-        'Bangkok Post', 'https://example.com/news/bangkok-flood', '2026-09-21 14:00:00'),
+        'Bangkok Post', 'https://www.bangkokpost.com/', '2026-09-21 14:00:00'),
     (3, 'Typhoon warning issued for northern Vietnam coast',
         'Authorities warn of strong winds and rough seas, with boat services likely to be suspended.',
-        'VnExpress', 'https://example.com/news/vietnam-typhoon', '2026-09-22 06:45:00'),
+        'VnExpress', 'https://e.vnexpress.net/', '2026-09-22 06:45:00'),
     (4, 'Mount Batur volcanic activity raised to alert level',
         'Increased activity has led officials to restrict access to hiking routes around the crater.',
-        'Jakarta Post', 'https://example.com/news/batur-alert', '2026-09-23 10:15:00'),
+        'Jakarta Post', 'https://www.thejakartapost.com/', '2026-09-23 10:15:00'),
     (5, 'Grand Palace closed for royal ceremony',
         'The palace will be closed to visitors for one day next week for a ceremony.',
-        'Thai PBS', 'https://example.com/news/palace-closure', '2026-09-24 09:00:00'),
+        'Thai PBS', 'https://world.thaipbs.or.th/', '2026-09-24 09:00:00'),
     (6, 'Rail strike disrupts Seoul metro services',
         'A partial strike is reducing train frequency on several lines during peak hours.',
-        'Korea Herald', 'https://example.com/news/seoul-strike', '2026-09-25 07:20:00'),
+        'Korea Herald', 'https://www.koreaherald.com/', '2026-09-25 07:20:00'),
     (7, 'Haze levels rise across Southeast Asia',
         'Air quality has worsened in northern Thailand and parts of the region due to seasonal burning.',
-        'Channel NewsAsia', 'https://example.com/news/sea-haze', '2026-09-26 12:00:00'),
+        'Channel NewsAsia', 'https://www.channelnewsasia.com/', '2026-09-26 12:00:00'),
     (8, 'Universal Studios Singapore to close for maintenance',
         'The park will close for several days for scheduled works, with dates to be confirmed.',
-        'The Straits Times', 'https://example.com/news/uss-maintenance', '2026-09-27 16:30:00');
+        'The Straits Times', 'https://www.straitstimes.com/', '2026-09-27 16:30:00');
+
+INSERT OR IGNORE INTO news_country (news_id, country_id) VALUES
+    (1, 1),   -- Hokkaido quake: Japan
+    (2, 3),   -- Bangkok flooding: Thailand
+    (3, 6),   -- Vietnam typhoon: Vietnam
+    (4, 5),   -- Mount Batur: Indonesia
+    (5, 3),   -- Grand Palace closure: Thailand
+    (6, 4),   -- Seoul rail strike: South Korea
+    (7, 3),   -- SEA haze (northern Thailand): Thailand
+    (8, 2);   -- USS maintenance: Singapore
 
 -- reason is what the model would have written, so evaluate() serves these from the db instead of
 -- calling ollama again. a null reason counts as not yet evaluated, see ImpactServiceImpl
@@ -106,3 +121,8 @@ INSERT OR IGNORE INTO recommendation (id, impact_id, severity, action, advice, s
     (4, 6, 'LOW',    'MONITOR',
         'The maintenance dates are not confirmed, so no change is needed yet. Check the park calendar a week before the 9th.',
         NULL,      '2026-10-24 12:00:00');
+-- Rows that already exist (created before country_id existed) are skipped by INSERT OR IGNORE,
+-- so fill them in. Safe to re-run: it only touches rows where country_id is still null.
+UPDATE activity
+SET country_id = (SELECT country_id FROM itinerary WHERE itinerary.id = activity.itinerary_id)
+WHERE country_id IS NULL;
