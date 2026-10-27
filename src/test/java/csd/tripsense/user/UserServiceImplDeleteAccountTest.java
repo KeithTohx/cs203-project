@@ -23,7 +23,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.web.server.ResponseStatusException;
+import csd.tripsense.user.AccountRuleException;
 
 import csd.tripsense.chat.ChatbotService;
 import csd.tripsense.impact.ImpactRepository;
@@ -43,8 +43,8 @@ import csd.tripsense.itinerary.ItineraryRepository;
  * Source statement in deleteAccount                         -> Test that covers it
  * findById(userId)                                          -> deleteAccount_ShouldThrowUserNotFoundException_WhenUserDoesNotExist
  * !passwordEncoder.matches(...) throws 400                  -> deleteAccount_ShouldThrow400_WhenPasswordIsWrong
- * "ADMIN".equals(role) && countByRole("ADMIN") <= 1 (409)   -> deleteAccount_ShouldThrow409_WhenLastAdmin
- * countByRole("ADMIN") returns 2 or more                    -> deleteAccount_ShouldDeleteAdmin_WhenAnotherAdminExists
+ * "ADMIN".equals(role) && countEnabledByRole("ADMIN") <= 1 (409)   -> deleteAccount_ShouldThrow409_WhenLastAdmin
+ * countEnabledByRole("ADMIN") returns 2 or more                    -> deleteAccount_ShouldDeleteAdmin_WhenAnotherAdminExists
  * "ADMIN".equals(role) is false, so no count query          -> deleteAccount_ShouldNotCountAdmins_WhenUserIsNotAdmin
  * deleteAllConversationsFor, deleteByUserId, deleteAll,
  *   flush, delete(user) in that order                       -> deleteAccount_ShouldDeleteEverythingInOrder_WhenPasswordIsCorrect
@@ -117,7 +117,7 @@ class UserServiceImplDeleteAccountTest {
         userService.deleteAccount(4L, "password123");
 
         // Assert - the "ADMIN".equals(role) check short-circuits the count query
-        verify(userRepository, never()).countByRole(anyString());
+        verify(userRepository, never()).countEnabledByRole(anyString());
         verify(userRepository, times(1)).delete(testUser);
     }
 
@@ -131,12 +131,12 @@ class UserServiceImplDeleteAccountTest {
         when(passwordEncoder.matches("wrong", "hash")).thenReturn(false);
 
         // Act
-        ResponseStatusException exception = assertThrows(ResponseStatusException.class,
+        AccountRuleException exception = assertThrows(AccountRuleException.class,
             () -> userService.deleteAccount(4L, "wrong"));
 
         // Assert
-        assertEquals(400, exception.getStatusCode().value());
-        assertEquals("current password is incorrect", exception.getReason());
+        assertEquals(AccountRuleException.Kind.INVALID_INPUT, exception.getKind());
+        assertEquals("current password is incorrect", exception.getMessage());
         verifyNoInteractions(chatbotService, impactRepository, itineraryRepository);
         verify(userRepository, never()).delete(any(User.class));
     }
@@ -149,14 +149,14 @@ class UserServiceImplDeleteAccountTest {
         // Arrange
         when(userRepository.findById(3L)).thenReturn(Optional.of(testAdmin));
         when(passwordEncoder.matches("admin123", "hash")).thenReturn(true);
-        when(userRepository.countByRole("ADMIN")).thenReturn(1L);
+        when(userRepository.countEnabledByRole("ADMIN")).thenReturn(1L);
 
         // Act
-        ResponseStatusException exception = assertThrows(ResponseStatusException.class,
+        AccountRuleException exception = assertThrows(AccountRuleException.class,
             () -> userService.deleteAccount(3L, "admin123"));
 
         // Assert
-        assertEquals(409, exception.getStatusCode().value());
+        assertEquals(AccountRuleException.Kind.CONFLICT, exception.getKind());
         verifyNoInteractions(chatbotService, impactRepository, itineraryRepository);
         verify(userRepository, never()).delete(any(User.class));
     }
@@ -167,13 +167,13 @@ class UserServiceImplDeleteAccountTest {
         // Arrange
         when(userRepository.findById(3L)).thenReturn(Optional.of(testAdmin));
         when(passwordEncoder.matches("admin123", "hash")).thenReturn(true);
-        when(userRepository.countByRole("ADMIN")).thenReturn(2L);
+        when(userRepository.countEnabledByRole("ADMIN")).thenReturn(2L);
 
         // Act
         userService.deleteAccount(3L, "admin123");
 
         // Assert
-        verify(userRepository, times(1)).countByRole("ADMIN");
+        verify(userRepository, times(1)).countEnabledByRole("ADMIN");
         verify(userRepository, times(1)).delete(testAdmin);
     }
 

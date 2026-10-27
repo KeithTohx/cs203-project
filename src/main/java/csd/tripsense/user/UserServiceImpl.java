@@ -1,11 +1,9 @@
 package csd.tripsense.user;
 
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import csd.tripsense.chat.ChatbotService;
 import csd.tripsense.impact.ImpactRepository;
@@ -38,11 +36,11 @@ public class UserServiceImpl implements UserService {
     public User register(User request) {
         requirePasswordWithinBcryptLimit(request.getPassword());
         if (userRepository.existsByEmailIgnoreCase(request.getEmail())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
+            throw new AccountRuleException(AccountRuleException.Kind.CONFLICT,
                     "email '" + request.getEmail() + "' is already taken");
         }
         if (userRepository.existsByUsernameIgnoreCase(request.getUsername())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
+            throw new AccountRuleException(AccountRuleException.Kind.CONFLICT,
                     "username '" + request.getUsername() + "' is already taken");
         }
 
@@ -53,7 +51,7 @@ public class UserServiceImpl implements UserService {
             return userRepository.saveAndFlush(user);
         } catch (DataIntegrityViolationException e) {
             // Two identical registrations at the same instant: the database's unique constraint wins.
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "email or username is already taken");
+            throw new AccountRuleException(AccountRuleException.Kind.CONFLICT, "email or username is already taken");
         }
     }
 
@@ -71,7 +69,7 @@ public class UserServiceImpl implements UserService {
         // The check must skip the user's own row, otherwise "John" -> "john" would count as a clash.
         Optional<User> owner = userRepository.findByUsernameIgnoreCase(newUsername);
         if (owner.isPresent() && !owner.get().getId().equals(userId)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
+            throw new AccountRuleException(AccountRuleException.Kind.CONFLICT,
                     "username '" + newUsername + "' is already taken");
         }
 
@@ -80,7 +78,7 @@ public class UserServiceImpl implements UserService {
             return userRepository.saveAndFlush(user);
         } catch (DataIntegrityViolationException e) {
             // Someone else took the name between the check and the save: the unique constraint wins.
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
+            throw new AccountRuleException(AccountRuleException.Kind.CONFLICT,
                     "username '" + newUsername + "' is already taken");
         }
     }
@@ -93,10 +91,10 @@ public class UserServiceImpl implements UserService {
         // Reload from the database: the session copy of the hash is wiped after login.
         User user = findById(userId);
         if (!passwordEncoder.matches(currentPassword, user.getPassword())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "current password is incorrect");
+            throw new AccountRuleException(AccountRuleException.Kind.INVALID_INPUT, "current password is incorrect");
         }
         if (passwordEncoder.matches(newPassword, user.getPassword())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+            throw new AccountRuleException(AccountRuleException.Kind.INVALID_INPUT,
                     "new password must be different from the current password");
         }
 
@@ -112,7 +110,7 @@ public class UserServiceImpl implements UserService {
     // BCrypt only reads the first 72 BYTES, and one character can take several bytes.
     private static void requirePasswordWithinBcryptLimit(String password) {
         if (password.getBytes(StandardCharsets.UTF_8).length > 72) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "password must be at most 72 bytes");
+            throw new AccountRuleException(AccountRuleException.Kind.INVALID_INPUT, "password must be at most 72 bytes");
         }
     }
 
@@ -122,27 +120,20 @@ public class UserServiceImpl implements UserService {
         User user = findById(userId);
 
         if (!passwordEncoder.matches(currentPassword, user.getPassword())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "current password is incorrect");
+            throw new AccountRuleException(AccountRuleException.Kind.INVALID_INPUT, "current password is incorrect");
         }
-        if ("ADMIN".equals(user.getRole()) && userRepository.countByRole("ADMIN") <= 1) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "the last admin account cannot be deleted");
-        }
-
-        chatbotService.deleteAllConversationsFor(userId);   // chat history is personal data too
-
-        impactRepository.deleteByUserId(userId);
-        itineraryRepository.deleteAll(itineraryRepository.findByUserId(userId));  // cascades to activities and impacts
-        itineraryRepository.flush();
-        userRepository.delete(user);
+        deleteUserAndData(userId, user);
     }
 
     @Override
     @Transactional
     public void deleteUserAndData(Long userId) {
-        User user = findById(userId);
+        deleteUserAndData(userId, findById(userId));
+    }
 
-        if ("ADMIN".equals(user.getRole()) && userRepository.countByRole("ADMIN") <= 1) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "the last admin account cannot be deleted");
+    private void deleteUserAndData(Long userId, User user) {
+        if ("ADMIN".equals(user.getRole()) && user.isEnabled() && userRepository.countEnabledByRole("ADMIN") <= 1) {
+            throw new AccountRuleException(AccountRuleException.Kind.CONFLICT, "the last admin account cannot be deleted");
         }
 
         chatbotService.deleteAllConversationsFor(userId);   // chat history is personal data too

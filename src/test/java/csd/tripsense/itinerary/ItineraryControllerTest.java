@@ -137,16 +137,13 @@ class ItineraryControllerTest {
     }
 
     @Test
-    void delete_asAdmin_isRecordedAgainstTheOwnersAccount() throws Exception {
+    void delete_asAdmin_cannotDeleteAnotherUsersItinerary() throws Exception {
         Itinerary johns = ownedBy(1L, 10L);
         when(itineraryService.getItineraryById(10L)).thenReturn(johns);
         loginAs(new CurrentUser(3L, "admin@example.com", "admin", null, "ADMIN", true));
 
-        mockMvc.perform(delete("/api/itinerary/10"))
-                .andExpect(status().isOk());
-
-        // actor = the admin (3), account affected = the owner (1), so it shows in john's history too
-        verify(auditService).record(eq(AuditService.ITINERARY_DELETED), eq(3L), eq("admin@example.com"),
-                eq(1L), contains("Trip 10"));
+        mockMvc.perform(delete("/api/itinerary/10")).andExpect(status().isNotFound());
+        verify(itineraryService, never()).deleteItinerary(any());
+        verify(auditService, never()).record(any(), any(), any(), any(), any());
     }
 }

@@ -57,27 +57,29 @@ class ItineraryAccessTest {
     }
 
     @Test
-    void admin_canAccessAnyItinerary() {
+    void admin_cannotAccessAnotherUsersItinerary() {
         Itinerary johns = ownedBy(1L, 10L);
 
-        assertThat(access.requireAccess(johns, admin)).isSameAs(johns);
+        assertThatThrownBy(() -> access.requireAccess(johns, admin))
+                .isInstanceOf(ItineraryNotFoundException.class);
     }
 
     @Test
-    void visibleTo_keepsOnlyOwnItineraries_butAdminSeesAll() {
+    void visibleTo_keepsOnlyOwnItineraries_forEveryRole() {
         List<Itinerary> all = List.of(ownedBy(1L, 10L), ownedBy(4L, 11L), ownedBy(1L, 12L));
 
         assertThat(access.visibleTo(all, john)).extracting(Itinerary::getId).containsExactly(10L, 12L);
         assertThat(access.visibleTo(all, bob)).extracting(Itinerary::getId).containsExactly(11L);
-        assertThat(access.visibleTo(all, admin)).hasSize(3);
+        assertThat(access.visibleTo(all, admin)).isEmpty();
     }
 
     @Test
-    void requireSelfOrAdmin_allowsSelfAndAdmin_butNotOthers() {
-        access.requireSelfOrAdmin(1L, john);
-        access.requireSelfOrAdmin(1L, admin);
+    void requireSelf_allowsOnlySelf() {
+        access.requireSelf(1L, john);
+        assertThatThrownBy(() -> access.requireSelf(1L, admin))
+                .isInstanceOf(ItineraryNotFoundException.class);
 
-        assertThatThrownBy(() -> access.requireSelfOrAdmin(1L, bob))
+        assertThatThrownBy(() -> access.requireSelf(1L, bob))
                 .isInstanceOf(ItineraryNotFoundException.class);
     }
 

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -48,7 +49,9 @@ class ImpactControllerTest {
     @BeforeEach
     void setUp() {
         ItineraryAccess access = new ItineraryAccess(userRepository);
-        impactController = new ImpactController(impactService, chatService, access);
+        impactController = new ImpactController(impactService, chatService, access,
+                mock(csd.tripsense.itinerary.ItineraryService.class),
+                mock(csd.tripsense.activity.ActivityService.class));
 
         owner = new CurrentUser(1L, "john@example.com", "john", null, "USER");
         otherUser = new CurrentUser(2L, "alice@example.com", "alice", null, "USER");
@@ -96,14 +99,12 @@ class ImpactControllerTest {
     }
 
     @Test
-    @DisplayName("Should let an admin reject any impact")
+    @DisplayName("Admins cannot change another user's impact")
     void updateImpact_ShouldReject_WhenCallerIsAdmin() {
         when(impactService.getImpact(1L)).thenReturn(testImpact);
-        when(impactService.setRejected(1L, true)).thenReturn(rejectedCopy());
-
-        ImpactResponse response = impactController.updateImpact(1L, new ImpactUpdateRequest(true), admin);
-
-        assertTrue(response.rejected());
+        assertThrows(ImpactNotFoundException.class,
+                () -> impactController.updateImpact(1L, new ImpactUpdateRequest(true), admin));
+        verify(impactService, never()).setRejected(anyLong(), anyBoolean());
     }
 
     @Test

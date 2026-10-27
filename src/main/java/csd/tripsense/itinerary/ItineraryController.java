@@ -28,7 +28,7 @@ public class ItineraryController {
         this.auditService = auditService;
     }
 
-    // Your own itineraries (an admin sees everyone's).
+    // Your own itineraries, regardless of role.
     @GetMapping("/itinerary")
     public List<ItineraryResponse> getAllItineraries(@AuthenticationPrincipal CurrentUser me) {
         return access.visibleTo(itineraryService.getAllItineraries(), me).stream().map(ItineraryResponse::from).toList();
@@ -40,10 +40,10 @@ public class ItineraryController {
         return ItineraryResponse.from(access.requireAccess(itineraryService.getItineraryById(id), me));
     }
 
-    // Only that user, or an admin; anyone else -> 404.
+    // Only that user; anyone else -> 404.
     @GetMapping("/user/{userId}/itinerary")
     public List<ItineraryResponse> getItinerariesByUser(@PathVariable Long userId, @AuthenticationPrincipal CurrentUser me) {
-        access.requireSelfOrAdmin(userId, me);
+        access.requireSelf(userId, me);
         try {
             return itineraryService.getItinerariesByUser(userId).stream().map(ItineraryResponse::from).toList();
         } catch (ItineraryNotFoundException e) {
@@ -88,7 +88,7 @@ public class ItineraryController {
         auditService.record(AuditService.ITINERARY_DELETED, me.getId(), me.getEmail(), ownerId, description);
     }
 
-    // The account the change is about = the itinerary's owner (the caller, or the owner when an admin edits it).
+    // The account the change is about = the itinerary's owner (the caller).
     private void audit(String action, CurrentUser me, Itinerary itinerary) {
         auditService.record(action, me.getId(), me.getEmail(), ownerId(itinerary), describe(itinerary));
     }

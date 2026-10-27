@@ -40,6 +40,9 @@ public interface AdminService {
     @PreAuthorize("hasRole('ADMIN')")
     User deleteUser(Long id, Long actingAdminId);
 
+    @PreAuthorize("hasRole('ADMIN')")
+    User changeRole(Long id, csd.tripsense.user.Role role, Long actingAdminId);
+
     /** The whole audit trail, newest first, filtered by part of the actor's email and/or an exact action. */
     @PreAuthorize("hasRole('ADMIN')")
     Page<AuditEntryResponse> reviewActions(String email, String action, int page, int size);

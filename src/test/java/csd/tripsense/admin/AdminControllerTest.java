@@ -5,6 +5,10 @@ import csd.tripsense.audit.AuditService;
 import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.auth.SessionService;
 import csd.tripsense.user.User;
+import csd.tripsense.user.Role;
+import csd.tripsense.user.AccountRuleException;
+import csd.tripsense.user.AccountExceptionHandler;
+import org.springframework.http.MediaType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -54,6 +58,7 @@ class AdminControllerTest {
         auditService = mock(AuditService.class);
         sessionService = mock(SessionService.class);
         mockMvc = MockMvcBuilders.standaloneSetup(new AdminController(adminService, auditService, sessionService))
+                .setControllerAdvice(new AccountExceptionHandler())
                 .setCustomArgumentResolvers(new AuthenticationPrincipalArgumentResolver())
                 .build();
         SecurityContextHolder.getContext().setAuthentication(
@@ -204,4 +209,27 @@ class AdminControllerTest {
 
         verify(adminService).reviewUserActions(eq(4L), eq("LOGIN"), anyInt(), anyInt());
     }
+
+    @Test
+    void roleEndpointRejectsInvalidOrMissingRoles() throws Exception {
+        for (String body : List.of("{}", "{\"role\":\"SUPERUSER\"}")) {
+            mockMvc.perform(post("/api/admin/users/4/role").contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isBadRequest());
+        }
+        verify(adminService, never()).changeRole(any(), any(), any());
+    }
+
+    @Test
+    void roleEndpointMapsBusinessConflictWithoutExpiringSessions() throws Exception {
+        when(adminService.getUser(4L)).thenReturn(new User("person@example.com", "person", "hash", "ADMIN"));
+        when(adminService.changeRole(4L, Role.USER, 3L)).thenThrow(
+                new AccountRuleException(AccountRuleException.Kind.CONFLICT, "last enabled admin"));
+        mockMvc.perform(post("/api/admin/users/4/role").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"role\":\"USER\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("last enabled admin"));
+        verify(sessionService, never()).expireSessionsFor(anyLong());
+        verify(auditService, never()).record(any(), any(), any(), any(), any());
+    }
+
 }

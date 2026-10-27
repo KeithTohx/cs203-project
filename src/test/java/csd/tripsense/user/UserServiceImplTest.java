@@ -10,7 +10,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.web.server.ResponseStatusException;
+import csd.tripsense.user.AccountRuleException;
 
 import java.util.Optional;
 
@@ -38,9 +38,9 @@ class UserServiceImplTest {
                 mock(ChatbotService.class));
     }
 
-    private static void assertStatus(Throwable e, HttpStatus expected) {
-        assertThat(e).isInstanceOfSatisfying(ResponseStatusException.class,
-                r -> assertThat(r.getStatusCode()).isEqualTo(expected));
+    private static void assertStatus(Throwable e, AccountRuleException.Kind expected) {
+        assertThat(e).isInstanceOfSatisfying(AccountRuleException.class,
+                r -> assertThat(r.getKind()).isEqualTo(expected));
     }
 
     @Test
@@ -63,7 +63,7 @@ class UserServiceImplTest {
         when(userRepository.existsByEmailIgnoreCase("john@example.com")).thenReturn(true);
 
         assertThatThrownBy(() -> userService.register(new User("john@example.com", "john", "password123", "USER")))
-                .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT))
+                .satisfies(e -> assertStatus(e, AccountRuleException.Kind.CONFLICT))
                 .hasMessageContaining("email");
         verify(userRepository, never()).saveAndFlush(any(User.class));
     }
@@ -73,7 +73,7 @@ class UserServiceImplTest {
         when(userRepository.existsByUsernameIgnoreCase("john")).thenReturn(true);
 
         assertThatThrownBy(() -> userService.register(new User("john@example.com", "john", "password123", "USER")))
-                .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT))
+                .satisfies(e -> assertStatus(e, AccountRuleException.Kind.CONFLICT))
                 .hasMessageContaining("username");
         verify(userRepository, never()).saveAndFlush(any(User.class));
     }
@@ -83,7 +83,7 @@ class UserServiceImplTest {
         when(userRepository.saveAndFlush(any(User.class))).thenThrow(new DataIntegrityViolationException("unique"));
 
         assertThatThrownBy(() -> userService.register(new User("john@example.com", "john", "password123", "USER")))
-                .satisfies(e -> assertStatus(e, HttpStatus.CONFLICT));
+                .satisfies(e -> assertStatus(e, AccountRuleException.Kind.CONFLICT));
     }
 
     @Test
@@ -91,7 +91,7 @@ class UserServiceImplTest {
         String longPassword = "\u00e9".repeat(40);   // 40 characters, 80 bytes
 
         assertThatThrownBy(() -> userService.register(new User("john@example.com", "john", longPassword, "USER")))
-                .satisfies(e -> assertStatus(e, HttpStatus.BAD_REQUEST));
+                .satisfies(e -> assertStatus(e, AccountRuleException.Kind.INVALID_INPUT));
         verify(userRepository, never()).saveAndFlush(any(User.class));
     }
 

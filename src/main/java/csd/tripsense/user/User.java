@@ -2,6 +2,12 @@ package csd.tripsense.user;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.Column;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.OneToOne;
+import jakarta.persistence.CascadeType;
+import jakarta.persistence.FetchType;
+import csd.tripsense.user.preference.UserPreference;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -42,9 +48,14 @@ public class User {
     // "USER" or "ADMIN". Always forced to "USER" on registration (see UserServiceImpl).
     @Column(nullable = false)
     @JsonProperty(access = JsonProperty.Access.READ_ONLY)
-    private String role = "USER";
+    @Enumerated(EnumType.STRING)
+    private Role role = Role.USER;
 
-    // null (rows seeded by data.sql, or created before this column existed) counts as enabled.
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @OneToOne(mappedBy = "user", cascade = CascadeType.REMOVE, fetch = FetchType.LAZY)
+    private UserPreference preferences;
+
+    // null (rows seeded by data-dev.sql, or created before this column existed) counts as enabled.
     @Column
     @JsonProperty(access = JsonProperty.Access.READ_ONLY)
     private Boolean enabled = true;
@@ -56,7 +67,7 @@ public class User {
         this.email = email;
         this.username = username;
         this.password = password;
-        this.role = role;
+        this.role = role == null ? Role.USER : Role.valueOf(role);
     }
 
     public Long getId() { return id; }
@@ -70,7 +81,8 @@ public class User {
     public String getPassword() { return password; }
     public void setPassword(String password) { this.password = password; }
 
-    public String getRole() { return role; }
+    public String getRole() { return role.name(); }
+    public void setRole(Role role) { this.role = java.util.Objects.requireNonNull(role); }
 
     public boolean isEnabled() { return enabled == null || enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }

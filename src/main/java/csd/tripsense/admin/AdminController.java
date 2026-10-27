@@ -5,6 +5,8 @@ import csd.tripsense.audit.AuditService;
 import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.auth.SessionService;
 import csd.tripsense.user.User;
+import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.RequestBody;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import org.springframework.http.HttpStatus;
@@ -57,7 +59,7 @@ public class AdminController {
 
     @Operation(summary = "Disable an account",
             description = "The user can no longer log in and their sessions end, but all their data stays. "
-                    + "An admin cannot disable their own account.")
+                    + "Admin accounts must be demoted before disabling.")
     @ApiResponse(responseCode = "200", description = "Account is now disabled")
     @ApiResponse(responseCode = "400", description = "Admin tried to disable themselves")
     @ApiResponse(responseCode = "403", description = "Not an admin")
@@ -72,6 +74,20 @@ public class AdminController {
         sessionService.expireSessionsFor(user.getId());   // kick them out now, not when the session times out
         auditService.record(AuditService.ACCOUNT_DISABLED, admin.getId(), admin.getEmail(), user.getId(),
                 "disabled user '" + user.getUsername() + "'");
+        return AdminUserResponse.from(user);
+    }
+
+    @Operation(summary = "Change another account's role")
+    @PostMapping("/users/{id}/role")
+    public AdminUserResponse changeRole(@PathVariable("id") Long id,
+                                       @Valid @RequestBody ChangeRoleRequest request,
+                                       @AuthenticationPrincipal CurrentUser admin) {
+        if (admin == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Not logged in");
+        String previousRole = adminService.getUser(id).getRole();
+        User user = adminService.changeRole(id, request.role(), admin.getId());
+        sessionService.expireSessionsFor(id);
+        auditService.record(AuditService.ROLE_CHANGED, admin.getId(), admin.getEmail(), id,
+                "role changed from " + previousRole + " to " + user.getRole());
         return AdminUserResponse.from(user);
     }
 
@@ -108,7 +124,7 @@ public class AdminController {
 
     @Operation(summary = "Delete a user account and its data",
             description = "Permanent. Removes the account's itineraries, activities and impacts, and ends its sessions. "
-                    + "An admin cannot delete their own account.")
+                    + "Admin accounts must be demoted before deletion.")
     @ApiResponse(responseCode = "204", description = "Deleted")
     @ApiResponse(responseCode = "400", description = "Admin tried to delete themselves")
     @ApiResponse(responseCode = "403", description = "Not an admin")
@@ -128,7 +144,7 @@ public class AdminController {
 
     @Operation(summary = "Review user actions",
             description = "Audit trail, newest first. Filter with 'email' (part of the actor's email) and/or 'action' "
-                    + "(LOGIN, LOGIN_FAILED, LOGOUT, REGISTER, PROFILE_UPDATED, PASSWORD_CHANGED, ACCOUNT_DISABLED, ACCOUNT_ENABLED, ACCOUNT_DELETED, ITINERARY_CREATED, ITINERARY_UPDATED, ITINERARY_DELETED).")
+                    + "(LOGIN, LOGIN_FAILED, LOGOUT, REGISTER, PROFILE_UPDATED, PASSWORD_CHANGED, ACCOUNT_DISABLED, ACCOUNT_ENABLED, ACCOUNT_DELETED, ROLE_CHANGED, ITINERARY_CREATED, ITINERARY_UPDATED, ITINERARY_DELETED).")
     @ApiResponse(responseCode = "200", description = "One page of audit entries")
     @ApiResponse(responseCode = "403", description = "Not an admin")
     @GetMapping("/audit")

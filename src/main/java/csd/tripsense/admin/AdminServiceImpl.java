@@ -6,15 +6,14 @@ import csd.tripsense.user.User;
 import csd.tripsense.user.UserNotFoundException;
 import csd.tripsense.user.UserRepository;
 import csd.tripsense.user.UserService;
-import jakarta.persistence.EntityManager;
+import csd.tripsense.user.Role;
+import csd.tripsense.user.AccountRuleException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Objects;
 
@@ -55,9 +54,10 @@ public class AdminServiceImpl implements AdminService {
     @Transactional
     public User disableUser(Long id, Long actingAdminId) {
         if (Objects.equals(id, actingAdminId)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "admins cannot disable their own account");
+            throw new AccountRuleException(AccountRuleException.Kind.INVALID_INPUT, "admins cannot disable their own account");
         }
         User user = findUser(id);
+        requireOrdinaryAccount(user);
         user.setEnabled(false);   // nothing else is touched: trips and history stay (E1-06)
         return userRepository.save(user);
     }
@@ -74,9 +74,11 @@ public class AdminServiceImpl implements AdminService {
     @Transactional
     public User deleteUser(Long id, Long actingAdminId) {
         if (Objects.equals(id, actingAdminId)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "admins cannot delete their own account");
+            throw new AccountRuleException(AccountRuleException.Kind.INVALID_INPUT, "admins cannot delete their own account");
         }
         User user = findUser(id);
+
+        requireOrdinaryAccount(user);
 
         // The same cleanup as a user deleting themselves (chat history, impacts, itineraries and their
         // activities, then the account), so the two paths cannot drift apart.
@@ -94,6 +96,29 @@ public class AdminServiceImpl implements AdminService {
     @Transactional(readOnly = true)
     public Page<AuditEntryResponse> reviewActions(String email, String action, int page, int size) {
         return auditService.search(email, action, Math.max(page, 0), clampSize(size));
+    }
+
+    @Override
+    @Transactional
+    public User changeRole(Long id, Role role, Long actingAdminId) {
+        if (Objects.equals(id, actingAdminId)) {
+            throw new AccountRuleException(AccountRuleException.Kind.INVALID_INPUT, "admins cannot change their own role");
+        }
+        Objects.requireNonNull(role, "role is required");
+        User user = findUser(id);
+        if ("ADMIN".equals(user.getRole()) && role != Role.ADMIN && user.isEnabled()
+                && userRepository.countEnabledByRole("ADMIN") <= 1) {
+            throw new AccountRuleException(AccountRuleException.Kind.CONFLICT, "the last enabled admin cannot be demoted");
+        }
+        user.setRole(role);
+        return userRepository.saveAndFlush(user);
+    }
+
+    private void requireOrdinaryAccount(User user) {
+        if ("ADMIN".equals(user.getRole())) {
+            throw new AccountRuleException(AccountRuleException.Kind.CONFLICT,
+                    "admin accounts must be demoted through role management before disabling or deleting");
+        }
     }
 
     private User findUser(Long id) {

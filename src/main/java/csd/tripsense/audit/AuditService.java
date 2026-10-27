@@ -21,6 +21,7 @@ import java.util.Locale;
 @Service
 public class AuditService {
 
+    public static final String ROLE_CHANGED = "ROLE_CHANGED";
     public static final String LOGIN = "LOGIN";
     public static final String LOGIN_FAILED = "LOGIN_FAILED";
     public static final String LOGOUT = "LOGOUT";

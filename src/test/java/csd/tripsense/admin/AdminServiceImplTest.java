@@ -13,7 +13,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
+import csd.tripsense.user.AccountRuleException;
 
 import java.util.List;
 import java.util.Optional;
@@ -59,8 +59,8 @@ class AdminServiceImplTest {
     @Test
     void deleteUser_adminDeletingThemselves_isRefusedAndNothingIsTouched() {
         assertThatThrownBy(() -> service.deleteUser(3L, 3L))
-                .isInstanceOfSatisfying(ResponseStatusException.class,
-                        e -> assertThat(e.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
+                .isInstanceOfSatisfying(AccountRuleException.class,
+                        e -> assertThat(e.getKind()).isEqualTo(AccountRuleException.Kind.INVALID_INPUT));
 
         verify(userService, never()).deleteUserAndData(any());
     }
@@ -75,15 +75,12 @@ class AdminServiceImplTest {
     }
 
     @Test
-    void deleteUser_whenTheSharedCleanupRefuses_thatErrorReachesTheAdmin() {
+    void deleteUser_adminAccountsAreProtected() {
         User lastAdmin = new User("other@example.com", "other", "hash", "ADMIN");
         when(userRepository.findById(5L)).thenReturn(Optional.of(lastAdmin));
-        doThrow(new ResponseStatusException(HttpStatus.CONFLICT, "the last admin account cannot be deleted"))
-                .when(userService).deleteUserAndData(5L);
-
         assertThatThrownBy(() -> service.deleteUser(5L, 3L))
-                .isInstanceOfSatisfying(ResponseStatusException.class,
-                        e -> assertThat(e.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
+                .isInstanceOfSatisfying(AccountRuleException.class,
+                        e -> assertThat(e.getKind()).isEqualTo(AccountRuleException.Kind.CONFLICT));
     }
 
     // ---------- view ----------
@@ -142,8 +139,8 @@ class AdminServiceImplTest {
     @Test
     void disableUser_adminDisablingThemselves_isRefused() {
         assertThatThrownBy(() -> service.disableUser(3L, 3L))
-                .isInstanceOfSatisfying(ResponseStatusException.class,
-                        e -> assertThat(e.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
+                .isInstanceOfSatisfying(AccountRuleException.class,
+                        e -> assertThat(e.getKind()).isEqualTo(AccountRuleException.Kind.INVALID_INPUT));
 
         verify(userRepository, never()).save(any(User.class));
     }
