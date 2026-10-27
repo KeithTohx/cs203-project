@@ -23,6 +23,11 @@ public class Country {
     @Column(nullable = false)
     private String name;
 
+    // GDELT's country code (FIPS 10-4, e.g. JA, TH), used to link ingested news to a Country.
+    // Not unique on purpose: SQLite cannot add a UNIQUE column to an existing table.
+    @Column(name = "fips_code")
+    private String fipsCode;
+
     // one conutry can have many itineraries, the "mappedBy" attribute references the "country" property in the Itinerary class
     // CascadeType.ALL: to propagate (cascade) all persistence operations to relating entities
     // E.g., remove a country -> all associated itineraries removed

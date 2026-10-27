@@ -13,4 +13,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByEmailIgnoreCase(String email);
 
     Optional<User> findByUsernameIgnoreCase(String username);
+
+    //This is done so that there is at least 1 admin in the Database.
+    long countByRole(String role);
 }
