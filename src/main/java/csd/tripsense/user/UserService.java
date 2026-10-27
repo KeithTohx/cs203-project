@@ -33,4 +33,11 @@ public interface UserService {
 
 
 
+    /**
+     * Permanently deletes the account and everything it owns (itineraries, activities, impacts).
+     * @throws UserNotFoundException if the account no longer exists
+     * @throws org.springframework.web.server.ResponseStatusException (400) if the password is wrong,
+     *         (409) if this is the last remaining admin
+     */
+    void deleteAccount(Long userId, String currentPassword);
 }

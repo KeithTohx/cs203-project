@@ -24,6 +24,7 @@ create table user {
 create table country {
     id integer primary key,
     name varchar not null
+    fips_code varchar
 }
 
 create table itinerary {
@@ -42,12 +43,14 @@ create table itinerary {
 create table activity {
     id integer primary key,
     itinerary_id integer not null,
+    country_id integer,            -- copied from the itinerary; null on rows created before this column existed
     name varchar not null,
     address varchar,
     date_start timestamp,
     date_end timestamp,
 
-    foreign key (itinerary_id) references itinerary(id)
+    foreign key (itinerary_id) references itinerary(id),
+    foreign key (country_id) references country(id)
 }
 
 -- News table for transit disruption updates and news articles.
@@ -69,6 +72,7 @@ create table impact {
     activity_id integer,
     impacted boolean,
     reason varchar(500),
+    rejected boolean,
 
     foreign key (user_id) references user(id),
     foreign key (news_id) references news(id),
@@ -88,3 +92,12 @@ CREATE TABLE user_preference (
     travelling_with_elderly   BOOLEAN      NOT NULL DEFAULT FALSE,
     updated_at                TIMESTAMP    NOT NULL
 );
+-- Which countries a news article is about. Corresponds to News.countries.
+create table news_country {
+    news_id integer not null,
+    country_id integer not null,
+
+    primary key (news_id, country_id),
+    foreign key (news_id) references news(id),
+    foreign key (country_id) references country(id)
+}

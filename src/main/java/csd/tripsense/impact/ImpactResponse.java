@@ -15,6 +15,7 @@ public record ImpactResponse(
         Long id,
         Boolean impacted,
         String reason,
+        boolean rejected,
         Long userId,
         String username,
         Long newsId,
@@ -36,6 +37,7 @@ public record ImpactResponse(
                 impact.getId(),
                 impact.getImpacted(),
                 impact.getReason(),
+                Boolean.TRUE.equals(impact.getRejected()),   // so clients never have to handle a null
                 impact.getUser() == null ? null : impact.getUser().getId(),
                 impact.getUser() == null ? null : impact.getUser().getUsername(),
                 news == null ? null : news.getId(),
