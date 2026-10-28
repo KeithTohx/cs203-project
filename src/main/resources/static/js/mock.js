@@ -56,6 +56,9 @@ const NEWS = {
         description: "Heavy rain has flooded parts of central Bangkok, closing some attractions near the river." },
     5: { title: "Grand Palace closed for royal ceremony", source: "Bangkok Post",
         url: "https://www.bangkokpost.com/", publishedAt: "2026-10-28T07:00:00", description: null },
+    6: { title: "Storm warning issued for the Andaman coast", source: "Thai Meteorological Department",
+        url: "https://www.tmd.go.th/en", publishedAt: "2026-11-04T06:00:00",
+        description: "Strong winds and high waves are expected off Krabi and Phuket, and small boats are told to stay in port." },
 };
 // Same flat shape as ImpactResponse on the backend.
 const makeImpact = (id, impacted, newsId, activityId, activityName, reason) => {
@@ -78,9 +81,70 @@ const IMPACTS = {
     3: [makeImpact(6, true, 2, 4, "Universal Studios Singapore", "Dates to be confirmed.")],
     6: [makeImpact(11, true, 3, null, null, "Expect queues at popular parks in late March.")],
     2: [makeImpact(4, true, 4, 7, "Grand Palace visit", "Some attractions closed."),
-    makeImpact(5, false, 5, 7, "Grand Palace visit", "Closure is before your visit.")],
+    makeImpact(5, false, 5, 7, "Grand Palace visit", "Closure is before your visit."),
+    makeImpact(12, true, 6, 8, "Island hopping", "Boat tours cannot run while the storm warning is in place.")],
     // itinerary 9 has no impacts, to test the empty state
 };
+
+// Same flat shape as RecommendationResponse on the backend. between them the seeded ones and the
+// generated ones use every action, so each label can be seen. the onsen (impact 2) and universal
+// studios (impact 6) have none yet, so the "Suggest what to do" button shows up on john's trips
+const makeRecommendation = (id, impact, severity, action, advice, option = null) => ({
+    id, severity, action, advice,
+    impactId: impact.id,
+    reason: impact.reason,
+    itineraryId: Number(Object.keys(IMPACTS).find(key => IMPACTS[key].includes(impact))),
+    activityId: impact.activityId,
+    activityName: impact.activityName,
+    newsId: impact.newsId,
+    newsTitle: impact.newsTitle,
+    optionId: option?.id ?? null,
+    optionName: option?.name ?? null,
+    optionArea: option?.area ?? null,
+    optionAddress: option?.address ?? null,
+});
+// a few places per country to suggest instead, like the backend's activity_option table
+const OPTIONS = {
+    Japan: [
+        { id: 101, name: "Sapporo Art Park", area: "Sapporo", address: "2-75 Geijutsunomori, Minami-ku, Sapporo" },
+        { id: 102, name: "Hokkaido Museum", area: "Sapporo", address: "53-2 Konopporo, Atsubetsu-ku, Sapporo" },
+        { id: 103, name: "Jozankei Onsen", area: "Sapporo", address: "Jozankei, Minami-ku, Sapporo" },
+    ],
+    Singapore: [{ id: 201, name: "ArtScience Museum", area: "Marina Bay", address: "6 Bayfront Ave, Singapore" }],
+    Thailand: [{ id: 301, name: "Jim Thompson House", area: "Pathum Wan", address: "6 Kasem San 2 Alley, Bangkok" }],
+};
+const RECOMMENDATIONS = {
+    1: [
+        makeRecommendation(1, IMPACTS[1][0], "HIGH", "REPLACE",
+            "Lifts at Niseko may stay closed after the earthquake. Spend the day at Sapporo Art Park instead.",
+            OPTIONS.Japan[0]),
+        makeRecommendation(2, IMPACTS[1][2], "MEDIUM", "MONITOR",
+            "Affects the whole trip, so follow local updates and keep the plans flexible."),
+    ],
+    2: [
+        makeRecommendation(3, IMPACTS[2][0], "MEDIUM", "RESCHEDULE",
+            "The flooding near the river should ease within a few days. Move the Grand Palace visit to the 10th."),
+        makeRecommendation(4, IMPACTS[2][2], "HIGH", "CANCEL",
+            "Boats are told to stay in port while the storm passes. Cancel the island hopping and ask the operator for a refund."),
+    ],
+    6: [
+        makeRecommendation(5, IMPACTS[6][0], "LOW", "MONITOR",
+            "Crowds are expected but the parks stay open, so no change is needed. Go early in the morning to avoid the queues."),
+    ],
+};
+let nextRecommendationId = 6;
+
+// what the mock "model" answers for an impact without a recommendation. anything not listed
+// gets a plain swap, like the backend does when the model is unreachable
+const MOCK_ANSWERS = {
+    2: { severity: "MEDIUM", action: "RELOCATE", optionIndex: 2,
+        advice: "Noboribetsu may close its baths for safety checks. Soak at Jozankei Onsen near Sapporo instead." },
+    6: { severity: "LOW", action: "MONITOR", optionIndex: null,
+        advice: "The maintenance dates are not confirmed yet, so no change is needed. Check the park calendar a week before you go." },
+};
+const SEVERITY_ORDER = ["HIGH", "MEDIUM", "LOW"];
+const worstFirst = recommendations => [...recommendations]
+    .sort((first, second) => SEVERITY_ORDER.indexOf(first.severity) - SEVERITY_ORDER.indexOf(second.severity));
 
 // itinerary id -> [{ role, content }], oldest first. john's ski trip starts with a short conversation
 const CHATS = {
@@ -143,7 +207,7 @@ const requireUser = () => requireLogin() || (me.role !== "USER" ? fail(403, "Onl
 const findUser = id => USERS.find(user => user.id === Number(id));
 const userNotFound = id => fail(404, `No user found with id ${id}`);
 
-// the account and everything it owns: itineraries with their activities, impacts and chats, and its preferences
+// the account and everything it owns: itineraries with their activities, impacts, recommendations and chats, and its preferences
 const removeAccount = account => {
     const ownedItineraries = ITINERARIES.filter(itinerary => itinerary.userId === account.id);
     for (const itinerary of ownedItineraries) {
@@ -152,6 +216,7 @@ const removeAccount = account => {
             if (ACTIVITIES[index].itineraryId === itinerary.id) ACTIVITIES.splice(index, 1);
         }
         delete IMPACTS[itinerary.id];
+        delete RECOMMENDATIONS[itinerary.id];
         delete CHATS[itinerary.id];
     }
 
@@ -267,7 +332,7 @@ export const mockApi = {
         record("ITINERARY_CREATED", me.id, me.email, me.id, `itinerary ${itinerary.id} '${itinerary.name}'`);
         return respondWith(itinerary);
     },
-    // Removes the itinerary's activities and impacts with it.
+    // Removes the itinerary's activities, impacts and recommendations with it.
     deleteItinerary: id => {
         const itinerary = myItinerary(id);
         if (requireLogin() || !itinerary) return requireLogin() || fail(404, "Itinerary not found.");
@@ -276,6 +341,7 @@ export const mockApi = {
             if (ACTIVITIES[index].itineraryId === itinerary.id) ACTIVITIES.splice(index, 1);
         }
         delete IMPACTS[itinerary.id];
+        delete RECOMMENDATIONS[itinerary.id];
         record("ITINERARY_DELETED", me.id, me.email, me.id, `itinerary ${itinerary.id} '${itinerary.name}'`);
         return respondWith(null);
     },
@@ -393,6 +459,45 @@ export const mockApi = {
         const impact = IMPACTS[itineraryId].find(impact => impact.id === Number(id));
         impact.rejected = rejected;
         return respondWith(impact);
+    },
+    // like the backend, only what is stored. rows for impacts the user rejected later are still sent
+    itineraryRecommendations: id => {
+        if (requireLogin() || !myItinerary(id)) return requireLogin() || fail(404, "Itinerary not found.");
+        return respondWith(worstFirst(RECOMMENDATIONS[id] ?? []));
+    },
+    // like the backend: one per current impact (rejected ones skipped), reusing any already made.
+    // slower than the other calls, since the real one waits on the model
+    generateRecommendations: itineraryId => {
+        const itinerary = myItinerary(itineraryId);
+        if (requireLogin() || !itinerary) return requireLogin() || fail(404, "Itinerary not found.");
+
+        const stored = RECOMMENDATIONS[itinerary.id] ?? (RECOMMENDATIONS[itinerary.id] = []);
+        const currentImpacts = (IMPACTS[itinerary.id] ?? []).filter(impact => impact.impacted && !impact.rejected);
+        const options = OPTIONS[itinerary.countryName] ?? [];
+
+        const current = currentImpacts.map(impact => {
+            const existing = stored.find(recommendation => recommendation.impactId === impact.id);
+            if (existing) return existing;
+
+            const answer = MOCK_ANSWERS[impact.id];
+            let made;
+            if (answer) {
+                const option = answer.optionIndex == null ? null : options[answer.optionIndex];
+                made = makeRecommendation(nextRecommendationId++, impact, answer.severity, answer.action, answer.advice, option);
+            } else if (impact.activityId == null) {
+                made = makeRecommendation(nextRecommendationId++, impact, "MEDIUM", "MONITOR",
+                    "Affects the whole trip, so follow local updates and keep the plans flexible.");
+            } else {
+                const option = options[0];
+                made = makeRecommendation(nextRecommendationId++, impact, "MEDIUM", "REPLACE",
+                    `(mock advice) ${impact.activityName} may be disrupted. Swap it for ${option?.name ?? "something nearby"}.`,
+                    option);
+            }
+            stored.push(made);
+            return made;
+        });
+
+        return new Promise(resolve => setTimeout(resolve, 1500)).then(() => respondWith(worstFirst(current)));
     },
     // conversations are kept per itinerary, like the backend's chat memory
     chat: (itineraryId, message) => {

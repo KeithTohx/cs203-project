@@ -73,6 +73,8 @@ const realApi = {
   deleteActivity:id => request(`/api/activity/${id}`, "DELETE"),
   itineraryImpacts:id => request(`/api/itinerary/${id}/impact`),
   setImpactRejected:(id, rejected) => request(`/api/impact/${id}`, "PATCH", {rejected}),   // true = "not relevant to me", false = restore -> the impact
+  itineraryRecommendations:id => request(`/api/itinerary/${id}/recommendation`),       // -> the stored ones, worst first. never calls the model
+  generateRecommendations:itineraryId => request("/api/recommendation/generate", "POST", {itineraryId}),   // slow: asks the model once per impact without one -> every current one, worst first
   chat:       (itineraryId, message) => request(`/api/itinerary/${itineraryId}/chat`, "POST", {message}),   // -> {role: "assistant", content}
   chatHistory:itineraryId => request(`/api/itinerary/${itineraryId}/chat/history`),   // -> [{role: "user" | "assistant", content}], oldest first
   resetChat:  itineraryId => request(`/api/itinerary/${itineraryId}/chat`, "DELETE"),
