@@ -77,6 +77,12 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
+        <!-- CS203-5: SMTP email alerts -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+
         <!-- Validation: @NotBlank etc. on incoming request bodies -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

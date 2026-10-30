@@ -57,5 +57,15 @@ public class Impact {
     @Column
     private Boolean rejected;
 
+    // Null on pre-alert rows: recovery must not notify everyone about historical assessments.
+    @Column
+    private Boolean alertEligible;
+
+    // An alert contains personal trip data, so remove it whenever its source impact is removed.
+    @jakarta.persistence.OneToMany(mappedBy = "impact", cascade = jakarta.persistence.CascadeType.REMOVE,
+            fetch = jakarta.persistence.FetchType.LAZY)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private java.util.List<csd.tripsense.alert.Alert> alerts;
+
 }
 
