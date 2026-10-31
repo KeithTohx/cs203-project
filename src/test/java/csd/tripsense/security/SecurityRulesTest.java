@@ -2,6 +2,8 @@ package csd.tripsense.security;
 
 import static io.restassured.module.mockmvc.RestAssuredMockMvc.given;
 import static org.hamcrest.Matchers.equalTo;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
@@ -21,6 +23,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.country.Country;
 import csd.tripsense.country.CountryRepository;
+import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryRepository;
 import csd.tripsense.user.User;
 import csd.tripsense.user.UserRepository;
@@ -82,6 +85,18 @@ class SecurityRulesTest {
     private CurrentUser loggedInAs(User account) {
         return new CurrentUser(account.getId(), account.getEmail(), account.getUsername(), null,
                 account.getRole(), account.isEnabled());
+    }
+
+    private Itinerary savedTrip(User owner, String name) {
+        Country japan = new Country();
+        japan.setName("Japan");
+        japan = countryRepository.saveAndFlush(japan);
+
+        Itinerary trip = new Itinerary();
+        trip.setName(name);
+        trip.setCountry(japan);
+        trip.setUser(owner);
+        return itineraryRepository.saveAndFlush(trip);
     }
 
     // ===== NOT LOGGED IN =====
@@ -236,6 +251,109 @@ class SecurityRulesTest {
             .post("/api/user/register")
         .then()
             .status(HttpStatus.FORBIDDEN);
+    }
+
+    // ===== OWNERSHIP =====
+    // another user's trip gives 404, not 403, so nobody can find out which trip ids exist
+
+    @Test
+    @DisplayName("Should return 404 when a user opens another user's itinerary")
+    void getItinerary_ShouldReturn404_WhenItineraryBelongsToAnotherUser() {
+        User owner = savedAccount("owner", "USER", true);
+        User stranger = savedAccount("stranger", "USER", true);
+        Itinerary ownersTrip = savedTrip(owner, "Japan Ski Trip");
+
+        given()
+            .postProcessors(user(loggedInAs(stranger)))
+        .when()
+            .get("/api/itinerary/" + ownersTrip.getId())
+        .then()
+            .status(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("Should return 404 and leave the itinerary unchanged when a user edits another user's itinerary")
+    void updateItinerary_ShouldReturn404AndNotChange_WhenItineraryBelongsToAnotherUser() {
+        User owner = savedAccount("owner", "USER", true);
+        User stranger = savedAccount("stranger", "USER", true);
+        Itinerary ownersTrip = savedTrip(owner, "Japan Ski Trip");
+
+        given()
+            .postProcessors(user(loggedInAs(stranger)), csrf())
+            .contentType(ContentType.JSON)
+            .body("{\"name\": \"Taken over\"}")
+        .when()
+            .put("/api/itinerary/" + ownersTrip.getId())
+        .then()
+            .status(HttpStatus.NOT_FOUND);
+
+        String nameAfter = itineraryRepository.findById(ownersTrip.getId()).orElseThrow().getName();
+        assertEquals("Japan Ski Trip", nameAfter);
+    }
+
+    @Test
+    @DisplayName("Should return 404 and keep the itinerary when a user deletes another user's itinerary")
+    void deleteItinerary_ShouldReturn404AndKeepIt_WhenItineraryBelongsToAnotherUser() {
+        User owner = savedAccount("owner", "USER", true);
+        User stranger = savedAccount("stranger", "USER", true);
+        Itinerary ownersTrip = savedTrip(owner, "Japan Ski Trip");
+
+        given()
+            .postProcessors(user(loggedInAs(stranger)), csrf())
+        .when()
+            .delete("/api/itinerary/" + ownersTrip.getId())
+        .then()
+            .status(HttpStatus.NOT_FOUND);
+
+        assertTrue(itineraryRepository.existsById(ownersTrip.getId()));
+    }
+
+    @Test
+    @DisplayName("Should return 404 when a user lists the activities of another user's itinerary")
+    void getActivities_ShouldReturn404_WhenItineraryBelongsToAnotherUser() {
+        User owner = savedAccount("owner", "USER", true);
+        User stranger = savedAccount("stranger", "USER", true);
+        Itinerary ownersTrip = savedTrip(owner, "Japan Ski Trip");
+
+        given()
+            .postProcessors(user(loggedInAs(stranger)))
+        .when()
+            .get("/api/itinerary/" + ownersTrip.getId() + "/activity")
+        .then()
+            .status(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("Should only list the user's own itineraries")
+    void getAllItineraries_ShouldListOnlyOwnTrips_WhenOtherUsersHaveTrips() {
+        User owner = savedAccount("owner", "USER", true);
+        User stranger = savedAccount("stranger", "USER", true);
+        savedTrip(owner, "Japan Ski Trip");
+        savedTrip(stranger, "Bali Beach Trip");
+
+        given()
+            .postProcessors(user(loggedInAs(stranger)))
+        .when()
+            .get("/api/itinerary")
+        .then()
+            .status(HttpStatus.OK)
+            .body("size()", equalTo(1))
+            .body("[0].name", equalTo("Bali Beach Trip"));
+    }
+
+    @Test
+    @DisplayName("Should return 404 even for an admin, since trips are private to their owner")
+    void getItinerary_ShouldReturn404_WhenAdminOpensAnotherUsersItinerary() {
+        User owner = savedAccount("owner", "USER", true);
+        User admin = savedAccount("manager", "ADMIN", true);
+        Itinerary ownersTrip = savedTrip(owner, "Japan Ski Trip");
+
+        given()
+            .postProcessors(user(loggedInAs(admin)))
+        .when()
+            .get("/api/itinerary/" + ownersTrip.getId())
+        .then()
+            .status(HttpStatus.NOT_FOUND);
     }
 
     // ===== LOGIN AND LOGOUT =====
