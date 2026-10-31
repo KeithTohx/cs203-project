@@ -6,7 +6,6 @@ import csd.tripsense.itinerary.ItineraryRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
-import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import csd.tripsense.user.AccountRuleException;
@@ -23,7 +22,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** The two ways of deleting an account, and the one shared cleanup behind them. */
+// the shared cleanup behind both ways of deleting an account (admin delete and self delete)
+// a user deleting their own account with a password is tested in UserServiceImplDeleteAccountTest
 class UserServiceImplDeleteTest {
 
     private UserRepository userRepository;
@@ -102,30 +102,17 @@ class UserServiceImplDeleteTest {
         verify(userRepository).delete(admin);
     }
 
-    // ---------- a user deleting their own account ----------
-
+    // only enabled admins count as "the last admin", so a disabled one can always be removed
     @Test
-    void deleteAccount_withTheRightPassword_goesThroughTheSharedCleanup() {
-        User bob = accountWithPassword("USER", "password123");
-        when(userRepository.findById(4L)).thenReturn(Optional.of(bob));
-        when(itineraryRepository.findByUserId(4L)).thenReturn(List.of());
+    void deleteUserAndData_aDisabledAdmin_isAllowedWithoutCountingAdmins() {
+        User admin = accountWithPassword("ADMIN", "admin123");
+        admin.setEnabled(false);
+        when(userRepository.findById(6L)).thenReturn(Optional.of(admin));
+        when(itineraryRepository.findByUserId(6L)).thenReturn(List.of());
 
-        service.deleteAccount(4L, "password123");
+        service.deleteUserAndData(6L);
 
-        verify(chatbotService).deleteAllConversationsFor(4L);
-        verify(userRepository).delete(bob);
-    }
-
-    @Test
-    void deleteAccount_withTheWrongPassword_isRefusedAndDeletesNothing() {
-        User bob = accountWithPassword("USER", "password123");
-        when(userRepository.findById(4L)).thenReturn(Optional.of(bob));
-
-        assertThatThrownBy(() -> service.deleteAccount(4L, "wrong-password"))
-                .isInstanceOfSatisfying(AccountRuleException.class,
-                        e -> assertThat(e.getKind()).isEqualTo(AccountRuleException.Kind.INVALID_INPUT));
-
-        verify(chatbotService, never()).deleteAllConversationsFor(any());
-        verify(userRepository, never()).delete(any(User.class));
+        verify(userRepository, never()).countEnabledByRole(any());
+        verify(userRepository).delete(admin);
     }
 }

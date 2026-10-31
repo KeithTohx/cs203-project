@@ -5,7 +5,6 @@ import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.auth.SessionService;
 import csd.tripsense.user.*;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpStatus;
 import csd.tripsense.user.AccountRuleException;
 import java.util.Optional;
 import static org.assertj.core.api.Assertions.*;
@@ -75,11 +74,7 @@ class RoleManagementTest {
         order.verify(sessions).expireSessionsFor(4L);
         order.verify(audit).record(AuditService.ROLE_CHANGED, 3L, "manager@example.com", 4L,
                 "role changed from USER to ADMIN");
-
-        doThrow(new AccountRuleException(AccountRuleException.Kind.CONFLICT, "conflict")).when(adminService).changeRole(4L, Role.USER, 3L);
-        clearInvocations(sessions, audit);
-        assertThatThrownBy(() -> controller.changeRole(4L, new ChangeRoleRequest(Role.USER), actor))
-                .isInstanceOf(AccountRuleException.class);
-        verifyNoInteractions(sessions, audit);
+        // a failed role change touching no sessions or audit is tested in
+        // AdminControllerTest.roleEndpointMapsBusinessConflictWithoutExpiringSessions
     }
 }
