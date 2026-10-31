@@ -202,6 +202,35 @@
                             <goal>report</goal>
                         </goals>
                     </execution>
+
+                    <!-- fails the build (mvn verify, which ci runs) if coverage drops below these.
+                         set a few points under where it is now, so normal changes pass but a pr
+                         that adds a lot of untested code does not -->
+                    <execution>
+                        <id>check</id>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.90</minimum>
+                                        </limit>
+                                        <limit>
+                                            <counter>BRANCH</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.80</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
                 </executions>
 
                 <configuration>
