@@ -13,6 +13,14 @@ export const sortByStart = activities =>
     [...activities].sort((first, second) => new Date(first.dateStart ?? 0) - new Date(second.dateStart ?? 0));
 // News URLs come from an external API: only allow http(s) links.
 export const safeUrl = url => /^https?:\/\//i.test(url || "") ? escapeHtml(url) : "";
+// the site name from a link, so gdelt news without a source still gets a label
+export const hostnameOf = url => {
+    try {
+        return new URL(url).hostname.replace(/^www\./, "");
+    } catch {
+        return "";
+    }
+};
 // Shared error handler: a 401 means the session ended, so go back to login.
 export function showError(container, error, onAuthLost) {
     if (error.status === 401) return onAuthLost();

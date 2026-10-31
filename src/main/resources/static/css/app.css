@@ -1127,3 +1127,52 @@ dl + .hint {
 [data-suggest-status] {
     margin-left: 8px;
 }
+
+/* ===== News page ===== */
+.view-switch {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 14px 0 4px;
+}
+
+/* the view being shown looks selected, like a filled button */
+.view-switch button[aria-pressed="true"] {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+.news-list {
+    list-style: none;
+    padding: 0;
+    margin: 12px 0 0;
+}
+
+.news-item {
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.news-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 0;
+}
+
+.news-head .tag {
+    white-space: nowrap;
+}
+
+/* long gdelt descriptions are cut to three lines so the list stays easy to scan */
+.news-description {
+    margin: 6px 0 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}

@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { dateRange, escapeHtml, formatDate, safeUrl, showError, sortByStart, takeFlash } from "../util.js";
+import { dateRange, escapeHtml, formatDate, hostnameOf, safeUrl, showError, sortByStart, takeFlash } from "../util.js";
 import { openChat } from "./chat.js";
 
 // Group impacts by the news event that caused them, so each event lists the activities it affects.
@@ -20,15 +20,6 @@ const groupByEvent = (impacts) => {
         events.get(key).impacts.push(impact);
     }
     return [...events.values()];
-};
-
-// the site name from a link, so gdelt news without a source still gets a label
-const hostnameOf = url => {
-    try {
-        return new URL(url).hostname.replace(/^www\./, "");
-    } catch {
-        return "";
-    }
 };
 
 // each bubble needs its own id so aria-describedby points at the right popover

@@ -9,6 +9,7 @@ import { showEditItinerary } from "./views/itinerary-edit.js";
 import { showAdminUsers } from "./views/admin-users.js";
 import { showAdminUser } from "./views/admin-user.js";
 import { showAdminAudit } from "./views/admin-audit.js";
+import { showNews } from "./views/news.js";
 
 const root = document.getElementById("root");
 const nav = document.getElementById("nav");
@@ -30,6 +31,7 @@ const routes = [
 	{ path: "/admin/users", nav: "Users", role: "ADMIN", view: context => showAdminUsers(context.root, context.user, context.reauth) },
 	{ path: "/admin/users/:id", role: "ADMIN", view: context => showAdminUser(context.root, context.user, context.reauth, context.params.id) },
 	{ path: "/admin/audit", nav: "Activity", role: "ADMIN", view: context => showAdminAudit(context.root, context.user, context.reauth) },
+	{ path: "/news", nav: "News", view: context => showNews(context.root, context.user, context.reauth) },
 	{ path: "/account", nav: "Account", view: context => showAccount(context.root, context.user, context.reauth) },
 	{ path: "/account/preferences", role: "USER", view: context => showEditPreferences(context.root, context.user, context.reauth) },
 	{ path: "/account/details", view: context => showEditDetails(context.root, context.user, context.reauth) },

@@ -59,7 +59,29 @@ const NEWS = {
     6: { title: "Storm warning issued for the Andaman coast", source: "Thai Meteorological Department",
         url: "https://www.tmd.go.th/en", publishedAt: "2026-11-04T06:00:00",
         description: "Strong winds and high waves are expected off Krabi and Phuket, and small boats are told to stay in port." },
+    // stories that affect nobody's trip, so the news page has more than one page to load
+    7: { title: "Taxi drivers in Seoul plan two-day strike", source: "The Korea Herald",
+        url: "https://www.koreaherald.com/", publishedAt: "2026-10-30T09:15:00",
+        description: "Fewer taxis are expected across Seoul as drivers protest over fares." },
+    8: { title: "New rail line opens between Kuala Lumpur and Singapore", source: "Channel NewsAsia",
+        url: "https://www.channelnewsasia.com/", publishedAt: "2026-10-29T16:40:00",
+        description: "The first trains run this weekend, cutting the journey to under two hours." },
+    9: { title: "Volcanic ash closes Bali airport for a morning", source: null,
+        url: "https://www.example.com/bali-ash", publishedAt: "2026-10-27T05:20:00",
+        description: "Flights were held while ash from Mount Lewotobi drifted over the island. Most resumed by noon." },
+    10: { title: "Heatwave warning for Hanoi this week", source: "VnExpress",
+        url: "https://e.vnexpress.net/", publishedAt: "2026-10-26T11:00:00",
+        description: "Temperatures are forecast to pass 38°C, and outdoor sites may shorten their hours." },
+    11: { title: "Typhoon season ends early for the Philippines", source: "Rappler",
+        url: "https://www.rappler.com/", publishedAt: "2026-10-24T08:00:00", description: null },
+    12: { title: "Jeju ferry services return to normal", source: "Yonhap",
+        url: "https://en.yna.co.kr/", publishedAt: "2026-10-22T13:30:00",
+        description: "Ferries between Jeju and the mainland are back on their usual timetable after last week's storms." },
 };
+// the stored news as the backend's /api/news returns it, newest first
+const newsNewestFirst = () => Object.entries(NEWS)
+    .map(([id, news]) => ({ id: Number(id), ...news }))
+    .sort((first, second) => new Date(second.publishedAt) - new Date(first.publishedAt));
 // Same flat shape as ImpactResponse on the backend.
 const makeImpact = (id, impacted, newsId, activityId, activityName, reason) => {
     const news = NEWS[newsId];
@@ -447,6 +469,14 @@ export const mockApi = {
         const entries = AUDIT.filter(entry =>
             (!term || (entry.actorEmail ?? "").toLowerCase().includes(term)) && (!action || entry.action === action));
         return respondWith(pageOf(newestFirst(entries), page));
+    },
+    // like the backend: a plain list for one page, and a short page means it is the last one
+    news: ({ page = 0, size = 20 } = {}) => {
+        const notLoggedIn = requireLogin();
+        if (notLoggedIn) return notLoggedIn;
+
+        const start = Math.max(page, 0) * size;
+        return respondWith(newsNewestFirst().slice(start, start + size));
     },
     itineraryImpacts: id => requireLogin() || respondWith(IMPACTS[id] || []),
     // like the backend, an impact on someone else's itinerary looks the same as one that does not exist
