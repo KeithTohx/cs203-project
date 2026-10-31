@@ -7,6 +7,7 @@ import csd.tripsense.user.UserRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.method.annotation.AuthenticationPrincipalArgumentResolver;
@@ -25,6 +26,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -134,6 +136,39 @@ class ItineraryControllerTest {
         verify(itineraryService).deleteItinerary(10L);
         verify(auditService).record(eq(AuditService.ITINERARY_DELETED), eq(1L), eq("john@example.com"),
                 eq(1L), contains("Trip 10"));
+    }
+
+    @Test
+    void update_ownItinerary_savesItAndRecordsTheChange() throws Exception {
+        Itinerary johns = ownedBy(1L, 10L);
+        Itinerary renamed = ownedBy(1L, 10L);
+        renamed.setName("Japan Ski Trip");
+        when(itineraryService.getItineraryById(10L)).thenReturn(johns);
+        when(itineraryService.updateItinerary(eq(10L), any(Itinerary.class))).thenReturn(renamed);
+        loginAs(john);
+
+        mockMvc.perform(put("/api/itinerary/10")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\": \"Japan Ski Trip\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Japan Ski Trip"));
+        verify(itineraryService).updateItinerary(eq(10L), any(Itinerary.class));
+        verify(auditService).record(eq(AuditService.ITINERARY_UPDATED), eq(1L), eq("john@example.com"),
+                eq(1L), contains("Japan Ski Trip"));
+    }
+
+    @Test
+    void update_someoneElsesItinerary_returns404AndChangesNothing() throws Exception {
+        Itinerary johns = ownedBy(1L, 10L);
+        when(itineraryService.getItineraryById(10L)).thenReturn(johns);
+        loginAs(bob);
+
+        mockMvc.perform(put("/api/itinerary/10")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\": \"Taken over\"}"))
+                .andExpect(status().isNotFound());
+        verify(itineraryService, never()).updateItinerary(any(), any());
+        verify(auditService, never()).record(any(), any(), any(), any(), any());
     }
 
     @Test

@@ -361,6 +361,20 @@ class ImpactServiceImplTest {
     }
 
     @Test
+    @DisplayName("Should not count a rejected trip-wide impact towards the overall verdict")
+    void evaluate_ShouldNotBeImpacted_WhenOnlyTripImpactIsRejected() {
+        // the trip verdict is the one rejected this time, and the activity is fine
+        Impact rejectedTripImpact = rejectableImpact(2L, null, true);
+        Impact activityImpact = rejectableImpact(1L, activity, false);
+        activityImpact.setImpacted(false);
+        givenStoredVerdicts(rejectedTripImpact, activityImpact);
+
+        EvaluateResponse response = impactService.evaluate(1L, 5L);
+
+        assertFalse(response.impacted());
+    }
+
+    @Test
     @DisplayName("Should leave rejected impacts out of findImpacted")
     void findImpacted_ShouldExcludeRejected_WhenSomeAreRejected() {
         // arrange
