@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { dateRange, escapeHtml, formatDate, safeUrl, showError, sortByStart, takeFlash } from "../util.js";
+import { dateRange, escapeHtml, formatDate, hostnameOf, safeUrl, showError, sortByStart, takeFlash } from "../util.js";
 import { openChat } from "./chat.js";
 
 // Group impacts by the news event that caused them, so each event lists the activities it affects.
@@ -20,15 +20,6 @@ const groupByEvent = (impacts) => {
         events.get(key).impacts.push(impact);
     }
     return [...events.values()];
-};
-
-// the site name from a link, so gdelt news without a source still gets a label
-const hostnameOf = url => {
-    try {
-        return new URL(url).hostname.replace(/^www\./, "");
-    } catch {
-        return "";
-    }
 };
 
 // each bubble needs its own id so aria-describedby points at the right popover
@@ -156,6 +147,101 @@ const createDismissedSection = (dismissedEvents) => {
     `;
 };
 
+// what the backend's Severity and Action values read as on the page
+const SEVERITY_LABELS = {
+    HIGH: { text: "High impact", tagClass: "tag bad" },
+    MEDIUM: { text: "Medium impact", tagClass: "tag warn" },
+    LOW: { text: "Low impact", tagClass: "tag ok" },
+};
+const ACTION_LABELS = {
+    REPLACE: "Swap activity",
+    RELOCATE: "Change location",
+    RESCHEDULE: "Reschedule",
+    MONITOR: "Watch for updates",
+    CANCEL: "Cancel activity",
+};
+
+// Component: the place suggested instead, if the recommendation named one
+const createSuggestedPlace = recommendation => {
+    if (!recommendation.optionName) return "";
+
+    const where = [recommendation.optionArea, recommendation.optionAddress].filter(Boolean).map(escapeHtml).join(" · ");
+    return `
+        <p class="suggested-place">
+            <span class="meta">Instead:</span>
+            <strong>${escapeHtml(recommendation.optionName)}</strong>
+            ${where ? `<span class="meta">${where}</span>` : ""}
+        </p>
+    `;
+};
+
+// Component: one recommendation, for one activity or for the whole trip
+const createRecommendation = recommendation => {
+    const severity = SEVERITY_LABELS[recommendation.severity] ?? { text: recommendation.severity, tagClass: "tag" };
+    const action = ACTION_LABELS[recommendation.action] ?? recommendation.action;
+    // cancelling is the most drastic advice, so it stands out like a high impact does
+    const actionTagClass = recommendation.action === "CANCEL" ? "tag bad" : "tag";
+    const target = recommendation.activityName ?? "The whole itinerary";
+
+    return `
+        <li class="advice">
+            <div class="advice-head">
+                <strong>${escapeHtml(target)}</strong>
+                <span class="${severity.tagClass}">${escapeHtml(severity.text)}</span>
+                <span class="${actionTagClass}">${escapeHtml(action)}</span>
+            </div>
+            <p>${escapeHtml(recommendation.advice)}</p>
+            ${createSuggestedPlace(recommendation)}
+            ${recommendation.newsTitle ? `<p class="meta">Because of: ${escapeHtml(recommendation.newsTitle)}</p>` : ""}
+        </li>
+    `;
+};
+
+// Component: the button that asks the AI for the impacts that have no recommendation yet
+const createSuggestButton = (missingCount, hasSome) => {
+    const label = hasSome ? `Suggest what to do for the rest (${missingCount})` : "Suggest what to do";
+
+    return `
+        <button class="small" type="button" data-suggest>${label}</button>
+        <span class="meta" data-suggest-status role="status"></span>
+    `;
+};
+
+// the recommendations for impacts that still count, and how many of those impacts have none yet.
+// shared by the card and the summary at the top, so the two always agree
+const planFor = (impactedOnly, recommendations) => {
+    const currentImpactIds = new Set(impactedOnly.map(impact => impact.id));
+    const current = recommendations.filter(recommendation => currentImpactIds.has(recommendation.impactId));
+    const recommendedImpactIds = new Set(current.map(recommendation => recommendation.impactId));
+    const missingCount = impactedOnly.filter(impact => !recommendedImpactIds.has(impact.id)).length;
+    return { current, missingCount };
+};
+
+// news checked and found not to matter is left out. what the user rejected no longer counts
+const stillImpacted = impacts => impacts.filter(impact => impact.impacted && !impact.rejected);
+
+// Component: what to do about the news. only impacts that still count get a recommendation shown,
+// so rejecting an impact hides its advice and restoring it brings the advice back
+const createPlanSection = (impactedOnly, recommendations, isPast) => {
+    if (!impactedOnly.length) return "";
+
+    const { current, missingCount } = planFor(impactedOnly, recommendations);
+
+    // a trip that is over has nothing left to change
+    const canSuggest = missingCount > 0 && !isPast;
+    const list = current.length
+        ? `<ul class="advice-list">${current.map(createRecommendation).join("")}</ul>`
+        : `<p class="meta">No suggestions yet.</p>`;
+
+    return `
+        <details data-section="plan" open>
+            <summary>Recommended actions (${current.length})</summary>
+            ${list}
+            ${canSuggest ? createSuggestButton(missingCount, current.length > 0) : ""}
+        </details>
+    `;
+};
+
 // Component: the activities in one itinerary as a timeline; a red dot marks those hit by news. Editing happens on the itinerary's edit page.
 const createActivityList = (itineraryId, activities, impactedActivityIds) => {
     const addLink = `<a class="btn small add" href="#/itineraries/${itineraryId}/activities/new">+ Add activity</a>`;
@@ -174,13 +260,99 @@ const isTripOver = itinerary => {
     return endOfLastDay < Date.now();
 };
 
+// "2 activities", "1 activity". the counts in the summary read as sentences
+const countOf = (count, singular, plural = `${singular}s`) => `${count} ${count === 1 ? singular : plural}`;
+
+// what one upcoming trip needs, worked out from the same data its card is drawn from
+const tripAttention = details => {
+    const impactedOnly = stillImpacted(details.impacts);
+    const { current, missingCount } = planFor(impactedOnly, details.recommendations);
+    const affectedActivities = new Set(impactedOnly.map(impact => impact.activityId).filter(id => id != null));
+    const wholeTripAffected = impactedOnly.some(impact => impact.activityId == null);
+
+    return {
+        details,
+        isAffected: impactedOnly.length > 0,
+        activityCount: affectedActivities.size,
+        wholeTripAffected,
+        suggestionCount: current.length,
+        waitingCount: missingCount,
+    };
+};
+
+// "2 activities and the whole trip affected · 1 waiting for a suggestion"
+const describeTrip = trip => {
+    const hit = [];
+    if (trip.activityCount) hit.push(countOf(trip.activityCount, "activity", "activities"));
+    if (trip.wholeTripAffected) hit.push("the whole trip");
+
+    const parts = [`${hit.join(" and ")} affected`];
+    if (trip.suggestionCount) parts.push(`${countOf(trip.suggestionCount, "suggestion")} ready`);
+    if (trip.waitingCount) parts.push(`${trip.waitingCount} waiting for a suggestion`);
+    return parts.join(" · ");
+};
+
+// Component: what needs attention across the upcoming trips, so it is clear before scrolling.
+// past trips are left out, since nothing about them can change any more
+const createTripSummary = detailsList => {
+    const upcoming = detailsList.filter(details => !details.failed && !isTripOver(details.itinerary));
+    if (!upcoming.length) return "";
+
+    const trips = upcoming.map(tripAttention);
+    const affected = trips.filter(trip => trip.isAffected);
+
+    if (!affected.length) {
+        const message = upcoming.length === 1
+            ? "Your upcoming trip is not affected by the news right now."
+            : `None of your ${upcoming.length} upcoming trips are affected by the news right now.`;
+        return `
+            <section class="card trip-summary" aria-labelledby="trip-summary-title">
+                <h2 id="trip-summary-title">
+                    At a glance
+                    <span class="tag ok">All clear</span>
+                </h2>
+                <p class="meta">${message}</p>
+            </section>
+        `;
+    }
+
+    const suggestionTotal = affected.reduce((total, trip) => total + trip.suggestionCount, 0);
+    const waitingTotal = affected.reduce((total, trip) => total + trip.waitingCount, 0);
+    // how many trips are hit goes in the red tag, the rest of the totals sit quietly under the heading
+    const affectedLabel = `${affected.length} of ${countOf(upcoming.length, "upcoming trip")} affected`;
+    const totals = [`${countOf(suggestionTotal, "suggestion")} ready`];
+    if (waitingTotal) totals.push(`${waitingTotal} waiting for a suggestion`);
+
+    // soonest trip first, the same order as the cards below
+    const tripLines = affected.map(trip => `
+        <li>
+            <button class="link-button" type="button" data-jump="${Number(trip.details.itinerary.id)}">
+                ${escapeHtml(trip.details.itinerary.name)}
+            </button>
+            <span class="meta">${escapeHtml(describeTrip(trip))}</span>
+        </li>
+    `).join("");
+
+    return `
+        <section class="card trip-summary" aria-labelledby="trip-summary-title">
+            <h2 id="trip-summary-title">
+                At a glance
+                <span class="tag bad">${affectedLabel}</span>
+            </h2>
+            <p class="meta">${totals.join(" · ")}</p>
+            <ul>
+                ${tripLines}
+            </ul>
+        </section>
+    `;
+};
+
 // Component: Renders a single itinerary card
-const createItineraryCard = ({ itinerary, activities, impacts, failed }) => {
+const createItineraryCard = ({ itinerary, activities, impacts, recommendations, failed }) => {
     const itineraryId = Number(itinerary.id);
     const isPast = isTripOver(itinerary);
-    // news checked and found not to matter is left out. what the user rejected no longer counts
-    // as impacted, but is kept in its own section so it can be restored
-    const impactedOnly = impacts.filter(impact => impact.impacted && !impact.rejected);
+    // what the user rejected no longer counts as impacted, but is kept in its own section so it can be restored
+    const impactedOnly = stillImpacted(impacts);
     const dismissed = impacts.filter(impact => impact.impacted && impact.rejected);
     const impactedActivityIds = new Set(impactedOnly.map(impact => impact.activityId).filter(id => id != null));
     const events = groupByEvent(impactedOnly);
@@ -195,11 +367,12 @@ const createItineraryCard = ({ itinerary, activities, impacts, failed }) => {
                 <summary>News affecting this itinerary (${events.length})</summary>
                 ${events.map(event => createEventCard(event)).join("") || `<div class="msg">No news has affected this itinerary.</div>`}
             </details>
+            ${createPlanSection(impactedOnly, recommendations, isPast)}
             ${createDismissedSection(dismissedEvents)}
             <p class="err" data-impact-error role="alert"></p>`;
 
     return `
-        <article class="card ${isPast ? "past" : ""}" data-itinerary="${itineraryId}">
+        <article class="card ${isPast ? "past" : ""}" data-itinerary="${itineraryId}" tabindex="-1">
             <div class="row">
                 <h2>
                     ${escapeHtml(itinerary.name)}
@@ -219,25 +392,60 @@ const createItineraryCard = ({ itinerary, activities, impacts, failed }) => {
     `;
 };
 
-// Fetch activities and impacts for one itinerary. A 401 is rethrown; other errors only affect this card.
-async function loadDetails(itinerary) {
+// recommendations are extra, so if they fail to load the card still shows, just without them
+async function loadRecommendations(itineraryId) {
     try {
-        const [activities, impacts] = await Promise.all([
-            api.itineraryActivities(itinerary.id),
-            api.itineraryImpacts(itinerary.id),
-        ]);
-        return { itinerary, activities: activities ?? [], impacts: impacts ?? [] };
+        return (await api.itineraryRecommendations(itineraryId)) ?? [];
     } catch (error) {
         if (error.status === 401) throw error;
-        return { itinerary, activities: [], impacts: [], failed: true };
+        return [];
+    }
+}
+
+// Fetch activities, impacts and recommendations for one itinerary. A 401 is rethrown; other errors only affect this card.
+async function loadDetails(itinerary) {
+    try {
+        const [activities, impacts, recommendations] = await Promise.all([
+            api.itineraryActivities(itinerary.id),
+            api.itineraryImpacts(itinerary.id),
+            loadRecommendations(itinerary.id),
+        ]);
+        return { itinerary, activities: activities ?? [], impacts: impacts ?? [], recommendations };
+    } catch (error) {
+        if (error.status === 401) throw error;
+        return { itinerary, activities: [], impacts: [], recommendations: [], failed: true };
     }
 }
 
 const section = (title, cards) => cards.length ? `<h2 class="section">${title}</h2>${cards.join("")}` : "";
 
-// Rejects or restores one impact, then redraws only that itinerary's card so the rest of the page
-// (and any open chat) is left alone. the saved impact from the backend replaces the old one
-async function toggleRejected(button, detailsById, onAuthLost) {
+// Redraws only one itinerary's card so the rest of the page (and any open chat) is left alone
+function redrawCard(card, details, clickedButton) {
+    // redrawing resets every section to its default, so note which ones the user had open first.
+    // that way restoring several in a row does not mean reopening the list each time
+    const openSections = [...card.querySelectorAll("details[data-section]")]
+        .filter(section => section.open)
+        .map(section => section.dataset.section);
+    const clickedSection = clickedButton.closest("details[data-section]")?.dataset.section;
+
+    card.outerHTML = createItineraryCard(details);
+
+    // a section that is now empty is not drawn at all, so it simply stays gone
+    const redrawnCard = document.querySelector(`[data-itinerary="${details.itinerary.id}"]`);
+    for (const name of openSections) {
+        const section = redrawnCard.querySelector(`details[data-section="${name}"]`);
+        if (section) section.open = true;
+    }
+
+    // the button that was clicked is gone, so keep keyboard users in the section they were working in,
+    // or the news section if that one has just emptied
+    const clickedSummary = redrawnCard.querySelector(`details[data-section="${clickedSection}"] > summary`);
+    const fallbackSummary = redrawnCard.querySelector("summary");
+    (clickedSummary ?? fallbackSummary)?.focus();
+}
+
+// Rejects or restores one impact. the saved impact from the backend replaces the old one
+async function toggleRejected(button, detailsById, onAuthLost, onChange) {
     const card = button.closest("[data-itinerary]");
     const details = detailsById.get(Number(card.dataset.itinerary));
     const errorMessage = card.querySelector("[data-impact-error]");
@@ -257,27 +465,43 @@ async function toggleRejected(button, detailsById, onAuthLost) {
         return;
     }
 
-    // redrawing resets every section to its default, so note which ones the user had open first.
-    // that way restoring several in a row does not mean reopening the list each time
-    const openSections = [...card.querySelectorAll("details[data-section]")]
-        .filter(section => section.open)
-        .map(section => section.dataset.section);
-    const clickedSection = button.closest("details[data-section]")?.dataset.section;
+    redrawCard(card, details, button);
+    onChange();
+}
 
-    card.outerHTML = createItineraryCard(details);
+// Asks the AI for the impacts that have no recommendation yet. this takes a few seconds per
+// activity, so the button says it is working until the answer is back
+async function suggestPlans(button, detailsById, onAuthLost, onChange) {
+    const card = button.closest("[data-itinerary]");
+    const details = detailsById.get(Number(card.dataset.itinerary));
+    const errorMessage = card.querySelector("[data-impact-error]");
+    const status = card.querySelector("[data-suggest-status]");
+    const originalLabel = button.textContent;
 
-    // a section that is now empty is not drawn at all, so it simply stays gone
-    const redrawnCard = document.querySelector(`[data-itinerary="${details.itinerary.id}"]`);
-    for (const name of openSections) {
-        const section = redrawnCard.querySelector(`details[data-section="${name}"]`);
-        if (section) section.open = true;
+    button.disabled = true;
+    button.textContent = "Working it out…";
+    status.textContent = "This can take a few seconds for each activity.";
+    errorMessage.textContent = "";
+
+    let generated;
+    try {
+        generated = (await api.generateRecommendations(details.itinerary.id)) ?? [];
+    } catch (error) {
+        button.disabled = false;
+        button.textContent = originalLabel;
+        status.textContent = "";
+        if (error.status === 401) return onAuthLost();
+        errorMessage.textContent = error.message;
+        return;
     }
 
-    // the button that was clicked is gone, so keep keyboard users in the section they were working in,
-    // or the news section if that one has just emptied
-    const clickedSummary = redrawnCard.querySelector(`details[data-section="${clickedSection}"] > summary`);
-    const fallbackSummary = redrawnCard.querySelector("summary");
-    (clickedSummary ?? fallbackSummary)?.focus();
+    // generate only sends the current ones, so keep stored ones for rejected impacts in case they are restored
+    const byId = new Map(details.recommendations.map(recommendation => [recommendation.id, recommendation]));
+    for (const recommendation of generated) byId.set(recommendation.id, recommendation);
+    details.recommendations = [...byId.values()];
+
+    redrawCard(card, details, button);
+    onChange();
 }
 
 export async function showItineraries(root, user, onAuthLost) {
@@ -288,11 +512,18 @@ export async function showItineraries(root, user, onAuthLost) {
             <a class="btn primary" href="#/itineraries/new">+ New itinerary</a>
         </div>
         ${flashMessage ? `<p class="ok" role="status">${escapeHtml(flashMessage)}</p>` : ""}
+        <div id="trip-summary" aria-live="polite"></div>
         <div id="itinerary-list" class="msg">Loading…</div>
     `;
 
     const itineraryListContainer = root.querySelector("#itinerary-list");
+    const summaryContainer = root.querySelector("#trip-summary");
     const detailsById = new Map();   // itinerary id -> what its card was drawn from, so one card can be redrawn
+
+    // redrawn after a card changes, so rejecting news or getting suggestions updates the counts too
+    const drawSummary = () => {
+        summaryContainer.innerHTML = createTripSummary([...detailsById.values()]);
+    };
 
     try {
         // the backend sends an empty body instead of [] when the user has no itineraries
@@ -310,15 +541,19 @@ export async function showItineraries(root, user, onAuthLost) {
         itineraryListContainer.innerHTML = itinerariesWithDetails.length
             ? section("Upcoming", upcoming.map(createItineraryCard)) + section("Past", past.map(createItineraryCard))
             : `<div class="msg">You have no itineraries yet. <a href="#/itineraries/new">Create your first one</a></div>`;
+        drawSummary();
     } catch (error) {
         return showError(itineraryListContainer, error, onAuthLost);
     }
 
     // Event delegation: an assistant button opens the side panel for that itinerary,
-    // and a "Not relevant" or "Restore" button changes one impact
+    // a "Not relevant" or "Restore" button changes one impact, and "Suggest what to do" asks the AI
     itineraryListContainer.addEventListener("click", (event) => {
         const impactButton = event.target.closest("[data-impact]");
-        if (impactButton) return toggleRejected(impactButton, detailsById, onAuthLost);
+        if (impactButton) return toggleRejected(impactButton, detailsById, onAuthLost, drawSummary);
+
+        const suggestButton = event.target.closest("[data-suggest]");
+        if (suggestButton) return suggestPlans(suggestButton, detailsById, onAuthLost, drawSummary);
 
         const chatButton = event.target.closest("[data-chat]");
         if (!chatButton) return;
@@ -328,5 +563,15 @@ export async function showItineraries(root, user, onAuthLost) {
             name: chatButton.dataset.chatName,   // the browser decodes the escaped attribute back to plain text
         };
         openChat(itinerary, onAuthLost);
+    });
+
+    // a trip name in the summary scrolls to its card, and moves focus there for keyboard users
+    summaryContainer.addEventListener("click", event => {
+        const jumpButton = event.target.closest("[data-jump]");
+        if (!jumpButton) return;
+
+        const card = itineraryListContainer.querySelector(`[data-itinerary="${jumpButton.dataset.jump}"]`);
+        card?.scrollIntoView({ behavior: "smooth", block: "start" });
+        card?.focus({ preventScroll: true });
     });
 }

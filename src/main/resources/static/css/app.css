@@ -8,8 +8,10 @@
     --accent: #0088ff;
     --bad: #d7312f;
     --bad-bg: #fbeceb;
-    --ok: #3f7d6a;
+    --ok: #03c38a;
     --ok-bg: #e9f3ec;
+    --warn: #8a5a00;
+    --warn-bg: #fdf3dc;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -24,6 +26,8 @@
         --bad-bg: #2e1a19;
         --ok: #7fc58f;
         --ok-bg: #183024;
+        --warn: #f2c46d;
+        --warn-bg: #33270f;
     }
 }
 
@@ -1020,4 +1024,220 @@ table.users .tag {
 .tag.admin {
     background: var(--accent);
     color: #fff;
+}
+
+/* Previous / Next under a table that comes one page at a time */
+.pager {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.pager button {
+    margin-top: 0;
+}
+
+/* search box and dropdown side by side above a table, stacked on narrow screens */
+.filters {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+}
+
+.filters input,
+.filters select,
+.filter select {
+    width: auto;
+    min-width: 200px;
+}
+
+/* the audit table's details wrap onto more lines, but never get squeezed narrower than a few words */
+table.users td:last-child {
+    min-width: 160px;
+    overflow-wrap: break-word;
+}
+
+/* tags in a table or a details list line up with the text around them, and never break in two */
+table.users .tag {
+    white-space: nowrap;
+}
+
+dd .tag {
+    margin-left: 0;
+}
+
+/* a note under a details list, e.g. why an account cannot be disabled */
+dl + .hint {
+    margin-top: 14px;
+}
+
+.msg + .card {
+    margin-top: 12px;
+}
+
+/* ===== Recommendations: what to do about the news ===== */
+.tag.warn {
+    background: var(--warn-bg);
+    color: var(--warn);
+}
+
+.tag.ok {
+    background: var(--ok-bg);
+    color: var(--ok);
+}
+
+.advice-list {
+    list-style: none;
+    padding: 0;
+    margin: 8px 0;
+}
+
+/* one recommendation, with a neutral edge so it reads as advice rather than another warning */
+.advice {
+    margin-top: 8px;
+    padding: 10px 12px;
+    border-left: 4px solid var(--accent);
+    background: var(--panel);
+    border-radius: 4px;
+}
+
+.advice p {
+    margin: 4px 0 0;
+}
+
+.advice-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 0;
+}
+
+.advice-head .tag {
+    white-space: nowrap;
+}
+
+.suggested-place {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 6px;
+}
+
+[data-suggest-status] {
+    margin-left: 8px;
+}
+
+/* ===== News page ===== */
+.view-switch {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 14px 0 4px;
+}
+
+/* the view being shown looks selected, like a filled button */
+.view-switch button[aria-pressed="true"] {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+.news-list {
+    list-style: none;
+    padding: 0;
+    margin: 12px 0 0;
+}
+
+.news-item {
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.news-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 0;
+}
+
+.news-head .tag {
+    white-space: nowrap;
+}
+
+/* long gdelt descriptions are cut to three lines so the list stays easy to scan */
+.news-description {
+    margin: 6px 0 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* ===== Summary at the top of the itineraries page =====
+   a normal card with a coloured outline and heading, like the delete account card */
+.card.trip-summary {
+    margin-top: 12px;
+}
+
+.trip-summary p {
+    margin: 0;
+}
+
+.card.trip-summary.attention {
+    border-color: var(--bad);
+}
+
+.card.trip-summary.all-clear {
+    border-color: var(--ok);
+}
+
+.trip-summary h2 {
+    margin: 0 0 4px;
+}
+
+.trip-summary.attention h2 {
+    color: var(--bad);
+}
+
+.trip-summary.all-clear h2 {
+    color: var(--ok);
+}
+
+.trip-summary ul {
+    list-style: none;
+    padding: 0;
+    margin: 8px 0 0;
+}
+
+.trip-summary li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 10px;
+    margin: 4px 0;
+}
+
+/* a button that looks like a link, for actions that stay on the page */
+button.link-button {
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    color: var(--accent);
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+/* the card a summary link jumped to. only keyboard focus shows the ring */
+[data-itinerary]:focus {
+    outline: none;
+}
+
+[data-itinerary]:focus-visible {
+    outline: 3px solid var(--accent);
 }
