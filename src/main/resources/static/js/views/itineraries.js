@@ -207,15 +207,25 @@ const createSuggestButton = (missingCount, hasSome) => {
     `;
 };
 
+// the recommendations for impacts that still count, and how many of those impacts have none yet.
+// shared by the card and the summary at the top, so the two always agree
+const planFor = (impactedOnly, recommendations) => {
+    const currentImpactIds = new Set(impactedOnly.map(impact => impact.id));
+    const current = recommendations.filter(recommendation => currentImpactIds.has(recommendation.impactId));
+    const recommendedImpactIds = new Set(current.map(recommendation => recommendation.impactId));
+    const missingCount = impactedOnly.filter(impact => !recommendedImpactIds.has(impact.id)).length;
+    return { current, missingCount };
+};
+
+// news checked and found not to matter is left out. what the user rejected no longer counts
+const stillImpacted = impacts => impacts.filter(impact => impact.impacted && !impact.rejected);
+
 // Component: what to do about the news. only impacts that still count get a recommendation shown,
 // so rejecting an impact hides its advice and restoring it brings the advice back
 const createPlanSection = (impactedOnly, recommendations, isPast) => {
     if (!impactedOnly.length) return "";
 
-    const currentImpactIds = new Set(impactedOnly.map(impact => impact.id));
-    const current = recommendations.filter(recommendation => currentImpactIds.has(recommendation.impactId));
-    const recommendedImpactIds = new Set(current.map(recommendation => recommendation.impactId));
-    const missingCount = impactedOnly.filter(impact => !recommendedImpactIds.has(impact.id)).length;
+    const { current, missingCount } = planFor(impactedOnly, recommendations);
 
     // a trip that is over has nothing left to change
     const canSuggest = missingCount > 0 && !isPast;
@@ -250,13 +260,99 @@ const isTripOver = itinerary => {
     return endOfLastDay < Date.now();
 };
 
+// "2 activities", "1 activity". the counts in the summary read as sentences
+const countOf = (count, singular, plural = `${singular}s`) => `${count} ${count === 1 ? singular : plural}`;
+
+// what one upcoming trip needs, worked out from the same data its card is drawn from
+const tripAttention = details => {
+    const impactedOnly = stillImpacted(details.impacts);
+    const { current, missingCount } = planFor(impactedOnly, details.recommendations);
+    const affectedActivities = new Set(impactedOnly.map(impact => impact.activityId).filter(id => id != null));
+    const wholeTripAffected = impactedOnly.some(impact => impact.activityId == null);
+
+    return {
+        details,
+        isAffected: impactedOnly.length > 0,
+        activityCount: affectedActivities.size,
+        wholeTripAffected,
+        suggestionCount: current.length,
+        waitingCount: missingCount,
+    };
+};
+
+// "2 activities and the whole trip affected · 1 waiting for a suggestion"
+const describeTrip = trip => {
+    const hit = [];
+    if (trip.activityCount) hit.push(countOf(trip.activityCount, "activity", "activities"));
+    if (trip.wholeTripAffected) hit.push("the whole trip");
+
+    const parts = [`${hit.join(" and ")} affected`];
+    if (trip.suggestionCount) parts.push(`${countOf(trip.suggestionCount, "suggestion")} ready`);
+    if (trip.waitingCount) parts.push(`${trip.waitingCount} waiting for a suggestion`);
+    return parts.join(" · ");
+};
+
+// Component: what needs attention across the upcoming trips, so it is clear before scrolling.
+// past trips are left out, since nothing about them can change any more
+const createTripSummary = detailsList => {
+    const upcoming = detailsList.filter(details => !details.failed && !isTripOver(details.itinerary));
+    if (!upcoming.length) return "";
+
+    const trips = upcoming.map(tripAttention);
+    const affected = trips.filter(trip => trip.isAffected);
+
+    if (!affected.length) {
+        const message = upcoming.length === 1
+            ? "Your upcoming trip is not affected by the news right now."
+            : `None of your ${upcoming.length} upcoming trips are affected by the news right now.`;
+        return `
+            <section class="card trip-summary" aria-labelledby="trip-summary-title">
+                <h2 id="trip-summary-title">
+                    At a glance
+                    <span class="tag ok">All clear</span>
+                </h2>
+                <p class="meta">${message}</p>
+            </section>
+        `;
+    }
+
+    const suggestionTotal = affected.reduce((total, trip) => total + trip.suggestionCount, 0);
+    const waitingTotal = affected.reduce((total, trip) => total + trip.waitingCount, 0);
+    // how many trips are hit goes in the red tag, the rest of the totals sit quietly under the heading
+    const affectedLabel = `${affected.length} of ${countOf(upcoming.length, "upcoming trip")} affected`;
+    const totals = [`${countOf(suggestionTotal, "suggestion")} ready`];
+    if (waitingTotal) totals.push(`${waitingTotal} waiting for a suggestion`);
+
+    // soonest trip first, the same order as the cards below
+    const tripLines = affected.map(trip => `
+        <li>
+            <button class="link-button" type="button" data-jump="${Number(trip.details.itinerary.id)}">
+                ${escapeHtml(trip.details.itinerary.name)}
+            </button>
+            <span class="meta">${escapeHtml(describeTrip(trip))}</span>
+        </li>
+    `).join("");
+
+    return `
+        <section class="card trip-summary" aria-labelledby="trip-summary-title">
+            <h2 id="trip-summary-title">
+                At a glance
+                <span class="tag bad">${affectedLabel}</span>
+            </h2>
+            <p class="meta">${totals.join(" · ")}</p>
+            <ul>
+                ${tripLines}
+            </ul>
+        </section>
+    `;
+};
+
 // Component: Renders a single itinerary card
 const createItineraryCard = ({ itinerary, activities, impacts, recommendations, failed }) => {
     const itineraryId = Number(itinerary.id);
     const isPast = isTripOver(itinerary);
-    // news checked and found not to matter is left out. what the user rejected no longer counts
-    // as impacted, but is kept in its own section so it can be restored
-    const impactedOnly = impacts.filter(impact => impact.impacted && !impact.rejected);
+    // what the user rejected no longer counts as impacted, but is kept in its own section so it can be restored
+    const impactedOnly = stillImpacted(impacts);
     const dismissed = impacts.filter(impact => impact.impacted && impact.rejected);
     const impactedActivityIds = new Set(impactedOnly.map(impact => impact.activityId).filter(id => id != null));
     const events = groupByEvent(impactedOnly);
@@ -276,7 +372,7 @@ const createItineraryCard = ({ itinerary, activities, impacts, recommendations, 
             <p class="err" data-impact-error role="alert"></p>`;
 
     return `
-        <article class="card ${isPast ? "past" : ""}" data-itinerary="${itineraryId}">
+        <article class="card ${isPast ? "past" : ""}" data-itinerary="${itineraryId}" tabindex="-1">
             <div class="row">
                 <h2>
                     ${escapeHtml(itinerary.name)}
@@ -349,7 +445,7 @@ function redrawCard(card, details, clickedButton) {
 }
 
 // Rejects or restores one impact. the saved impact from the backend replaces the old one
-async function toggleRejected(button, detailsById, onAuthLost) {
+async function toggleRejected(button, detailsById, onAuthLost, onChange) {
     const card = button.closest("[data-itinerary]");
     const details = detailsById.get(Number(card.dataset.itinerary));
     const errorMessage = card.querySelector("[data-impact-error]");
@@ -370,11 +466,12 @@ async function toggleRejected(button, detailsById, onAuthLost) {
     }
 
     redrawCard(card, details, button);
+    onChange();
 }
 
 // Asks the AI for the impacts that have no recommendation yet. this takes a few seconds per
 // activity, so the button says it is working until the answer is back
-async function suggestPlans(button, detailsById, onAuthLost) {
+async function suggestPlans(button, detailsById, onAuthLost, onChange) {
     const card = button.closest("[data-itinerary]");
     const details = detailsById.get(Number(card.dataset.itinerary));
     const errorMessage = card.querySelector("[data-impact-error]");
@@ -404,6 +501,7 @@ async function suggestPlans(button, detailsById, onAuthLost) {
     details.recommendations = [...byId.values()];
 
     redrawCard(card, details, button);
+    onChange();
 }
 
 export async function showItineraries(root, user, onAuthLost) {
@@ -414,11 +512,18 @@ export async function showItineraries(root, user, onAuthLost) {
             <a class="btn primary" href="#/itineraries/new">+ New itinerary</a>
         </div>
         ${flashMessage ? `<p class="ok" role="status">${escapeHtml(flashMessage)}</p>` : ""}
+        <div id="trip-summary" aria-live="polite"></div>
         <div id="itinerary-list" class="msg">Loading…</div>
     `;
 
     const itineraryListContainer = root.querySelector("#itinerary-list");
+    const summaryContainer = root.querySelector("#trip-summary");
     const detailsById = new Map();   // itinerary id -> what its card was drawn from, so one card can be redrawn
+
+    // redrawn after a card changes, so rejecting news or getting suggestions updates the counts too
+    const drawSummary = () => {
+        summaryContainer.innerHTML = createTripSummary([...detailsById.values()]);
+    };
 
     try {
         // the backend sends an empty body instead of [] when the user has no itineraries
@@ -436,6 +541,7 @@ export async function showItineraries(root, user, onAuthLost) {
         itineraryListContainer.innerHTML = itinerariesWithDetails.length
             ? section("Upcoming", upcoming.map(createItineraryCard)) + section("Past", past.map(createItineraryCard))
             : `<div class="msg">You have no itineraries yet. <a href="#/itineraries/new">Create your first one</a></div>`;
+        drawSummary();
     } catch (error) {
         return showError(itineraryListContainer, error, onAuthLost);
     }
@@ -444,10 +550,10 @@ export async function showItineraries(root, user, onAuthLost) {
     // a "Not relevant" or "Restore" button changes one impact, and "Suggest what to do" asks the AI
     itineraryListContainer.addEventListener("click", (event) => {
         const impactButton = event.target.closest("[data-impact]");
-        if (impactButton) return toggleRejected(impactButton, detailsById, onAuthLost);
+        if (impactButton) return toggleRejected(impactButton, detailsById, onAuthLost, drawSummary);
 
         const suggestButton = event.target.closest("[data-suggest]");
-        if (suggestButton) return suggestPlans(suggestButton, detailsById, onAuthLost);
+        if (suggestButton) return suggestPlans(suggestButton, detailsById, onAuthLost, drawSummary);
 
         const chatButton = event.target.closest("[data-chat]");
         if (!chatButton) return;
@@ -457,5 +563,15 @@ export async function showItineraries(root, user, onAuthLost) {
             name: chatButton.dataset.chatName,   // the browser decodes the escaped attribute back to plain text
         };
         openChat(itinerary, onAuthLost);
+    });
+
+    // a trip name in the summary scrolls to its card, and moves focus there for keyboard users
+    summaryContainer.addEventListener("click", event => {
+        const jumpButton = event.target.closest("[data-jump]");
+        if (!jumpButton) return;
+
+        const card = itineraryListContainer.querySelector(`[data-itinerary="${jumpButton.dataset.jump}"]`);
+        card?.scrollIntoView({ behavior: "smooth", block: "start" });
+        card?.focus({ preventScroll: true });
     });
 }

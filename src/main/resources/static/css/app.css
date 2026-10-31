@@ -8,7 +8,7 @@
     --accent: #0088ff;
     --bad: #d7312f;
     --bad-bg: #fbeceb;
-    --ok: #3f7d6a;
+    --ok: #03c38a;
     --ok-bg: #e9f3ec;
     --warn: #8a5a00;
     --warn-bg: #fdf3dc;
@@ -1175,4 +1175,69 @@ dl + .hint {
     -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     overflow: hidden;
+}
+
+/* ===== Summary at the top of the itineraries page =====
+   a normal card with a coloured outline and heading, like the delete account card */
+.card.trip-summary {
+    margin-top: 12px;
+}
+
+.trip-summary p {
+    margin: 0;
+}
+
+.card.trip-summary.attention {
+    border-color: var(--bad);
+}
+
+.card.trip-summary.all-clear {
+    border-color: var(--ok);
+}
+
+.trip-summary h2 {
+    margin: 0 0 4px;
+}
+
+.trip-summary.attention h2 {
+    color: var(--bad);
+}
+
+.trip-summary.all-clear h2 {
+    color: var(--ok);
+}
+
+.trip-summary ul {
+    list-style: none;
+    padding: 0;
+    margin: 8px 0 0;
+}
+
+.trip-summary li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 10px;
+    margin: 4px 0;
+}
+
+/* a button that looks like a link, for actions that stay on the page */
+button.link-button {
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    color: var(--accent);
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+/* the card a summary link jumped to. only keyboard focus shows the ring */
+[data-itinerary]:focus {
+    outline: none;
+}
+
+[data-itinerary]:focus-visible {
+    outline: 3px solid var(--accent);
 }
