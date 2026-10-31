@@ -14,6 +14,7 @@ public record ActivityResponse(
         String address,
         LocalDateTime dateStart,
         LocalDateTime dateEnd,
+        ActivityCategory category,
         Long itineraryId,
         String itineraryName) {
 
@@ -24,6 +25,7 @@ public record ActivityResponse(
                 activity.getAddress(),
                 activity.getDateStart(),
                 activity.getDateEnd(),
+                activity.getCategory(),
                 activity.getItinerary() == null ? null : activity.getItinerary().getId(),
                 activity.getItinerary() == null ? null : activity.getItinerary().getName());
     }
