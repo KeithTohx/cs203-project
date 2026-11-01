@@ -118,6 +118,7 @@ CREATE TABLE user_preference (
     travel_group              VARCHAR(20)  NOT NULL DEFAULT 'SOLO',
     travelling_with_children  BOOLEAN      NOT NULL DEFAULT FALSE,
     travelling_with_elderly   BOOLEAN      NOT NULL DEFAULT FALSE,
+    preferred_categories      VARCHAR(255) NOT NULL DEFAULT '',
     updated_at                TIMESTAMP    NOT NULL
 );
 -- Which countries a news article is about. Corresponds to News.countries.
