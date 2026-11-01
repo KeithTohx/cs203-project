@@ -1,5 +1,6 @@
 package csd.tripsense.recommendation;
 
+import csd.tripsense.activity.ActivityCategory;
 import csd.tripsense.impact.Impact;
 
 /**
@@ -22,6 +23,7 @@ public record RecommendationResponse(
         String newsTitle,
         Long optionId,
         String optionName,
+        ActivityCategory optionCategory,
         String optionArea,
         String optionAddress) {
 
@@ -44,6 +46,7 @@ public record RecommendationResponse(
                 impact == null || impact.getNews() == null ? null : impact.getNews().getTitle(),
                 option == null ? null : option.getId(),
                 option == null ? null : option.getName(),
+                option == null ? null : option.getCategory(),
                 option == null ? null : option.getArea(),
                 option == null ? null : option.getAddress());
     }
