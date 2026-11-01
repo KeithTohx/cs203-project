@@ -51,7 +51,13 @@ public class AlertStreamService {
     public SseEmitter subscribe(Long userId, HttpSession session) {
         Connection connection = new Connection(userId, session, newEmitter());
         if (!active(connection)) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Not logged in");
-        connections.computeIfAbsent(userId, ignored -> ConcurrentHashMap.newKeySet()).add(connection);
+        // Insert under the same per-user map lock used by removal. Otherwise the last
+        // old connection can remove this set between lookup and insertion on reconnect.
+        connections.compute(userId, (id, current) -> {
+            Set<Connection> subscribers = current == null ? ConcurrentHashMap.newKeySet() : current;
+            subscribers.add(connection);
+            return subscribers;
+        });
         connection.emitter.onCompletion(() -> remove(connection));
         connection.emitter.onTimeout(() -> close(connection));
         connection.emitter.onError(error -> remove(connection));
