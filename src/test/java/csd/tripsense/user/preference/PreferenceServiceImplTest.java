@@ -28,6 +28,18 @@ import csd.tripsense.user.User;
 import csd.tripsense.user.UserNotFoundException;
 import csd.tripsense.user.UserRepository;
 
+/**
+ * Unit tests for PreferenceServiceImpl. Both repositories are mocked, so there is no database
+ * and no Spring context.
+ *
+ * Two groups of tests:
+ *   getPreferences    - return the saved row, or create one with defaults the first time
+ *   updatePreferences - partial updates (null means "leave it alone") and the solo rule
+ *
+ * Because nothing touches a real database, these cannot check the unique constraint on user_id,
+ * the column defaults in schema.sql, or a real transaction rollback. They check the service's
+ * own logic only.
+ */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("PreferenceService Unit Tests")
 class PreferenceServiceImplTest {
@@ -40,6 +52,7 @@ class PreferenceServiceImplTest {
     @Mock
     private UserRepository userRepository;
 
+    /** mockito builds the service with the two mocks above through its constructor */
     @InjectMocks 
     private PreferenceServiceImpl preferenceService;
 
@@ -51,26 +64,35 @@ class PreferenceServiceImplTest {
         ReflectionTestUtils.setField(testUser, "id", USER_ID);   // User has no setter for its id
     }
 
-    // An existing row with the entity defaults (MEDIUM, SOMEWHAT_FLEXIBLE, BRIEF, SOLO, false, false).
+    // ----- helpers -----
+
+    /** An existing row with the entity defaults (MEDIUM, SOMEWHAT_FLEXIBLE, BRIEF, SOLO, false, false). */
     private UserPreference defaultPrefs() {
         return new UserPreference(testUser);
     }
 
+    /**
+     * Builds an update request. Pass null for a field the client "did not send".
+     * The argument order must match the components of UpdatePreferenceRequest.
+     */
     private UpdatePreferenceRequest request(RiskTolerance risk, FlexibilityLevel flex,
                                             ExplanationDetail detail, TravelGroup group,
                                             Boolean children, Boolean elderly) {
         return new UpdatePreferenceRequest(risk, flex, detail, group, children, elderly);
     }
 
+    /** Every field null, meaning "change nothing". */
     private UpdatePreferenceRequest emptyRequest() {
         return request(null, null, null, null, null, null);
     }
  
+    /** Makes save() hand back whatever it was given, like a real repository would. */
     private void stubSaveReturnsArgument() {
         when(preferencesRepository.save(any(UserPreference.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
     }
 
+    /** An existing row for a family with children, used to test changes away from that state. */
     private UserPreference familyPrefsWithChildren() {
         UserPreference p = new UserPreference(testUser);
         p.setTravelGroup(TravelGroup.FAMILY);
@@ -80,6 +102,9 @@ class PreferenceServiceImplTest {
 
     // ===== GET PREFERENCES TESTS =====
 
+    /**
+     * The normal case once a user has preferences: just return the row. Nothing should be created, and the user table should not even be queried.
+     */
     @Test 
     @DisplayName("Should return the existing preferences without creating a new entry")
     void getPreferences_ShouldReturnExistingPreferences() {
@@ -94,6 +119,10 @@ class PreferenceServiceImplTest {
         verify(preferencesRepository, never()).save(any());
     }
 
+    /**
+     * Existing accounts have no row yet, so the first read creates one. 
+     * The captor lets us inspect the exact object that was saved and check every default value.
+     */
     @Test
     @DisplayName("Should create a row with default values when the user has none")
     void getPreferences_ShouldCreateDefaults_WhenUserHasNoExistingPreferences() {
@@ -118,6 +147,7 @@ class PreferenceServiceImplTest {
         assertFalse(saved.isTravellingWithElderly());
     }
 
+    /** No row and no user: there is nobody to attach preferences to, so fail and write nothing. */
     @Test
     @DisplayName("Should throw UserNotFoundException when the user does not exist")
     void getPreferences_ShouldThrowUserNotFoundException_WhenUserDoesNotExist() {
@@ -132,6 +162,10 @@ class PreferenceServiceImplTest {
 
     // ===== UPDATE PREFERENCES TESTS =====
 
+    /**
+     * Every field is sent, so every field changes. 
+     * The final save must receive the same object that was modified.
+     */
     @Test
     @DisplayName("Should update every field that is sent")
     void updatePreferences_ShouldUpdate_WhenAllFieldsAreSent() {
@@ -151,6 +185,10 @@ class PreferenceServiceImplTest {
         verify(preferencesRepository).save(result);
     }
 
+    /**
+     * PATCH semantics: a field that is not sent (null) keeps its saved value. 
+     * The row here has non-default values, so a bug that reset them to defaults would make this test fail.
+     */
     @Test
     @DisplayName("Should leave everything unchanged when all fields are null")
     void updatePreferences_ShouldLeaveValuesUnchanged_WhenFieldsAreNull() {
@@ -171,6 +209,10 @@ class PreferenceServiceImplTest {
         assertFalse(result.isTravellingWithElderly());
     }
 
+    /**
+     * The common real-world call: a settings screen changes one thing. 
+     * Only that field changes, and the one that was already non-default (risk is LOW) stays as it was.
+     */
     @Test
     @DisplayName("Should only update the fields that was sent")
     void updatePreferences_ShouldPartialUpdate_WhenOnlySomeFieldsAreSent() {
@@ -188,6 +230,10 @@ class PreferenceServiceImplTest {
         assertEquals(TravelGroup.SOLO, result.getTravelGroup());
     }
 
+    /**
+     * Updating also creates the row if it is missing, so a first-ever PATCH works without a GET first. 
+     * Both the insert (saveAndFlush) and the final save are expected.
+     */
     @Test
     @DisplayName("Should create the preference row first when the user has none, then apply the update")
     void updatePreferences_ShouldCreateRowThenUpdatePreferences() {
@@ -205,6 +251,7 @@ class PreferenceServiceImplTest {
         verify(preferencesRepository).save(result);
     }
 
+    /** No row and no user: fail without saving anything. */
     @Test
     @DisplayName("Should throw UserNotFoundException and updates nothing when the user does not exist")
     void updatePreferences_ShouldThrowUserNotFoundException_WhenUserDoesNotExist() {
@@ -218,6 +265,14 @@ class PreferenceServiceImplTest {
     }
 
     // --- validation for travelGroup (SOLO/FAMILY) and travellingWithChildren/travellingWithElderly ---
+    
+    /** 
+     * The rule: a solo traveller cannot also be travelling with children or elderly people.
+     * It is checked on the FINAL state (saved values plus the request), not on the request alone, so a partial update cannot sneak past it. 
+     * Every rejected case also checks that save() was never reached, so nothing invalid is stored.
+     */
+
+    /** Solo is the default, so sending only children = true would leave solo + children. */
     @Test
     @DisplayName("Should reject updating when travelGroup=SOLO and travellingWithChildren=true ")
     void updatePreferences_ShouldReject_WhenTravelGroupIsSoloAndChildrenIsTrue() {
@@ -231,6 +286,7 @@ class PreferenceServiceImplTest {
         verify(preferencesRepository, never()).save(any());
     }
 
+    /** Same rule for the elderly flag. */
     @Test
     @DisplayName("Should reject updating when travelGroup=SOLO and travellingWithElderly=true")
     void updatePreferences_ShouldReject_WhenTravelGroupIsSoloAndElderlyIsTrue() {
@@ -244,6 +300,7 @@ class PreferenceServiceImplTest {
         verify(preferencesRepository, never()).save(any());
     }
 
+    /** The contradiction can also be stated outright in a single request. */
     @Test
     @DisplayName("Should reject explicit updating travelGroup=SOLO when travellingWithChildren=true")
     void updatePreferences_ShouldRejectExplicitSolo_WhenChildrenIsTrue() {
@@ -256,6 +313,11 @@ class PreferenceServiceImplTest {
         assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
     }
 
+    /**
+     * The hard case that checking only the request would miss: 
+     * the request says nothing about children, but the saved row still has children = true, 
+     * so switching to SOLO would leavea contradiction behind.
+     */
     @Test
     @DisplayName("Should reject updating travelGroup=SOLO when travellingWithChildren=true on the saved row")
     void updatePreferences_ShouldRejectUpdateToSolo_WhenChildrenIsTrue() {
@@ -269,6 +331,10 @@ class PreferenceServiceImplTest {
         verify(preferencesRepository, never()).save(any());
     }
 
+    /**
+     * The way out of the case above: clear the flags in the same request and it is accepted.
+     * The false values are real values, only null means "not sent".
+     */
     @Test
     @DisplayName("Should allow updating travelGroup=SOLO when travellingWithChildren=false in the same request")
     void updatePreferences_ShouldAllowUpdateToSolo_WhenChildrenIsFalse() {
@@ -284,6 +350,10 @@ class PreferenceServiceImplTest {
         verify(preferencesRepository).save(result);
     }
 
+    /**
+     * The rule only blocks solo. 
+     * A family can have both children and elderly, and sending the group and the flags together is fine.
+     */
     @Test
     @DisplayName("Should allow travellingWithChildren and travellingWithElderly when travelGroup=FAMILY")
     void updatePreferences_ShouldAllowChildrenAndElderly_WhenTravelGroupIsFamily() {
