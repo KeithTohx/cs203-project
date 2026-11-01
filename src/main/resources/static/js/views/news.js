@@ -1,12 +1,12 @@
-// The news the system has picked up, newest first, with older stories loaded on demand.
-// Travellers can also switch to only the news that affects one of their trips.
+// stored news, newest first, with older stories on demand and a filter for news affecting your trips
 import { api } from "../api.js";
-import { escapeHtml, formatDateTime, hostnameOf, safeUrl, showError } from "../util.js";
+import { emptyState, escapeHtml, hostnameOf, safeUrl, showError, timeTag } from "../util.js";
+import { icon } from "../icons.js";
 
 // small enough to read through, and the backend caps a page at 100 anyway
 const PAGE_SIZE = 10;
 
-// Component: one story. the title opens the original article, and a red tag names any trip it affects
+// one story, linking to the original article and tagging any trip it affects
 const createNewsItem = (news, affectedTrips = []) => {
     const link = safeUrl(news.url);
     const title = escapeHtml(news.title || "Untitled news");
@@ -15,8 +15,7 @@ const createNewsItem = (news, affectedTrips = []) => {
         : `<span>${title}</span>`;
 
     const where = news.source || hostnameOf(news.url);
-    const published = formatDateTime(news.publishedAt);
-    const meta = [where, published].filter(Boolean).map(escapeHtml).join(" · ");
+    const meta = [escapeHtml(where), timeTag(news.publishedAt)].filter(Boolean).join(" · ");
 
     const tripTags = affectedTrips.map(tripName => `
         <span class="tag bad">Affects ${escapeHtml(tripName)}</span>
@@ -34,7 +33,7 @@ const createNewsItem = (news, affectedTrips = []) => {
     `;
 };
 
-// Component: the two views to switch between. only travellers have trips, so admins only get the full list
+// all news or only news affecting my trips, for travellers only
 const createViewSwitch = affectingCount => `
     <div class="view-switch" role="group" aria-label="Which news to show">
         <button class="ghost small" type="button" data-view="all" aria-pressed="true">All news</button>
@@ -44,8 +43,7 @@ const createViewSwitch = affectingCount => `
     </div>
 `;
 
-// news id -> the names of the user's trips it affects. a rejected impact no longer counts,
-// same as on the itineraries page
+// news id -> names of the user's trips it affects, rejected impacts left out
 const findAffectedTrips = async user => {
     const itineraries = (await api.itineraries(user.id)) ?? [];
     const impactsPerTrip = await Promise.all(itineraries.map(async itinerary => ({
@@ -106,7 +104,11 @@ export async function showNews(root, user, onAuthLost) {
 
     const drawAll = () => {
         list.innerHTML = loadedNews.map(news => createNewsItem(news, tripsFor(news))).join("");
-        status.innerHTML = loadedNews.length ? "" : `<div class="msg">No news has been picked up yet.</div>`;
+        status.innerHTML = loadedNews.length ? "" : emptyState({
+            iconHtml: icon("news"),
+            title: "No news yet",
+            text: "Stories appear here as the system picks them up.",
+        });
     };
 
     // built from the impacts, so it is complete even for stories on pages that are not loaded yet
@@ -114,11 +116,15 @@ export async function showNews(root, user, onAuthLost) {
         const newestFirst = [...affectingNews]
             .sort((first, second) => new Date(second.publishedAt ?? 0) - new Date(first.publishedAt ?? 0));
         list.innerHTML = newestFirst.map(news => createNewsItem(news, tripsFor(news))).join("");
-        status.innerHTML = newestFirst.length ? "" : `<div class="msg">None of the news so far affects your trips.</div>`;
+        status.innerHTML = newestFirst.length ? "" : emptyState({
+            iconHtml: icon("check"),
+            title: "Nothing affects your trips",
+            text: "None of the news so far affects your upcoming trips.",
+        });
         loadMoreButton.hidden = true;
     };
 
-    // a full page means there may be more behind it. a short page is the end of the list
+    // a short page means it was the last one
     const loadNextPage = async () => {
         loadMoreButton.disabled = true;
         loadMoreButton.textContent = "Loading…";
@@ -132,8 +138,7 @@ export async function showNews(root, user, onAuthLost) {
             return showError(status, error, onAuthLost);
         }
 
-        // pages are counted from the newest story, so news that arrives between clicks pushes
-        // everything down and the next page can repeat a story already shown. skip those
+        // news arriving between clicks shifts the pages, so skip stories already shown
         const shownIds = new Set(loadedNews.map(news => news.id));
         const unseen = page.filter(news => !shownIds.has(news.id));
         loadedNews = [...loadedNews, ...unseen];
@@ -159,7 +164,7 @@ export async function showNews(root, user, onAuthLost) {
         loadMoreButton.hidden = loadedNews.length < nextPage * PAGE_SIZE;
     };
 
-    // the trips are extra. if they fail to load, the news still shows, just without the tags and the switch
+    // trips are extra, so the news still shows if they fail to load
     if (user.role === "USER") {
         try {
             ({ tripsByNews, affectingNews } = await findAffectedTrips(user));

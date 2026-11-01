@@ -79,7 +79,7 @@ const realApi = {
   chat:       (itineraryId, message) => request(`/api/itinerary/${itineraryId}/chat`, "POST", {message}),   // -> {role: "assistant", content}
   chatHistory:itineraryId => request(`/api/itinerary/${itineraryId}/chat/history`),   // -> [{role: "user" | "assistant", content}], oldest first
   resetChat:  itineraryId => request(`/api/itinerary/${itineraryId}/chat`, "DELETE"),
-  // admin only. lists come one page at a time -> {content, page, size, totalElements, totalPages}, page counts from 0
+  // admin only, one page at a time -> {content, page, size, totalElements, totalPages}
   adminUsers: ({search = "", page = 0, size = 20} = {}) => request(`/api/admin/users?${new URLSearchParams({search, page, size})}`),   // search matches part of the email or username
   adminUser:  id => request(`/api/admin/users/${id}`),                                 // -> {id, username, email, role, enabled}
   disableUser:id => request(`/api/admin/users/${id}/disable`, "POST"),                 // the account cannot log in and its sessions end, but its data stays

@@ -1,5 +1,4 @@
-// Admin only: everything every account did, newest first, filtered by email and action.
-// Filtering and paging happen on the backend, so only one page of entries is ever loaded.
+// admin only: every account's actions, newest first, filtered and paged on the backend
 import { api } from "../api.js";
 import { createActionFilter, createAuditTable } from "../audit.js";
 import { createPager, debounce, showError } from "../util.js";

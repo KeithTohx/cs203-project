@@ -1,6 +1,5 @@
-// What the admin pages show for the audit log. value must match the backend's AuditService constants,
-// label is what the admin reads. the filter lists them in this order
-import { escapeHtml, formatDateTime } from "./util.js";
+// audit actions as the admin pages show them, values must match the backend's AuditService
+import { escapeHtml, timeTag } from "./util.js";
 
 export const AUDIT_ACTIONS = [
     { value: "LOGIN", label: "Logged in" },
@@ -38,8 +37,7 @@ export const createActionFilter = id => {
     `;
 };
 
-// who did it. a failed login has no actor, only the email that was tried,
-// so that email links to the account it belongs to (the target), if there is one
+// a failed login has no actor, so the tried email links to the account it was aimed at
 const createActor = entry => {
     const accountId = entry.actorId ?? entry.targetId;
     if (!entry.actorEmail) return `<span class="meta">Unknown</span>`;
@@ -53,7 +51,7 @@ const createAuditRow = entry => {
 
     return `
         <tr>
-            <td class="nowrap">${escapeHtml(formatDateTime(entry.occurredAt))}</td>
+            <td class="nowrap">${timeTag(entry.occurredAt)}</td>
             <td>${createActor(entry)}</td>
             <td><span class="${tagClass}">${escapeHtml(actionLabel(entry.action))}</span></td>
             <td>${escapeHtml(entry.details ?? "")}</td>

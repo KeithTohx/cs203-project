@@ -1,11 +1,10 @@
-// Admin only: every user account, a page at a time, with a search box. Access is checked by the route table and the backend.
-// Searching and paging happen on the backend, so only one page of accounts is ever loaded.
+// admin only: every account, searched and paged on the backend
 import { api } from "../api.js";
-import { createPager, debounce, escapeHtml, showError, takeFlash } from "../util.js";
+import { createPager, debounce, escapeHtml, showError } from "../util.js";
 
 const PAGE_SIZES = [10, 20];
 
-// Component: one row of the users table. the name opens that user's page
+// one row, the name opens that user's page
 const createUserRow = account => `
     <tr>
         <td>${Number(account.id)}</td>
@@ -48,8 +47,7 @@ const createPageSizeSelect = () => {
     `;
 };
 
-// the backend only searches email and username, so a search that is a whole number
-// is also looked up as an id here. no account with that id just means no extra row
+// the backend only searches email and username, so a whole number is also tried as an id
 const findById = async search => {
     const isId = /^\d+$/.test(search);
     if (!isId) return null;
@@ -63,10 +61,8 @@ const findById = async search => {
 };
 
 export async function showAdminUsers(root, user, onAuthLost) {
-    const flashMessage = takeFlash();
     root.innerHTML = `
         <h1>Users</h1>
-        ${flashMessage ? `<p class="ok" role="status">${escapeHtml(flashMessage)}</p>` : ""}
         <div class="card">
             <div class="row">
                 <label for="user-search" class="sr-only">Search users</label>

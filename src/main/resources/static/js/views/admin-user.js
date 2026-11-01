@@ -1,10 +1,9 @@
-// Admin only: one user account. Shows its details and activity, and lets the admin disable, enable or delete it.
-// The backend refuses an admin disabling or deleting their own account, so those buttons are not shown for it.
+// admin only: one account's details and activity, with disable, enable and delete
 import { api } from "../api.js";
 import { createActionFilter, createAuditTable } from "../audit.js";
 import { confirmTwice, createPager, escapeHtml, flash, showError } from "../util.js";
 
-// Component: the account's details, with the button that disables or enables it
+// the account's details, with the disable or enable button
 const createAccountCard = (account, isSelf) => {
     const statusButton = account.enabled
         ? `<button class="ghost" type="button" data-toggle-status>Disable account</button>`
@@ -34,7 +33,7 @@ const createAccountCard = (account, isSelf) => {
     `;
 };
 
-// Component: deleting is for good, so it sits apart from the rest like on the account page
+// deleting is for good, so it sits apart like on the account page
 const createDangerZone = account => `
     <section class="card danger-zone">
         <div class="row">
@@ -54,7 +53,7 @@ export async function showAdminUser(root, user, onAuthLost, id) {
     const isSelf = userId === user.id;
     root.innerHTML = `<div class="msg">Loading…</div>`;
 
-    // both at once. a deleted account has no details any more (404), but its activity is still kept
+    // a deleted account 404s but its activity is kept
     const [accountResult, activityResult] = await Promise.allSettled([
         api.adminUser(userId),
         api.userActivity(userId),
@@ -62,7 +61,7 @@ export async function showAdminUser(root, user, onAuthLost, id) {
 
     if (activityResult.status === "rejected") return showError(root, activityResult.reason, onAuthLost);
 
-    // a missing account with recorded activity was deleted. one with no activity at all never existed
+    // missing with activity means deleted, missing without any never existed
     const isMissing = accountResult.status === "rejected" && accountResult.reason.status === 404;
     const isDeleted = isMissing && activityResult.value.totalElements > 0;
     if (accountResult.status === "rejected" && !isDeleted) return showError(root, accountResult.reason, onAuthLost);

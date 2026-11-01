@@ -1,7 +1,7 @@
 // Read-only summary. Each section links to its own edit page.
 import { api } from "../api.js";
 import { labelFor } from "../preference-options.js";
-import { escapeHtml, takeFlash } from "../util.js";
+import { escapeHtml } from "../util.js";
 
 // "With family, with children and elderly travellers", or just "On my own"
 const describeTravelGroup = preferences => {
@@ -51,14 +51,12 @@ const createPreferenceCard = () => `
 `;
 
 export function showAccount(root, user, onAuthLost) {
-        const flashMessage = takeFlash();
         const isAdmin = user.role === "ADMIN";
         const deleteDescription = isAdmin
             ? "Permanently removes your account."
             : "Permanently removes your account, itineraries and chat history.";
 
         root.innerHTML = `<h1>Your account</h1>
-    ${flashMessage ? `<p class="ok" role="status">${escapeHtml(flashMessage)}</p>` : ""}
     <section class="card">
         <div class="row">
             <h2>Details</h2>

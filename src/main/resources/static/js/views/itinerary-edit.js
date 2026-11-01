@@ -2,6 +2,7 @@
 // The backend's PUT replaces the whole record, so related records (user, country, itinerary) are sent back as {id}.
 import { api } from "../api.js";
 import { confirmTwice, escapeHtml, flash, formPage, showError, sortByStart } from "../util.js";
+import { icon } from "../icons.js";
 
 const ITINERARIES_LINK = "#/itineraries";
 const showLoading = root => { root.innerHTML = `<div class="msg">Loading…</div>`; };
@@ -98,8 +99,10 @@ export async function showEditItinerary(root, user, onAuthLost, itineraryId, sta
             placeholder="Name your trip" maxlength="100" required>
         <div class="itinerary-meta">
             <label class="sr-only" for="country">Country</label>
+            ${icon("mapPin")}
             <select id="country" name="country" class="inline-edit" required>${isNew ? `<option value="" selected disabled>Choose a country</option>` : ""}${countryOptions}</select>
             <span class="inline-range">
+                ${icon("calendar")}
                 <label class="sr-only" for="dateStart">Start date</label>
                 <input id="dateStart" name="dateStart" type="date" class="inline-edit" value="${toDateInput(itinerary.dateStart)}" required>
                 <span aria-hidden="true">to</span>
@@ -110,7 +113,7 @@ export async function showEditItinerary(root, user, onAuthLost, itineraryId, sta
         <h2 class="form-section">Activities</h2>
         <ol class="activity-editor timeline">${sortedActivities.map(createActivityRow).join("")}</ol>
         <p class="meta" id="no-activities">No activities planned yet.</p>
-        <button type="button" class="ghost small add" id="add-activity">+ Add activity</button>`,
+        <button type="button" class="ghost small add" id="add-activity">${icon("plus")}Add activity</button>`,
         onSubmit: async inputs => {
             checkEndNotBeforeStart(inputs.dateStart.value, inputs.dateEnd.value);
             const rows = activityRows().map(row => {

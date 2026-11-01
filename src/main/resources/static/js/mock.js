@@ -42,6 +42,9 @@ const ACTIVITIES = [
 ];
 // news id -> the article fields an impact carries. 3 has no source so the label falls back to the
 // link's site name, and 2 has no link so its bubble isn't clickable
+// a time this long before the page loaded, so the "5 minutes ago" style times show in mock mode too
+const minutesAgo = minutes => new Date(Date.now() - minutes * 60_000).toISOString();
+
 const NEWS = {
     1: { title: "Magnitude 6.8 earthquake strikes near Hokkaido", source: "Japan Meteorological Agency",
         url: "https://www.jma.go.jp/jma/indexe.html", publishedAt: "2026-12-14T08:30:00",
@@ -61,21 +64,21 @@ const NEWS = {
         description: "Strong winds and high waves are expected off Krabi and Phuket, and small boats are told to stay in port." },
     // stories that affect nobody's trip, so the news page has more than one page to load
     7: { title: "Taxi drivers in Seoul plan two-day strike", source: "The Korea Herald",
-        url: "https://www.koreaherald.com/", publishedAt: "2026-10-30T09:15:00",
+        url: "https://www.koreaherald.com/", publishedAt: minutesAgo(25),
         description: "Fewer taxis are expected across Seoul as drivers protest over fares." },
     8: { title: "New rail line opens between Kuala Lumpur and Singapore", source: "Channel NewsAsia",
-        url: "https://www.channelnewsasia.com/", publishedAt: "2026-10-29T16:40:00",
+        url: "https://www.channelnewsasia.com/", publishedAt: minutesAgo(180),
         description: "The first trains run this weekend, cutting the journey to under two hours." },
     9: { title: "Volcanic ash closes Bali airport for a morning", source: null,
-        url: "https://www.example.com/bali-ash", publishedAt: "2026-10-27T05:20:00",
+        url: "https://www.example.com/bali-ash", publishedAt: minutesAgo(1560),
         description: "Flights were held while ash from Mount Lewotobi drifted over the island. Most resumed by noon." },
     10: { title: "Heatwave warning for Hanoi this week", source: "VnExpress",
-        url: "https://e.vnexpress.net/", publishedAt: "2026-10-26T11:00:00",
+        url: "https://e.vnexpress.net/", publishedAt: minutesAgo(4320),
         description: "Temperatures are forecast to pass 38°C, and outdoor sites may shorten their hours." },
     11: { title: "Typhoon season ends early for the Philippines", source: "Rappler",
-        url: "https://www.rappler.com/", publishedAt: "2026-10-24T08:00:00", description: null },
+        url: "https://www.rappler.com/", publishedAt: minutesAgo(7200), description: null },
     12: { title: "Jeju ferry services return to normal", source: "Yonhap",
-        url: "https://en.yna.co.kr/", publishedAt: "2026-10-22T13:30:00",
+        url: "https://en.yna.co.kr/", publishedAt: minutesAgo(8640),
         description: "Ferries between Jeju and the mainland are back on their usual timetable after last week's storms." },
 };
 // the stored news as the backend's /api/news returns it, newest first
@@ -108,9 +111,7 @@ const IMPACTS = {
     // itinerary 9 has no impacts, to test the empty state
 };
 
-// Same flat shape as RecommendationResponse on the backend. between them the seeded ones and the
-// generated ones use every action, so each label can be seen. the onsen (impact 2) and universal
-// studios (impact 6) have none yet, so the "Suggest what to do" button shows up on john's trips
+// same shape as RecommendationResponse, the onsen and universal studios start without one
 const makeRecommendation = (id, impact, severity, action, advice, option = null) => ({
     id, severity, action, advice,
     impactId: impact.id,
@@ -156,8 +157,7 @@ const RECOMMENDATIONS = {
 };
 let nextRecommendationId = 6;
 
-// what the mock "model" answers for an impact without a recommendation. anything not listed
-// gets a plain swap, like the backend does when the model is unreachable
+// mock model answers, anything else gets a plain swap like the backend's fallback
 const MOCK_ANSWERS = {
     2: { severity: "MEDIUM", action: "RELOCATE", optionIndex: 2,
         advice: "Noboribetsu may close its baths for safety checks. Soak at Jozankei Onsen near Sapporo instead." },
@@ -191,8 +191,7 @@ const defaultPreferences = () => ({
 const myItinerary = id => ITINERARIES.find(itinerary => itinerary.id === Number(id) && itinerary.userId === me?.id);
 const myActivity = id => ACTIVITIES.find(activity => activity.id === Number(id) && myItinerary(activity.itineraryId));
 
-// the audit log, oldest first like ids on the backend. the admin pages read it newest first.
-// same fields as AuditEntryResponse, and like the backend it stores plain ids so it outlives deleted accounts
+// audit log, oldest first, same fields as AuditEntryResponse
 const AUDIT = [];
 const record = (action, actorId, actorEmail, targetId, details = null, occurredAt = new Date().toISOString()) =>
     AUDIT.push({ id: AUDIT.length + 1, occurredAt, actorId, actorEmail, action, targetId, details });
@@ -222,14 +221,14 @@ const pageOf = (items, page, size = PAGE_SIZE) => {
 };
 const newestFirst = entries => [...entries].sort((first, second) => second.id - first.id);
 
-// Returns a rejected promise unless an admin is logged in, otherwise null.
+// a rejected promise unless an admin is logged in, otherwise null
 const requireAdmin = () => requireLogin() || (me.role !== "ADMIN" ? fail(403, "Admins only.") : null);
 // same idea for things only normal users have, like preferences
 const requireUser = () => requireLogin() || (me.role !== "USER" ? fail(403, "Only for user accounts.") : null);
 const findUser = id => USERS.find(user => user.id === Number(id));
 const userNotFound = id => fail(404, `No user found with id ${id}`);
 
-// the account and everything it owns: itineraries with their activities, impacts, recommendations and chats, and its preferences
+// the account and everything it owns
 const removeAccount = account => {
     const ownedItineraries = ITINERARIES.filter(itinerary => itinerary.userId === account.id);
     for (const itinerary of ownedItineraries) {
@@ -354,7 +353,7 @@ export const mockApi = {
         record("ITINERARY_CREATED", me.id, me.email, me.id, `itinerary ${itinerary.id} '${itinerary.name}'`);
         return respondWith(itinerary);
     },
-    // Removes the itinerary's activities, impacts and recommendations with it.
+    // removes the itinerary's activities, impacts and recommendations too
     deleteItinerary: id => {
         const itinerary = myItinerary(id);
         if (requireLogin() || !itinerary) return requireLogin() || fail(404, "Itinerary not found.");
@@ -396,8 +395,7 @@ export const mockApi = {
         ACTIVITIES.splice(ACTIVITIES.indexOf(activity), 1);
         return respondWith(null);
     },
-    // like the backend: search matches part of the email or username, in id order
-    // like the backend: only email and username are searched, the page looks ids up itself
+    // like the backend: email and username only, the page looks ids up itself
     adminUsers: ({ search = "", page = 0, size = 20 } = {}) => {
         const notAdmin = requireAdmin();
         if (notAdmin) return notAdmin;
@@ -451,7 +449,7 @@ export const mockApi = {
         record("ACCOUNT_DELETED", me.id, me.email, account.id, `deleted user '${account.username}'`);
         return respondWith(null);
     },
-    // what one account did and what was done to it. kept after the account is deleted, like on the backend
+    // kept after the account is deleted, like on the backend
     userActivity: (id, { action = "", page = 0 } = {}) => {
         const notAdmin = requireAdmin();
         if (notAdmin) return notAdmin;
@@ -490,13 +488,12 @@ export const mockApi = {
         impact.rejected = rejected;
         return respondWith(impact);
     },
-    // like the backend, only what is stored. rows for impacts the user rejected later are still sent
+    // stored ones only, including rows for impacts rejected later
     itineraryRecommendations: id => {
         if (requireLogin() || !myItinerary(id)) return requireLogin() || fail(404, "Itinerary not found.");
         return respondWith(worstFirst(RECOMMENDATIONS[id] ?? []));
     },
-    // like the backend: one per current impact (rejected ones skipped), reusing any already made.
-    // slower than the other calls, since the real one waits on the model
+    // one per current impact, reusing any already made, and slow like the real model
     generateRecommendations: itineraryId => {
         const itinerary = myItinerary(itineraryId);
         if (requireLogin() || !itinerary) return requireLogin() || fail(404, "Itinerary not found.");

@@ -1,3 +1,5 @@
+import { icon } from "./icons.js";
+
 // Makes text safe to put inside HTML, so user and news text can never inject tags or scripts.
 export const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, char =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
@@ -50,7 +52,7 @@ export const takeFlash = () => {
 // submitLabel and submitClass change the main button, for forms that do something other than save.
 export function formPage(root, { title, fieldsHtml, onSubmit, onAuthLost, cancelLink, extraActions = "", formClass = "narrow",
                                  submitLabel = "Save", submitClass = "" }) {
-    const submitClassAttribute = submitClass ? ` class="${submitClass}"` : "";
+    const submitClassAttribute = ` class="${submitClass || "primary"}"`;
     root.innerHTML = `
     <h1>${escapeHtml(title)}</h1>
     <form class="card ${formClass}" id="edit-form">
@@ -77,8 +79,7 @@ export function formPage(root, { title, fieldsHtml, onSubmit, onAuthLost, cancel
     };
     return { form, errorMessage };
 }
-// Previous / Next for one page of results from the backend ({ page, totalPages }, page counts from 0).
-// each button carries the page it goes to in data-page, so a view handles every click in one place
+// previous and next for a backend page, each button carries its page in data-page
 export const createPager = result => {
     if (result.totalPages <= 1) return "";
 
@@ -135,3 +136,90 @@ export function confirmTwice(button, { confirmText, onConfirm, onArm = () => { }
     button.addEventListener("pointerleave", event => { if (event.pointerType === "mouse") disarm(); });
     return disarm;
 }
+
+// a short message in the bottom corner that fades out by itself, read out by screen readers
+export function showToast(message) {
+    let shelf = document.getElementById("toasts");
+    if (!shelf) {
+        shelf = document.createElement("div");
+        shelf.id = "toasts";
+        shelf.setAttribute("role", "status");
+        shelf.setAttribute("aria-live", "polite");
+        document.body.append(shelf);
+    }
+
+    const toast = document.createElement("div");
+    toast.className = "toast";
+    toast.innerHTML = icon("check");
+    const text = document.createElement("span");
+    text.textContent = message;
+    toast.append(text);
+    shelf.append(toast);
+
+    setTimeout(() => toast.classList.add("leaving"), 4000);
+    setTimeout(() => toast.remove(), 4400);
+}
+
+// a message left by the previous page with flash(), shown as a toast
+export const showFlashToast = () => {
+    const message = takeFlash();
+    if (message) showToast(message);
+};
+
+// "5 minutes ago" for the last week, the date after that, and the date for anything in the future
+const relative = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+export const timeAgo = date => {
+    const seconds = (Date.now() - new Date(date)) / 1000;
+    if (seconds < 0 || seconds > 7 * 86400) return formatDateTime(date);
+    if (seconds < 60) return "just now";
+    if (seconds < 3600) return relative.format(-Math.floor(seconds / 60), "minute");
+    if (seconds < 86400) return relative.format(-Math.floor(seconds / 3600), "hour");
+    return relative.format(-Math.floor(seconds / 86400), "day");
+};
+
+// a <time> showing timeAgo, with the full date on hover
+export const timeTag = date => {
+    if (!date) return "";
+    const iso = new Date(date).toISOString();
+    return `<time datetime="${iso}" title="${escapeHtml(formatDateTime(date))}">${escapeHtml(timeAgo(date))}</time>`;
+};
+
+// country name -> flag emoji, from the browser's own region names plus the wikidata names it spells
+// differently. windows has no flag emoji and shows two letters instead
+const COUNTRY_CODE_ALIASES = {
+    "antigua and barbuda": "AG", "bosnia and herzegovina": "BA", "the bahamas": "BS",
+    "democratic republic of the congo": "CD", "republic of the congo": "CG", "ivory coast": "CI",
+    "people's republic of china": "CN", "czech republic": "CZ", "federated states of micronesia": "FM",
+    "the gambia": "GM", "saint kitts and nevis": "KN", "saint lucia": "LC", "myanmar": "MM",
+    "kingdom of the netherlands": "NL", "palestine": "PS", "são tomé and príncipe": "ST", "turkey": "TR",
+    "trinidad and tobago": "TT", "saint vincent and the grenadines": "VC", "hong kong": "HK",
+    "macau": "MO", "curacao": "CW", "reunion": "RE",
+};
+const flagOfCode = code => String.fromCodePoint(...[...code].map(letter => 0x1f1a5 + letter.charCodeAt(0)));
+
+let codesByName = null;
+export const flagFor = countryName => {
+    if (!codesByName) {
+        codesByName = new Map(Object.entries(COUNTRY_CODE_ALIASES));
+        const names = new Intl.DisplayNames(["en"], { type: "region" });
+        for (let first = 65; first <= 90; first++) {
+            for (let second = 65; second <= 90; second++) {
+                const code = String.fromCharCode(first, second);
+                const name = names.of(code);
+                if (name && name !== code && !codesByName.has(name.toLowerCase())) codesByName.set(name.toLowerCase(), code);
+            }
+        }
+    }
+    const code = codesByName.get(String(countryName ?? "").toLowerCase());
+    return code ? flagOfCode(code) : "";
+};
+
+// an empty list: an icon, what is missing, and what to do about it
+export const emptyState = ({ iconHtml, title, text, action = "" }) => `
+    <div class="empty-state">
+        ${iconHtml}
+        <h2>${escapeHtml(title)}</h2>
+        <p class="meta">${escapeHtml(text)}</p>
+        ${action}
+    </div>
+`;

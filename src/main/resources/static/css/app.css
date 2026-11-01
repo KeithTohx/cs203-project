@@ -1,31 +1,38 @@
-/* ===== Theme tokens: change colors here, everything else follows ===== */
 :root {
-    --bg: #f1f4f9;
-    --panel: #fff;
-    --text: #16252b;
-    --muted: #5d6f76;
-    --border: hsl(168, 14%, 85%);
-    --accent: #0088ff;
-    --bad: #d7312f;
-    --bad-bg: #fbeceb;
-    --ok: #03c38a;
-    --ok-bg: #e9f3ec;
+    --bg: #f7f9fc;
+    --panel: #ffffff;
+    --text: #14233a;
+    --muted: #53627a;
+    --border: #dfe6f0;
+    --tag: #e6edf7;
+    --accent: #d3e4fb;
+    --on-accent: #1655a8;
+    --link: #2a73d3;
+    --bad: #c0392b;
+    --bad-bg: #fcecea;
+    --on-bad: #ffffff;
+    --ok: #2e7a4f;
+    --ok-bg: #e7f3ec;
     --warn: #8a5a00;
-    --warn-bg: #fdf3dc;
+    --warn-bg: #fcf2db;
 }
 
 @media (prefers-color-scheme: dark) {
     :root {
-        --bg: #121212;
-        --panel: #161c2b;
-        --text: #e8e9f0;
-        --muted: #93a7ad;
-        --border: #274048;
-        --accent: #0088ff;
-        --bad: #ff7b6d;
-        --bad-bg: #2e1a19;
-        --ok: #7fc58f;
-        --ok-bg: #183024;
+        --bg: #0d1520;
+        --panel: #141e2c;
+        --text: #e4ebf4;
+        --muted: #9eaec2;
+        --border: #273649;
+        --tag: #223246;
+        --accent: #1f3d63;
+        --on-accent: #d3e4fb;
+        --link: #8fbcf5;
+        --bad: #f28b7f;
+        --bad-bg: #2f1a18;
+        --on-bad: #1c0b09;
+        --ok: #7fcf9f;
+        --ok-bg: #15291e;
         --warn: #f2c46d;
         --warn-bg: #33270f;
     }
@@ -44,12 +51,12 @@ body {
 }
 
 :focus-visible {
-    outline: 3px solid var(--accent);
+    outline: 3px solid var(--link);
     outline-offset: 2px;
 }
 
 a {
-    color: var(--accent);
+    color: var(--link);
 }
 
 h1,
@@ -117,7 +124,7 @@ main:has(.login-panel) {
 .notice {
     margin: 0 0 4px;
     padding: 8px 12px;
-    border-left: 4px solid var(--accent);
+    border-left: 4px solid var(--link);
     background: var(--bg);
     border-radius: 4px;
     font-size: 14px;
@@ -164,9 +171,9 @@ h1:has(+ .itinerary-form) {
 .inline-edit:focus,
 .inline-edit:focus-visible {
     background: var(--panel);
-    border-color: var(--accent);
+    border-color: var(--link);
     outline: none;
-    box-shadow: 0 0 0 2px var(--accent);
+    box-shadow: 0 0 0 2px var(--link);
 }
 
 .inline-edit::placeholder {
@@ -337,20 +344,31 @@ fieldset:disabled label.check {
     color: var(--muted);
 }
 
+/* outlined by default, the main action of a page or form adds "primary" */
 button {
     font: inherit;
     font-weight: 600;
     cursor: pointer;
     border-radius: 6px;
     margin-top: 14px;
-    border: 1px solid var(--accent);
-    background: var(--accent);
-    color: #fff;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
     padding: 9px 14px;
 }
 
 button:hover {
-    filter: brightness(1.1);
+    border-color: var(--text);
+}
+
+button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent);
+}
+
+button.primary:hover {
+    border-color: var(--link);
 }
 
 button:disabled {
@@ -371,7 +389,9 @@ button.ghost:hover {
 }
 
 .btn {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
     text-decoration: none;
     font-weight: 600;
     border-radius: 6px;
@@ -387,11 +407,11 @@ button.ghost:hover {
 .btn.primary {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
 }
 
 .btn.primary:hover {
-    filter: brightness(1.1);
+    border-color: var(--link);
 }
 
 /* Page title with a button beside it */
@@ -432,15 +452,20 @@ button.danger:hover {
 
 /* the main button of a form that removes something for good, e.g. "Delete my account" */
 button.destructive {
-    color: #fff;
+    color: var(--on-bad);
     background: var(--bad);
     border-color: var(--bad);
+}
+
+button.destructive:hover {
+    border-color: var(--bad);
+    filter: brightness(1.1);
 }
 
 /* Waiting for the second click (confirmTwice): solid red, for both "Delete itinerary?" and "Remove?" */
 button.ghost.danger[data-confirming],
 button.ghost.icon-button[data-confirming] {
-    color: #fff;
+    color: var(--on-bad);
     background: var(--bad);
     border-color: var(--bad);
 }
@@ -498,7 +523,7 @@ button.ghost.icon-button[data-confirming] {
     font-weight: 600;
     padding: 2px 8px;
     border-radius: 99px;
-    background: var(--border);
+    background: var(--tag);
     margin-left: 8px;
 }
 
@@ -541,7 +566,7 @@ h3 {
     height: 8px;
     border-radius: 50%;
     background: var(--panel);
-    border: 2px solid var(--accent);
+    border: 2px solid var(--link);
 }
 
 .timeline li.hit::before {
@@ -664,8 +689,8 @@ a.source-bubble {
 }
 
 a.source-bubble:hover {
-    border-color: var(--accent);
-    color: var(--accent);
+    border-color: var(--link);
+    color: var(--link);
 }
 
 /* padding-top bridges the gap so the mouse can move onto the popover without it closing */
@@ -914,7 +939,7 @@ button.chat-suggestion {
 }
 
 button.chat-suggestion:hover {
-    border-color: var(--accent);
+    border-color: var(--link);
     filter: none;
 }
 
@@ -931,7 +956,7 @@ button.chat-suggestion:hover {
 }
 
 .chat-composer:focus-within {
-    border-color: var(--accent);
+    border-color: var(--link);
 }
 
 .chat-composer textarea {
@@ -1023,10 +1048,10 @@ table.users .tag {
 
 .tag.admin {
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
 }
 
-/* Previous / Next under a table that comes one page at a time */
+/* previous and next under a paged table */
 .pager {
     display: flex;
     justify-content: center;
@@ -1052,13 +1077,13 @@ table.users .tag {
     min-width: 200px;
 }
 
-/* the audit table's details wrap onto more lines, but never get squeezed narrower than a few words */
+/* audit details wrap, but never narrower than a few words */
 table.users td:last-child {
     min-width: 160px;
     overflow-wrap: break-word;
 }
 
-/* tags in a table or a details list line up with the text around them, and never break in two */
+/* tags in tables and details lists line up with the text and never break */
 table.users .tag {
     white-space: nowrap;
 }
@@ -1067,7 +1092,7 @@ dd .tag {
     margin-left: 0;
 }
 
-/* a note under a details list, e.g. why an account cannot be disabled */
+/* a note under a details list */
 dl + .hint {
     margin-top: 14px;
 }
@@ -1076,7 +1101,7 @@ dl + .hint {
     margin-top: 12px;
 }
 
-/* ===== Recommendations: what to do about the news ===== */
+/* ===== recommendations ===== */
 .tag.warn {
     background: var(--warn-bg);
     color: var(--warn);
@@ -1093,11 +1118,11 @@ dl + .hint {
     margin: 8px 0;
 }
 
-/* one recommendation, with a neutral edge so it reads as advice rather than another warning */
+/* a neutral edge, so advice does not read as another warning */
 .advice {
     margin-top: 8px;
     padding: 10px 12px;
-    border-left: 4px solid var(--accent);
+    border-left: 4px solid var(--link);
     background: var(--panel);
     border-radius: 4px;
 }
@@ -1124,11 +1149,24 @@ dl + .hint {
     gap: 2px 6px;
 }
 
-[data-suggest-status] {
-    margin-left: 8px;
+/* the empty message and the suggest button on one line */
+.suggest-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+    margin: 6px 0;
 }
 
-/* ===== News page ===== */
+.suggest-row p {
+    margin: 0;
+}
+
+.suggest-row button {
+    margin-top: 0;
+}
+
+/* ===== news page ===== */
 .view-switch {
     display: flex;
     flex-wrap: wrap;
@@ -1140,7 +1178,7 @@ dl + .hint {
 .view-switch button[aria-pressed="true"] {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
 }
 
 .news-list {
@@ -1177,34 +1215,17 @@ dl + .hint {
     overflow: hidden;
 }
 
-/* ===== Summary at the top of the itineraries page =====
-   a normal card with a coloured outline and heading, like the delete account card */
+/* ===== summary at the top of the itineraries page ===== */
 .card.trip-summary {
     margin-top: 12px;
-}
-
-.trip-summary p {
-    margin: 0;
-}
-
-.card.trip-summary.attention {
-    border-color: var(--bad);
-}
-
-.card.trip-summary.all-clear {
-    border-color: var(--ok);
 }
 
 .trip-summary h2 {
     margin: 0 0 4px;
 }
 
-.trip-summary.attention h2 {
-    color: var(--bad);
-}
-
-.trip-summary.all-clear h2 {
-    color: var(--ok);
+.trip-summary p {
+    margin: 0;
 }
 
 .trip-summary ul {
@@ -1227,17 +1248,327 @@ button.link-button {
     border: none;
     padding: 0;
     margin: 0;
-    color: var(--accent);
+    color: var(--link);
     font-weight: 600;
     text-decoration: underline;
     cursor: pointer;
 }
 
-/* the card a summary link jumped to. only keyboard focus shows the ring */
+/* only keyboard focus shows a ring on the card a summary link jumped to */
 [data-itinerary]:focus {
     outline: none;
 }
 
 [data-itinerary]:focus-visible {
-    outline: 3px solid var(--accent);
+    outline: 3px solid var(--link);
+}
+
+/* name and log out stay on one line, on a phone the links wrap instead */
+.nav-user {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+/* ===== icons and logo ===== */
+.icon {
+    width: 1.05em;
+    height: 1.05em;
+    flex: none;
+    vertical-align: -0.15em;
+}
+
+/* a gap between an icon and the words after it */
+a > .icon,
+button > .icon,
+.trip-meta .icon {
+    margin-right: 6px;
+}
+
+.nav-links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 16px;
+}
+
+.nav-links a {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 0;
+}
+
+nav a.brand {
+    gap: 8px;
+    margin-right: 8px;
+    font-size: 1.3rem;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.logo-mark {
+    display: inline-grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: var(--link);
+    color: var(--panel);
+}
+
+.logo-mark .icon {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+}
+
+/* the login and register cards start with the logo */
+.toast > .icon {
+    color: var(--ok);
+}
+
+/* logo and name together at the top of the login and sign up cards */
+.auth-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 18px;
+    font-size: 1.3rem;
+    font-weight: 700;
+}
+
+.auth-brand + h1 {
+    margin-top: 0;
+    font-size: 1.6rem;
+}
+
+.trip-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 16px;
+}
+
+.imp-head > .icon {
+    color: var(--bad);
+}
+
+/* ===== toasts ===== */
+#toasts {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: min(360px, calc(100vw - 32px));
+}
+
+.toast {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--text);
+    font-weight: 600;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .2);
+    animation: toast-in .2s ease-out;
+    transition: opacity .4s, transform .4s;
+}
+
+.toast.leaving {
+    opacity: 0;
+    transform: translateY(8px);
+}
+
+@keyframes toast-in {
+    from { opacity: 0; transform: translateY(8px); }
+}
+
+/* no sliding for people who asked their system for less motion */
+@media (prefers-reduced-motion: reduce) {
+    .toast {
+        animation: none;
+        transition: none;
+    }
+}
+
+/* ===== empty states ===== */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 40px 16px;
+    text-align: center;
+    background: var(--panel);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+}
+
+.empty-state > .icon {
+    width: 40px;
+    height: 40px;
+    padding: 10px;
+    border-radius: 50%;
+    background: var(--tag);
+    color: var(--link);
+    box-sizing: content-box;
+}
+
+.empty-state h2 {
+    margin: 4px 0 0;
+    font-size: 18px;
+}
+
+.empty-state p {
+    max-width: 380px;
+}
+
+.empty-state .btn {
+    margin-top: 8px;
+}
+
+/* ===== avatar and flags ===== */
+.avatar {
+    display: inline-grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    margin-right: 6px;
+    border-radius: 50%;
+    background: var(--tag);
+    color: var(--link);
+    font-weight: 700;
+    font-size: 14px;
+}
+
+.flag {
+    margin-right: 6px;
+    font-size: 1.05em;
+}
+
+.itinerary-meta > .icon,
+.itinerary-meta .inline-range > .icon {
+    color: var(--muted);
+}
+
+/* the avatar and name together link to the account page */
+nav a.profile-link {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 10px;
+    padding: 3px 10px 3px 3px;
+    border-radius: 99px;
+    font-weight: 600;
+}
+
+nav a.profile-link:hover,
+nav a.profile-link[aria-current] {
+    background: var(--tag);
+    text-decoration: none;
+}
+
+/* ===== itineraries dashboard: trips on the left, overview on the right ===== */
+main:has(.dashboard) {
+    max-width: 1180px;
+}
+
+.dashboard {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 24px;
+    align-items: start;
+}
+
+.dashboard-main h2.section:first-child {
+    margin-top: 12px;
+}
+
+/* stays in view while the trips scroll past */
+.dashboard-side {
+    position: sticky;
+    top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.dashboard-side .card {
+    margin: 0;
+}
+
+.side-extra:empty {
+    display: none;
+}
+
+.side-card h2,
+.dashboard-side .trip-summary h2 {
+    margin: 0 0 6px;
+    font-size: 16px;
+    color: var(--muted);
+}
+
+/* the summary's tag moves to its own line in the sidebar rather than breaking in two */
+.dashboard-side .trip-summary .tag {
+    display: inline-block;
+    white-space: nowrap;
+    margin: 4px 0 0;
+}
+
+.side-card p {
+    margin: 0 0 4px;
+}
+
+.next-trip-countdown {
+    font-size: 1.6rem;
+    font-weight: 700;
+}
+
+.side-news {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 10px;
+}
+
+.side-news li {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 0;
+}
+
+.side-news li + li {
+    border-top: 1px solid var(--border);
+}
+
+.side-card > a {
+    display: inline-flex;
+    align-items: center;
+    font-weight: 600;
+}
+
+/* narrower screens: one column, with only the summary above the trips */
+@media (max-width: 1099px) {
+    .dashboard {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0;
+    }
+
+    .dashboard-side {
+        order: -1;
+        position: static;
+    }
+
+    .side-extra {
+        display: none;
+    }
 }
