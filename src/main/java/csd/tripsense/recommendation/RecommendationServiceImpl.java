@@ -1,10 +1,15 @@
 package csd.tripsense.recommendation;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
@@ -16,6 +21,11 @@ import csd.tripsense.impact.ImpactService;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryService;
 import csd.tripsense.news.News;
+import csd.tripsense.user.preference.ExplanationDetail;
+import csd.tripsense.user.preference.FlexibilityLevel;
+import csd.tripsense.user.preference.PreferenceService;
+import csd.tripsense.user.preference.RiskTolerance;
+import csd.tripsense.user.preference.UserPreference;
 
 /**
  * Rules pick the alternatives, the model only writes the sentence.
@@ -23,29 +33,39 @@ import csd.tripsense.news.News;
  * A 1.5B model invents venues and addresses that look real, so it is never asked where to go.
  * It picks from a shortlist of rows we hand it and anything outside that shortlist is thrown
  * away, which is the whole reason ActivityOption exists.
+ *
+ * Preferences work the same way: the prompt tells the model what the traveller wants, but
+ * anything that must hold (no rescheduling for fixed dates, advice that fits the column) is
+ * enforced here in code, because a small model does not always follow instructions.
  */
 @Service
 public class RecommendationServiceImpl implements RecommendationService {
+
+    // matches @Column(length = 500) on Recommendation.advice, a longer string fails the insert
+    private static final int ADVICE_MAX = 500;
 
     private RecommendationRepository recommendations;
     private ActivityOptionRepository options;
     private ImpactService impactService;
     private ItineraryService itineraryService;
     private ChatService chatService;
+    private PreferenceService preferenceService;   
 
     public RecommendationServiceImpl(RecommendationRepository recommendations,
                                      ActivityOptionRepository options,
                                      ImpactService impactService,
                                      ItineraryService itineraryService,
-                                     ChatService chatService) {
+                                     ChatService chatService,
+                                     PreferenceService preferenceService) {  
         this.recommendations = recommendations;
         this.options = options;
         this.impactService = impactService;
         this.itineraryService = itineraryService;
         this.chatService = chatService;
+        this.preferenceService = preferenceService;
     }
 
-    // the shape we ask the model to answer in
+    /** the shape we ask the model to answer in */
     private record Suggestion(String severity, String action, Long optionId, String advice) {
     }
 
@@ -55,13 +75,12 @@ public class RecommendationServiceImpl implements RecommendationService {
         Itinerary itinerary = itineraryService.getItineraryById(itineraryId);
         Long userId = itinerary.getUser().getId();
 
+        // get user preferences
+        UserPreference prefs = preferenceService.getPreferences(userId);
+
         List<Recommendation> made = new ArrayList<>();
         for (Impact impact : impactService.findImpacted(userId, itineraryId)) {
-            // cached on the row existing and not on a field being filled. impact keys
-            // "already evaluated" off reason != null, which made every seeded row call the
-            // model again, so we are not repeating that here
-            made.add(recommendations.findByImpactId(impact.getId())
-                    .orElseGet(() -> build(itinerary, impact)));
+            made.add(forImpact(itinerary, impact, prefs));
         }
         return sorted(made);
     }
@@ -71,12 +90,48 @@ public class RecommendationServiceImpl implements RecommendationService {
         return sorted(recommendations.findByImpactItineraryId(itineraryId));
     }
 
-    // worst first, Severity is declared HIGH to LOW so natural order already does it
+    /**
+     * Cached on the row existing and not on a field being filled. 
+     * Impact keys "already evaluated" off reason != null, 
+     * which made every seeded row call the model again, so we are not repeating that here.
+     * 
+     * Preferences: a saved recommendation is also thrown away when the traveller has changed 
+     * their preferences since it was made, otherwise changing a setting would do nothing until 
+     * the row was deleted by hand. 
+     * This costs one model call per impacted activity
+     */
+    private Recommendation forImpact(Itinerary itinerary, Impact impact, UserPreference prefs) {
+        Optional<Recommendation> cached = recommendations.findByImpactId(impact.getId());
+        if (cached.isPresent() && !isStale(cached.get(), prefs)) {
+            return cached.get();
+        }
+        cached.ifPresent(recommendations::delete);
+        return build(itinerary, impact, prefs);
+    }
+
+    /**
+     * Stale = made before the preferences last changed. 
+     * Package private and static so a test can hit it without a spring context.
+     * 
+     * An unsaved default (id is null, the user never set anything) is never stale. 
+     * Its updatedAt is "now", which would otherwise make every row look old and call the model on every request. 
+     * A row with no createdAt (seeded data) is left alone for the same reason. 
+     * createdAt is a LocalDateTime made with LocalDateTime.now(), so it is in the server's zone
+     */
+    static boolean isStale(Recommendation recommendation, UserPreference prefs) {
+        if (prefs.getId() == null || recommendation.getCreatedAt() == null) {
+            return false;
+        }
+        Instant madeAt = recommendation.getCreatedAt().atZone(ZoneId.systemDefault()).toInstant();
+        return madeAt.isBefore(prefs.getUpdatedAt());
+    }
+
+    /** worst first, Severity is declared HIGH to LOW so natural order already does it */
     private List<Recommendation> sorted(List<Recommendation> list) {
         return list.stream().sorted(Comparator.comparing(Recommendation::getSeverity)).toList();
     }
 
-    private Recommendation build(Itinerary itinerary, Impact impact) {
+    private Recommendation build(Itinerary itinerary, Impact impact, UserPreference prefs) {
         Activity activity = impact.getActivity();
 
         // a whole trip impact has no single activity to swap, so there is nothing to offer
@@ -85,15 +140,36 @@ public class RecommendationServiceImpl implements RecommendationService {
                     "Affects the whole trip, so follow local updates and keep the plans flexible.");
         }
 
-        List<ActivityOption> shortlist = shortlistFor(itinerary, impact, activity);
+        // the preferred categories go in so the rules rank them first
+        List<ActivityOption> shortlist = shortlistFor(itinerary, impact, activity, prefs);
+        Set<Action> allowed = allowedActions(prefs);
         try {
-            Suggestion suggestion = chatService.ask(prompt(impact, activity, shortlist),
+            Suggestion suggestion = chatService.ask(prompt(impact, activity, shortlist, prefs, allowed),
                                                     Suggestion.class);
 
             Severity severity = parse(Severity.class, suggestion.severity(), Severity.MEDIUM);
             ActivityOption option = pick(suggestion.optionId(), shortlist);
-            Action action = parse(Action.class, suggestion.action(),
-                                  option == null ? Action.MONITOR : Action.REPLACE);
+
+            // preferences: if the model chose a place but a preferred kind of activity is on the
+            // shortlist, use that one instead. a small model does not always follow "choose the
+            // preferred kind", and its advice names the place we just replaced so it is dropped below
+            ActivityOption preferred = firstPreferred(shortlist, prefs);
+            boolean swapped = preferred != null && option != null
+                    && !prefs.getPreferredCategories().contains(option.getCategory());
+            if (swapped) {
+                option = preferred;
+            }
+
+            Action fallbackAction = option == null ? Action.MONITOR : Action.REPLACE;
+            Action action = parse(Action.class, suggestion.action(), fallbackAction);
+
+            // preferences: the prompt only lists the allowed actions, but a small model can still
+            // answer with one that is not. refuse it here, and drop its advice too because the
+            // advice would describe the action we just refused (eg "move it to next week")
+            boolean refused = !allowed.contains(action);
+            if (refused) {
+                action = fallbackAction;
+            }
 
             // low severity means nothing has to change, so we do not hand back somewhere else
             // to go. the story wants that said out loud rather than an empty answer
@@ -102,7 +178,7 @@ public class RecommendationServiceImpl implements RecommendationService {
                 option = null;
             }
 
-            String advice = suggestion.advice() == null || suggestion.advice().isBlank()
+            String advice = refused || swapped || suggestion.advice() == null || suggestion.advice().isBlank()
                     ? fallbackAdvice(action, option)
                     : suggestion.advice();
 
@@ -115,8 +191,34 @@ public class RecommendationServiceImpl implements RecommendationService {
         }
     }
 
-    // everything in the trip country that could stand in for this activity, cut down by the rules
-    private List<ActivityOption> shortlistFor(Itinerary itinerary, Impact impact, Activity activity) {
+    /**
+     * preferences: the actions this traveller can be given. 
+     * Dates that cannot move rule out rescheduling, everything else is open. 
+     * Package private and static for the same reason as pick
+     */
+    static Set<Action> allowedActions(UserPreference prefs) {
+        Set<Action> allowed = EnumSet.allOf(Action.class);
+        if (prefs.getFlexibilityLevel() == FlexibilityLevel.FIXED_DATES) {
+            allowed.remove(Action.RESCHEDULE);
+        }
+        return allowed;
+    }
+
+    /**
+     * preferences: the first option on the shortlist that is a kind of activity the traveller
+     * prefers, or null if there is none. the shortlist is already best first, so this is also
+     * the nearest one. Package private and static for the same reason as pick
+     */
+    static ActivityOption firstPreferred(List<ActivityOption> shortlist, UserPreference prefs) {
+        return shortlist.stream()
+                .filter(option -> prefs.getPreferredCategories().contains(option.getCategory()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    /** everything in the trip country that could stand in for this activity, cut down by the rules */
+    private List<ActivityOption> shortlistFor(Itinerary itinerary, Impact impact, Activity activity,
+                                              UserPreference prefs) {
         if (activity.getCategory() == null || itinerary.getCountry() == null) {
             return List.of();
         }
@@ -125,17 +227,22 @@ public class RecommendationServiceImpl implements RecommendationService {
         // the areas before they rank anything, so they need to see areas we would never suggest
         return RecommendationRules.shortlist(
                 options.findByCountry(itinerary.getCountry().getName()),
-                activity.getCategory(), activity.getAddress(), newsText(impact.getNews()));
+                activity.getCategory(), activity.getAddress(), newsText(impact.getNews()),
+                prefs.getPreferredCategories());
     }
 
-    private String prompt(Impact impact, Activity activity, List<ActivityOption> shortlist) {
+    private String prompt(Impact impact, Activity activity, List<ActivityOption> shortlist,
+                          UserPreference prefs, Set<Action> allowed) {
         News news = impact.getNews();
         String choices = shortlist.isEmpty()
                 ? "There are none, so optionId must be null."
                 : shortlist.stream()
                         .map(option -> "%d: %s (%s, %s)".formatted(option.getId(), option.getName(),
                                 option.getArea(), option.getCategory()))
-                        .collect(Collectors.joining("\n"));
+                        .collect(Collectors.joining("\n")); 
+
+        // preferences: the action list and the advice length come from the traveller's settings
+        String actions = allowed.stream().map(Enum::name).collect(Collectors.joining(", "));
 
         return """
                 You are helping a traveller decide what to do about one disrupted activity.
@@ -150,24 +257,96 @@ public class RecommendationServiceImpl implements RecommendationService {
                 Location: %s
                 Planned for: %s
 
+                %s
                 Alternatives you may choose from, by id:
                 %s
 
                 Answer with:
                 severity - LOW, MEDIUM or HIGH, how badly this activity is affected
-                action - REPLACE, RELOCATE, RESCHEDULE, MONITOR or CANCEL
+                action - one of %s
                 optionId - the id of one alternative above, or null if none of them fit
-                advice - one or two sentences saying what to do, naming the alternative
+                advice - %s
 
-                Only ever name a place from the list, never one of your own. If severity is LOW,
-                say plainly that no change is needed.
+                Only ever name a place from the list, never one of your own. %s
                 """
                 .formatted(news.getTitle(), news.getDescription(), impact.getReason(),
-                        activity.getName(), activity.getAddress(), activity.getDateStart(), choices);
+                        activity.getName(), activity.getAddress(), activity.getDateStart(),
+                        travellerNotes(prefs), choices, actions, adviceLength(prefs),
+                        lowSeverityRule(prefs));
     }
 
-    // the one check this whole design exists for: an id we did not offer was invented, so drop it.
-    // package private and static so the test can hit it without a spring context
+    /** 
+     * preferences: what the traveller told us, as fixed sentences chosen by enum 
+     * so nothing a user typed ever reaches the prompt. 
+     * Empty for someone with no special settings.
+     * The model is told not to praise an alternative for suiting children or elderly people, 
+     * because the shortlist has no data about that and it would simply be made up
+     */
+    static String travellerNotes(UserPreference prefs) {
+        List<String> notes = new ArrayList<>();
+
+        if (prefs.getRiskTolerance() == RiskTolerance.LOW) {
+            notes.add("The traveller is risk-averse, so treat uncertain events as worth acting on.");
+        } else if (prefs.getRiskTolerance() == RiskTolerance.HIGH) {
+            notes.add("The traveller is relaxed about risk, so only recommend a change if it is "
+                    + "needed. Never play down danger to safety.");
+        }
+
+        if (prefs.getFlexibilityLevel() == FlexibilityLevel.FIXED_DATES) {
+            notes.add("The dates cannot move, so never suggest rescheduling.");
+        } else if (prefs.getFlexibilityLevel() == FlexibilityLevel.VERY_FLEXIBLE) {
+            notes.add("The traveller can change plans, so rescheduling is fine.");
+        }
+
+        if (prefs.isTravellingWithChildren()) {
+            notes.add("Children are travelling, so favour a simple plan with little waiting. "
+                    + "Do not say an alternative is child-friendly.");
+        }
+        if (prefs.isTravellingWithElderly()) {
+            notes.add("Elderly travellers are in the group, so favour easy options with little "
+                    + "walking. Do not say an alternative is accessible.");
+        }
+
+        // the kinds of activity the traveller likes. these are enum names, never typed text
+        if (!prefs.getPreferredCategories().isEmpty()) {
+            String kinds = prefs.getPreferredCategories().stream()
+                    .map(Enum::name).sorted().collect(Collectors.joining(", "));
+            notes.add("The traveller prefers these kinds of activity: " + kinds
+                    + ". If an alternative of that kind is listed, choose it.");
+        }
+
+        if (notes.isEmpty()) {
+            return "";
+        }
+        return "Traveller notes (do not mention these in your advice):\n- "
+                + String.join("\n- ", notes) + "\n";
+    }
+
+    /**
+     * preferences: how long the advice should be. kept under ADVICE_MAX characters, 
+     * and save() cuts anything longer in case the model ignores that
+     */
+    static String adviceLength(UserPreference prefs) {
+        return prefs.getExplanationDetail() == ExplanationDetail.DETAILED
+                ? "three or four sentences, under 400 characters: what is happening, how it "
+                        + "affects this activity, and what to do, naming the alternative"
+                : "one short sentence saying what to do, naming the alternative";
+    }
+
+    /** 
+     * preferences: the old prompt always said "no change needed" for low severity. 
+     * A risk-averse traveller should hear that it is low but worth checking again, not that it is nothing
+     */
+    static String lowSeverityRule(UserPreference prefs) {
+        return prefs.getRiskTolerance() == RiskTolerance.LOW
+                ? "If severity is LOW, say it is a small risk but worth checking again before you travel."
+                : "If severity is LOW, say plainly that no change is needed.";
+    }
+
+    /**
+     * The one check this whole design exists for: an id we did not offer was invented, so drop it.
+     * Package private and static so the test can hit it without a spring context
+     */
     static ActivityOption pick(Long optionId, List<ActivityOption> shortlist) {
         return shortlist.stream()
                 .filter(option -> option.getId().equals(optionId))
@@ -175,7 +354,7 @@ public class RecommendationServiceImpl implements RecommendationService {
                 .orElse(null);
     }
 
-    // the model sends enums back as text, anything it makes up falls back to a safe default
+    /** the model sends enums back as text, anything it makes up falls back to a safe default */
     static <E extends Enum<E>> E parse(Class<E> type, String value, E fallback) {
         try {
             return Enum.valueOf(type, value.trim().toUpperCase(Locale.ROOT));
@@ -184,7 +363,7 @@ public class RecommendationServiceImpl implements RecommendationService {
         }
     }
 
-    // so the api never answers with a blank string, whatever the model did
+    /** so the api never answers with a blank string, whatever the model did */
     private String fallbackAdvice(Action action, ActivityOption option) {
         if (option != null) {
             return "Swap this for %s in %s.".formatted(option.getName(), option.getArea());
@@ -205,8 +384,17 @@ public class RecommendationServiceImpl implements RecommendationService {
         recommendation.setSeverity(severity);
         recommendation.setAction(action);
         recommendation.setSuggestedOption(option);
-        recommendation.setAdvice(advice);
+        recommendation.setAdvice(truncate(advice));
         recommendation.setCreatedAt(LocalDateTime.now());
         return recommendations.save(recommendation);
     }
+
+    /**
+     * preferences: detailed advice can run past the 500 character column, 
+     * which would make the insert fail and send the user to the fallback. cut it instead
+     */
+    static String truncate(String advice) {
+        return advice.length() <= ADVICE_MAX ? advice : advice.substring(0, ADVICE_MAX - 3) + "...";
+    }
+
 }
