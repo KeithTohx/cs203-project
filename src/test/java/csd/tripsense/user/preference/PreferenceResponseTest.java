@@ -1,11 +1,15 @@
 package csd.tripsense.user.preference;
 
+import java.util.*;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+
+import csd.tripsense.activity.ActivityCategory;
 
 // unit tests for PreferenceResponse.toPromptBlock, the preferences part of the chatbot's system prompt.
 // the text is fixed per setting, so these check that each setting picks its own instruction and that
@@ -15,8 +19,9 @@ class PreferenceResponseTest {
 
     private static PreferenceResponse preferences(RiskTolerance risk, FlexibilityLevel flexibility,
                                                   ExplanationDetail detail, TravelGroup group,
-                                                  boolean children, boolean elderly) {
-        return new PreferenceResponse(risk, flexibility, detail, group, children, elderly, null);
+                                                  boolean children, boolean elderly,
+                                                  Set<ActivityCategory> preferredCategories) {
+        return new PreferenceResponse(risk, flexibility, detail, group, children, elderly, preferredCategories, null);
     }
 
     // every value of the three enums appears in at least one row, so each choice is tested once
@@ -31,7 +36,7 @@ class PreferenceResponseTest {
                                                              ExplanationDetail detail, String expectedRisk,
                                                              String expectedFlexibility, String expectedDetail) {
         // Arrange
-        PreferenceResponse response = preferences(risk, flexibility, detail, TravelGroup.SOLO, false, false);
+        PreferenceResponse response = preferences(risk, flexibility, detail, TravelGroup.SOLO, false, false, null);
 
         // Act
         String block = response.toPromptBlock();
@@ -47,7 +52,7 @@ class PreferenceResponseTest {
     void toPromptBlock_ShouldAlwaysKeepTheFactsRules() {
         // Arrange - the most relaxed traveller is the one most likely to get a danger downplayed
         PreferenceResponse response = preferences(RiskTolerance.HIGH, FlexibilityLevel.VERY_FLEXIBLE,
-                ExplanationDetail.BRIEF, TravelGroup.SOLO, false, false);
+                ExplanationDetail.BRIEF, TravelGroup.SOLO, false, false, null);
 
         // Act
         String block = response.toPromptBlock();
@@ -64,7 +69,7 @@ class PreferenceResponseTest {
     void toPromptBlock_ShouldLeaveOutGroupLines_WhenTravellingSoloWithoutChildrenOrElderly() {
         // Arrange
         PreferenceResponse response = preferences(RiskTolerance.MEDIUM, FlexibilityLevel.SOMEWHAT_FLEXIBLE,
-                ExplanationDetail.BRIEF, TravelGroup.SOLO, false, false);
+                ExplanationDetail.BRIEF, TravelGroup.SOLO, false, false, null);
 
         // Act
         String block = response.toPromptBlock();
@@ -80,7 +85,7 @@ class PreferenceResponseTest {
     void toPromptBlock_ShouldIncludeGroupLines_WhenFamilyWithChildrenAndElderly() {
         // Arrange
         PreferenceResponse response = preferences(RiskTolerance.MEDIUM, FlexibilityLevel.SOMEWHAT_FLEXIBLE,
-                ExplanationDetail.BRIEF, TravelGroup.FAMILY, true, true);
+                ExplanationDetail.BRIEF, TravelGroup.FAMILY, true, true, null);
 
         // Act
         String block = response.toPromptBlock();
