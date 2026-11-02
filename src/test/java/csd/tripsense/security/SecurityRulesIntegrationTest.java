@@ -44,7 +44,7 @@ import io.restassured.module.mockmvc.RestAssuredMockMvc;
     "impact.eval.enabled=false"
 })
 @DisplayName("Security Rules Integration Tests")
-class SecurityRulesTest {
+class SecurityRulesIntegrationTest {
 
     private static final String PASSWORD = "correct-horse-battery";
 

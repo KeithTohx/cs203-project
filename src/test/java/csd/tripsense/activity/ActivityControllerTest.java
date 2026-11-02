@@ -23,6 +23,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
@@ -43,9 +45,9 @@ import csd.tripsense.itinerary.ItineraryService;
 import csd.tripsense.user.User;
 import csd.tripsense.user.UserRepository;
 
-// unit tests for ActivityController, as the owner of the trip
-// other users' data is covered by ActivityOwnershipTest, so this checks the endpoints work for the
-// owner and give the right status when something is missing or the request is wrong.
+// unit tests for ActivityController
+// checks the endpoints work for the owner of the trip, give the right status when something is
+// missing or the request is wrong, and answer 404 to anyone else so they cannot tell what exists.
 // ItineraryAccess is the real one, so the ownership rules run exactly as in the app
 @ExtendWith(MockitoExtension.class)
 @DisplayName("ActivityController Unit Tests")
@@ -98,7 +100,38 @@ class ActivityControllerTest {
         SecurityContextHolder.clearContext();
     }
 
+    private static void loginAs(CurrentUser user) {
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(user, null, user.getAuthorities()));
+    }
+
     // ===== GET =====
+
+    @Test
+    @DisplayName("Should list only the activities on the caller's own trips")
+    void getAllActivities_ShouldOnlyListOwnActivities() throws Exception {
+        // Arrange: an activity with no itinerary belongs to nobody, so it is left out
+        Activity orphan = new Activity();
+        orphan.setId(21L);
+        when(activityService.getAllActivities()).thenReturn(List.of(skiDay, orphan));
+
+        // Act + Assert
+        mockMvc.perform(get("/api/activity"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value(20));
+    }
+
+    @Test
+    @DisplayName("Should return 401 when listing activities without logging in")
+    void getAllActivities_ShouldReturn401_WhenNotLoggedIn() throws Exception {
+        // Arrange
+        SecurityContextHolder.clearContext();
+
+        // Act + Assert
+        mockMvc.perform(get("/api/activity"))
+                .andExpect(status().isUnauthorized());
+    }
 
     @Test
     @DisplayName("Should return one activity with its itinerary flattened to an id and name")
@@ -275,6 +308,27 @@ class ActivityControllerTest {
     }
 
     @Test
+    @DisplayName("Should return 404 when moving an activity onto another user's itinerary")
+    void updateActivity_ShouldReturn404_WhenMovingToAnotherUsersItinerary() throws Exception {
+        // Arrange: a 404 rather than a 400, so the owner cannot find out the other trip exists
+        User stranger = new User("other@example.com", "other", "hash", "USER");
+        ReflectionTestUtils.setField(stranger, "id", 2L);
+        Itinerary strangersTrip = new Itinerary();
+        strangersTrip.setId(11L);
+        strangersTrip.setUser(stranger);
+        when(activityService.getActivityById(20L)).thenReturn(skiDay);
+        when(itineraryService.getItineraryById(11L)).thenReturn(strangersTrip);
+
+        // Act + Assert
+        mockMvc.perform(put("/api/activity/20")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\": \"Ski at Niseko\", \"itinerary\": {\"id\": 11}}"))
+                .andExpect(status().isNotFound());
+
+        verify(activityService, never()).updateActivity(anyLong(), any(Activity.class));
+    }
+
+    @Test
     @DisplayName("Should return 404 when updating an activity that does not exist")
     void updateActivity_ShouldReturn404_WhenMissing() throws Exception {
         // Arrange
@@ -312,6 +366,38 @@ class ActivityControllerTest {
         mockMvc.perform(delete("/api/activity/99"))
                 .andExpect(status().isNotFound());
 
+        verify(activityService, never()).deleteActivity(anyLong());
+    }
+
+    // ===== OTHER USERS =====
+
+    @ParameterizedTest
+    @ValueSource(strings = {"USER", "ADMIN"})
+    @DisplayName("Should answer 404 to any other account, admins included, and change nothing")
+    void allEndpoints_ShouldReturn404_WhenCallerDoesNotOwnTheTrip(String role) throws Exception {
+        // Arrange
+        loginAs(new CurrentUser(2L, "other@example.com", "other", null, role, true));
+        when(activityService.getActivityById(20L)).thenReturn(skiDay);
+        when(itineraryService.getItineraryById(10L)).thenReturn(skiTrip);
+
+        // Act + Assert
+        mockMvc.perform(get("/api/activity/20"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/itinerary/10/activity"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/activity")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\": \"Museum\", \"itinerary\": {\"id\": 10}}"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(put("/api/activity/20")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\": \"Taken over\"}"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(delete("/api/activity/20"))
+                .andExpect(status().isNotFound());
+
+        verify(activityService, never()).addActivity(any(Activity.class));
+        verify(activityService, never()).updateActivity(anyLong(), any(Activity.class));
         verify(activityService, never()).deleteActivity(anyLong());
     }
 }
