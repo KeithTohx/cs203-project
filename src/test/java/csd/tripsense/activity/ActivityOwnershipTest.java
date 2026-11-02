@@ -54,14 +54,7 @@ class ActivityOwnershipTest {
         assertThatThrownBy(() -> controller.getAllActivities(null)).isInstanceOf(ResponseStatusException.class);
     }
 
-    @Test
-    void ownerCanCreateButCannotOverwriteAnExistingActivityBySupplyingAnId() {
-        when(itineraries.getItineraryById(10L)).thenReturn(trip);
-        when(activities.addActivity(activity)).thenReturn(activity);
-        controller.addActivity(activity, owner);
-        assertThat(activity.getId()).isNull();
-        verify(activities).addActivity(activity);
-    }
+    // the owner's own paths (client id dropped on create, missing activity is 404) are in ActivityControllerTest
 
     @Test
     void ownerCannotMoveAnActivityToAnotherUsersTrip() {
@@ -74,11 +67,5 @@ class ActivityOwnershipTest {
         assertThatThrownBy(() -> controller.updateActivity(20L, changes, owner))
                 .isInstanceOf(ItineraryNotFoundException.class);
         verify(activities, never()).updateActivity(any(), any());
-    }
-
-    @Test
-    void missingActivityRemains404() {
-        when(activities.getActivityById(404L)).thenThrow(new ActivityNotFoundException(404L));
-        assertThatThrownBy(() -> controller.getActivityById(404L, owner)).isInstanceOf(ActivityNotFoundException.class);
     }
 }

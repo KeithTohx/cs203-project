@@ -33,17 +33,7 @@ class SessionServiceTest {
         assertThat(registry.getSessionInformation("john-1").isExpired()).isFalse();
     }
 
-    @Test
-    void expireSessionsFor_email_ignoresCapitalisation() {
-        SessionRegistryImpl registry = new SessionRegistryImpl();
-        registry.registerNewSession("bob-1", new CurrentUser(4L, "bob@example.com", "bob", null, "USER", true));
-        registry.registerNewSession("john-1", new CurrentUser(1L, "john@example.com", "john", null, "USER", true));
-
-        int ended = new SessionService(registry).expireSessionsFor("BOB@Example.com");
-
-        assertThat(ended).isEqualTo(1);
-        assertThat(registry.getSessionInformation("john-1").isExpired()).isFalse();
-    }
+    // expireSessionsFor(email) ignoring case is tested in SessionServiceLogoutTest
 
     @Test
     void refreshCurrentSession_putsTheNewUsernameInTheSession_andNoPasswordHash() {
