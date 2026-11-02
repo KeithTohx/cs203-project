@@ -78,7 +78,7 @@ class PreferenceServiceImplTest {
     private UpdatePreferenceRequest request(RiskTolerance risk, FlexibilityLevel flex,
                                             ExplanationDetail detail, TravelGroup group,
                                             Boolean children, Boolean elderly) {
-        return new UpdatePreferenceRequest(risk, flex, detail, group, children, elderly);
+        return new UpdatePreferenceRequest(risk, flex, detail, group, children, elderly, null);
     }
 
     /** Every field null, meaning "change nothing". */

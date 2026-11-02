@@ -264,7 +264,7 @@ class UserControllerTest {
                 .andExpect(jsonPath("$.riskTolerance").value("LOW"));
 
         verify(preferenceService).updatePreferences(7L,
-                new UpdatePreferenceRequest(RiskTolerance.LOW, null, null, null, null, null));
+                new UpdatePreferenceRequest(RiskTolerance.LOW, null, null, null, null, null, null));
     }
 
     @Test
