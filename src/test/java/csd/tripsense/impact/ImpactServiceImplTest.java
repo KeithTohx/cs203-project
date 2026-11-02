@@ -33,6 +33,7 @@ class ImpactServiceImplTest {
     @Mock private ItineraryService itineraryService;
     @Mock private ActivityService activityService;
     @Mock private NewsService newsService;
+    @Mock private org.springframework.context.ApplicationEventPublisher events;
 
     @InjectMocks
     private ImpactServiceImpl impactService;
@@ -358,6 +359,20 @@ class ImpactServiceImplTest {
         EvaluateResponse response = impactService.evaluate(1L, 5L);
 
         assertTrue(response.impacted());
+    }
+
+    @Test
+    @DisplayName("Should not count a rejected trip-wide impact towards the overall verdict")
+    void evaluate_ShouldNotBeImpacted_WhenOnlyTripImpactIsRejected() {
+        // the trip verdict is the one rejected this time, and the activity is fine
+        Impact rejectedTripImpact = rejectableImpact(2L, null, true);
+        Impact activityImpact = rejectableImpact(1L, activity, false);
+        activityImpact.setImpacted(false);
+        givenStoredVerdicts(rejectedTripImpact, activityImpact);
+
+        EvaluateResponse response = impactService.evaluate(1L, 5L);
+
+        assertFalse(response.impacted());
     }
 
     @Test

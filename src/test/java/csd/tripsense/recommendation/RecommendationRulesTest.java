@@ -234,6 +234,49 @@ class RecommendationRulesTest {
     }
 
     @Test
+    void activityWithNoCategoryGetsNoShortlist() {
+        // older rows have no category, so there is nothing to base a substitute on
+        List<ActivityOption> options = List.of(option(1, "Sapporo", MUSEUM_GALLERY, "a museum"));
+
+        assertTrue(RecommendationRules.shortlist(
+                options, null, "Sapporo, Japan", "").isEmpty());
+    }
+
+    @Test
+    void longerAreaNameWinsWhenTwoStartAtTheSamePlace() {
+        // "bang" and "bangkok" both start the address, and bangkok is the one meant. the "bang"
+        // row is placed in krabi on purpose, so picking it would move the origin 650km south
+        double[] krabi = WHERE.get("Krabi");
+        List<ActivityOption> options = List.of(
+                new ActivityOption(1L, "Thailand", "Bang", MUSEUM_GALLERY, "bang museum", "Bang, Thailand",
+                        krabi[0], krabi[1]),
+                option(2, "Bangkok", MUSEUM_GALLERY, "bangkok museum"));
+
+        List<ActivityOption> result = RecommendationRules.shortlist(
+                options, SKI_SNOW, "Bangkok, Thailand", "");
+
+        assertEquals("bangkok museum", result.get(0).getName());
+    }
+
+    @Test
+    void anOptionWithNoAreaIsNeverTakenAsTheActivitysArea() {
+        // an empty area is found at the start of every address, so without the guard this row
+        // would become the origin and pull the ranking towards krabi
+        double[] krabi = WHERE.get("Krabi");
+        List<ActivityOption> options = List.of(
+                new ActivityOption(1L, "Thailand", "", MUSEUM_GALLERY, "unnamed museum", "Thailand",
+                        krabi[0], krabi[1]),
+                option(2, "Bangkok", MUSEUM_GALLERY, "bangkok museum"),
+                option(3, "Ayutthaya", MUSEUM_GALLERY, "ayutthaya museum"));
+
+        List<ActivityOption> result = RecommendationRules.shortlist(
+                options, SKI_SNOW, "Na Phra Lan Rd, Bangkok, Thailand", "");
+
+        assertEquals(List.of("bangkok museum", "ayutthaya museum", "unnamed museum"),
+                result.stream().map(ActivityOption::getName).toList());
+    }
+
+    @Test
     void emptyOptionsDoesNotThrow() {
         assertTrue(RecommendationRules.shortlist(
                 List.of(), SKI_SNOW, "Sapporo", "anything").isEmpty());
