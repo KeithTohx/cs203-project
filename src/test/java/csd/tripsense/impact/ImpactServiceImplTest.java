@@ -33,6 +33,7 @@ class ImpactServiceImplTest {
     @Mock private ItineraryService itineraryService;
     @Mock private ActivityService activityService;
     @Mock private NewsService newsService;
+    @Mock private org.springframework.context.ApplicationEventPublisher events;
 
     @InjectMocks
     private ImpactServiceImpl impactService;
