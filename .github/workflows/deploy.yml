@@ -29,7 +29,7 @@ jobs:
             ./mvnw -B -q package -DskipTests
             sudo systemctl restart tripsense
             # poll rather than a fixed wait, startup has already grown 9s -> 14s
-            for i in $(seq 1 12); do
+            for i in $(seq 1 36); do
               sleep 5
               if curl -fsS -o /dev/null http://localhost/v3/api-docs; then exit 0; fi
             done
