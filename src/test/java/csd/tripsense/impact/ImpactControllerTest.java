@@ -3,24 +3,32 @@ package csd.tripsense.impact;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+
+import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.server.ResponseStatusException;
 
+import csd.tripsense.activity.Activity;
+import csd.tripsense.activity.ActivityService;
 import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.chat.ChatService;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryAccess;
+import csd.tripsense.itinerary.ItineraryNotFoundException;
+import csd.tripsense.itinerary.ItineraryService;
 import csd.tripsense.user.User;
 import csd.tripsense.user.UserRepository;
 
@@ -39,6 +47,12 @@ class ImpactControllerTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private ItineraryService itineraryService;
+
+    @Mock
+    private ActivityService activityService;
+
     private ImpactController impactController;
 
     private CurrentUser owner;
@@ -50,8 +64,7 @@ class ImpactControllerTest {
     void setUp() {
         ItineraryAccess access = new ItineraryAccess(userRepository);
         impactController = new ImpactController(impactService, chatService, access,
-                mock(csd.tripsense.itinerary.ItineraryService.class),
-                mock(csd.tripsense.activity.ActivityService.class));
+                itineraryService, activityService);
 
         owner = new CurrentUser(1L, "john@example.com", "john", null, "USER");
         otherUser = new CurrentUser(2L, "alice@example.com", "alice", null, "USER");
@@ -79,6 +92,89 @@ class ImpactControllerTest {
         rejected.setImpacted(true);
         rejected.setRejected(true);
         return rejected;
+    }
+
+    // ===== OWNER TESTS =====
+
+    @Test
+    @DisplayName("Should return the impact when caller owns the itinerary")
+    void getImpact_ShouldReturnImpact_WhenCallerIsOwner() {
+        // arrange
+        when(impactService.getImpact(1L)).thenReturn(testImpact);
+
+        // act
+        ImpactResponse response = impactController.getImpact(1L, owner);
+
+        // assert
+        assertEquals(1L, response.id());
+    }
+
+    @Test
+    @DisplayName("Should delete the impact when caller owns the itinerary")
+    void deleteImpact_ShouldDelete_WhenCallerIsOwner() {
+        // arrange
+        when(impactService.getImpact(1L)).thenReturn(testImpact);
+
+        // act
+        impactController.deleteImpact(1L, owner);
+
+        // assert
+        verify(impactService).deleteImpact(1L);
+    }
+
+    @Test
+    @DisplayName("Should evaluate the itinerary when caller owns it")
+    void evaluate_ShouldRun_WhenCallerOwnsItinerary() {
+        // arrange
+        when(itineraryService.getItineraryById(1L)).thenReturn(testImpact.getItinerary());
+
+        // act
+        impactController.evaluate(new EvaluateRequest(1L, 5L), owner);
+
+        // assert
+        verify(impactService).evaluate(1L, 5L);
+    }
+
+    @Test
+    @DisplayName("Should list only the impacts on the caller's own trips")
+    void getImpacts_ShouldOnlyListOwnImpacts() {
+        // arrange: an impact with no itinerary belongs to nobody, so it is left out
+        Impact orphan = new Impact();
+        orphan.setId(2L);
+        when(impactService.listImpacts()).thenReturn(List.of(testImpact, orphan));
+
+        // act
+        List<ImpactResponse> result = impactController.getImpacts(owner);
+
+        // assert
+        assertEquals(List.of(1L), result.stream().map(ImpactResponse::id).toList());
+    }
+
+    // ===== OTHER USER TESTS =====
+
+    @ParameterizedTest
+    @ValueSource(strings = {"USER", "ADMIN"})
+    @DisplayName("Should answer not found to any other account, admins included, and change nothing")
+    void allEndpoints_ShouldThrowNotFound_WhenCallerDoesNotOwnTheItinerary(String role) {
+        // arrange
+        CurrentUser other = new CurrentUser(2L, "alice@example.com", "alice", null, role);
+        Activity activity = new Activity();
+        activity.setItinerary(testImpact.getItinerary());
+        when(impactService.getImpact(1L)).thenReturn(testImpact);
+        when(itineraryService.getItineraryById(1L)).thenReturn(testImpact.getItinerary());
+        when(activityService.getActivityById(20L)).thenReturn(activity);
+
+        // act + assert: a 404 rather than a 403, so someone else cannot find out which ids exist
+        assertThrows(ImpactNotFoundException.class, () -> impactController.getImpact(1L, other));
+        assertThrows(ImpactNotFoundException.class, () -> impactController.deleteImpact(1L, other));
+        assertThrows(ItineraryNotFoundException.class, () -> impactController.getImpactsByUser(1L, other));
+        assertThrows(ItineraryNotFoundException.class, () -> impactController.getImpactsByItinerary(1L, other));
+        assertThrows(ItineraryNotFoundException.class, () -> impactController.getImpactsByActivity(20L, other));
+        assertThrows(ItineraryNotFoundException.class,
+                () -> impactController.evaluate(new EvaluateRequest(1L, 5L), other));
+
+        verify(impactService, never()).deleteImpact(any());
+        verify(impactService, never()).evaluate(any(), any());
     }
 
     // ===== UPDATE IMPACT TESTS =====

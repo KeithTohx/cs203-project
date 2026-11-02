@@ -10,6 +10,7 @@ import csd.tripsense.auth.SessionService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -29,10 +30,12 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -282,6 +285,71 @@ class UserControllerTest {
                 .andExpect(status().isUnauthorized());
 
         verify(preferenceService, never()).updatePreferences(any(), any());
+    }
+
+    // ---------- DELETE /api/user/me ----------
+
+    @Test
+    void deleteAccount_returns204_isAudited_thenEndsAllSessions() throws Exception {
+        loginAs(alice);
+
+        mockMvc.perform(delete("/api/user/me").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"currentPassword\":\"password123\"}"))
+                .andExpect(status().isNoContent());
+
+        // sessions end last, so a failed delete never logs the user out
+        InOrder order = inOrder(userService, auditService, sessionService);
+        order.verify(userService).deleteAccount(7L, "password123");
+        order.verify(auditService).record(eq(AuditService.ACCOUNT_DELETED), eq(7L), eq("alice@example.com"),
+                eq(7L), eq("deleted own account"));
+        order.verify(sessionService).endAllSessions(eq("alice@example.com"), any(), any());
+    }
+
+    @Test
+    void deleteAccount_alwaysTargetsTheLoggedInAccount_whateverIdTheBodyContains() throws Exception {
+        loginAs(alice);
+
+        mockMvc.perform(delete("/api/user/me").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"id\":1,\"currentPassword\":\"password123\"}"))
+                .andExpect(status().isNoContent());
+
+        verify(userService).deleteAccount(7L, "password123");
+        verify(userService, never()).deleteAccount(eq(1L), any());
+    }
+
+    @Test
+    void deleteAccount_withWrongCurrentPassword_returns400_andTheUserStaysLoggedIn() throws Exception {
+        loginAs(alice);
+        doThrow(new ResponseStatusException(HttpStatus.BAD_REQUEST, "current password is incorrect"))
+                .when(userService).deleteAccount(any(), any());
+
+        mockMvc.perform(delete("/api/user/me").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"currentPassword\":\"wrong-password\"}"))
+                .andExpect(status().isBadRequest());
+
+        verify(sessionService, never()).endAllSessions(any(), any(), any());
+        verify(auditService, never()).record(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void deleteAccount_withBlankPassword_returns400BeforeAnythingIsChecked() throws Exception {
+        loginAs(alice);
+
+        mockMvc.perform(delete("/api/user/me").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"currentPassword\":\"\"}"))
+                .andExpect(status().isBadRequest());
+
+        verify(userService, never()).deleteAccount(any(), any());
+    }
+
+    @Test
+    void deleteAccount_whenNotLoggedIn_returns401() throws Exception {
+        mockMvc.perform(delete("/api/user/me").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"currentPassword\":\"password123\"}"))
+                .andExpect(status().isUnauthorized());
+
+        verify(userService, never()).deleteAccount(any(), any());
+        verify(sessionService, never()).endAllSessions(any(), any(), any());
     }
 
 }
