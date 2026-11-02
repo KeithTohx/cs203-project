@@ -400,4 +400,59 @@ class RecommendationServiceImplTest {
         assertEquals(List.of(high, medium, low), result);
         verifyNoInteractions(chatService);
     }
+
+    // ===== GUARDS ON THE MODEL'S ANSWER =====
+    // pick and parse stop a bad model answer getting into the database, so they are checked on their own
+
+    @Test
+    @DisplayName("Should pick the place when the model chose one we offered")
+    void pick_ShouldReturnOption_WhenItWasOffered() {
+        // Act
+        ActivityOption picked = RecommendationServiceImpl.pick(501L, List.of(museum));
+
+        // Assert
+        assertEquals(museum, picked);
+    }
+
+    @Test
+    @DisplayName("Should drop a place id the model made up")
+    void pick_ShouldReturnNull_WhenOptionWasNeverOffered() {
+        // Act
+        ActivityOption picked = RecommendationServiceImpl.pick(999L, List.of(museum));
+
+        // Assert: the model inventing an id is the failure this whole design exists to catch
+        assertNull(picked);
+    }
+
+    @Test
+    @DisplayName("Should drop a missing place id")
+    void pick_ShouldReturnNull_WhenOptionIdIsNull() {
+        // Act
+        ActivityOption picked = RecommendationServiceImpl.pick(null, List.of(museum));
+
+        // Assert
+        assertNull(picked);
+    }
+
+    @Test
+    @DisplayName("Should read an enum the model sent with odd casing and spaces")
+    void parse_ShouldReadEnum_WhenModelSendsMessyText() {
+        // Act
+        Severity severity = RecommendationServiceImpl.parse(Severity.class, " high ", Severity.MEDIUM);
+
+        // Assert
+        assertEquals(Severity.HIGH, severity);
+    }
+
+    @Test
+    @DisplayName("Should fall back when the model makes up an enum or sends none")
+    void parse_ShouldUseFallback_WhenValueIsUnknownOrNull() {
+        // Act
+        Action madeUp = RecommendationServiceImpl.parse(Action.class, "PANIC", Action.MONITOR);
+        Action missing = RecommendationServiceImpl.parse(Action.class, null, Action.MONITOR);
+
+        // Assert
+        assertEquals(Action.MONITOR, madeUp);
+        assertEquals(Action.MONITOR, missing);
+    }
 }
