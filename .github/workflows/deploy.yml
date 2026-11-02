@@ -34,5 +34,5 @@ jobs:
               if curl -fsS -o /dev/null http://localhost/v3/api-docs; then exit 0; fi
             done
             echo "app did not come back up"
-            journalctl -u tripsense -n 30 --no-pager
+            journalctl -u tripsense -n 200 --no-pager
             exit 1
