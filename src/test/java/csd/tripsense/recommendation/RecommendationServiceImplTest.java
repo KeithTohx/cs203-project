@@ -1,14 +1,14 @@
 package csd.tripsense.recommendation;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.lang.reflect.Constructor;
 import java.time.Instant;
@@ -17,11 +17,16 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.stubbing.Answer;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityCategory;
@@ -30,11 +35,15 @@ import csd.tripsense.impact.Impact;
 import csd.tripsense.impact.ImpactService;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryService;
+import csd.tripsense.itinerary.ItineraryNotFoundException;
 import csd.tripsense.news.News;
 import csd.tripsense.user.User;
 import csd.tripsense.user.preference.FlexibilityLevel;
 import csd.tripsense.user.preference.PreferenceService;
 import csd.tripsense.user.preference.UserPreference;
+import csd.tripsense.country.Country;
+
+
 
 /**
  * The whole generate flow, with the model, the database and the other services mocked.
