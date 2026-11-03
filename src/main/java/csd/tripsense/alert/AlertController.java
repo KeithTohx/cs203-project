@@ -2,6 +2,7 @@ package csd.tripsense.alert;
 
 import csd.tripsense.auth.CurrentUser;
 import io.swagger.v3.oas.annotations.Operation;
+import jakarta.validation.Valid;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpStatus;
@@ -24,13 +25,15 @@ public class AlertController {
     }
 
     @Operation(summary = "List your saved disruption alerts",
-            description = "Newest first, optionally unread only. Returns unreadCount across all pages.")
+            description = "Newest first, optionally unread only. Returns unreadCount across all alerts. "
+                    + "To load older alerts, send the response's nextBeforeId back as beforeId. "
+                    + "hasMore is false and nextBeforeId is null once there are no older alerts.")
     @GetMapping
     public AlertService.AlertPage list(@AuthenticationPrincipal CurrentUser me,
                                        @RequestParam(defaultValue = "false") boolean unreadOnly,
-                                       @RequestParam(defaultValue = "0") int page,
+                                       @RequestParam(required = false) Long beforeId,
                                        @RequestParam(defaultValue = "20") int size) {
-        return alerts.list(userId(me), unreadOnly, page, size);
+        return alerts.list(userId(me), unreadOnly, beforeId, size);
     }
 
     @Operation(summary = "Receive live disruption alerts",
@@ -45,10 +48,26 @@ public class AlertController {
         return streams.subscribe(userId, request.getSession(false));
     }
 
-    @Operation(summary = "Mark one of your alerts as read", description = "Idempotent. Requires CSRF token.")
-    @PatchMapping("/{id}/read")
-    public AlertResponse markRead(@PathVariable Long id, @AuthenticationPrincipal CurrentUser me) {
+    @Operation(summary = "Update one of your alerts",
+            description = "Send {\"read\": true} to mark it as read. Idempotent. Requires CSRF token.")
+    @PatchMapping("/{id}")
+    public AlertResponse update(@PathVariable Long id, @Valid @RequestBody AlertUpdateRequest request,
+                                @AuthenticationPrincipal CurrentUser me) {
+        // validation only lets read: true through, so there is nothing else to apply
+        // if AlertUpdateRequest gains more fields, apply them here
         return alerts.markRead(id, userId(me));
+    }
+
+    @Operation(summary = "Update all of your alerts",
+            description = "Send {\"read\": true} to mark every alert as read, not just the loaded ones. "
+                    + "Pass upToId (the newest alert id the user has seen) so alerts arriving meanwhile stay unread. "
+                    + "Returns the unreadCount left afterwards. Idempotent. Requires CSRF token.")
+    @PatchMapping
+    public AlertService.UnreadCount updateAll(@Valid @RequestBody AlertUpdateRequest request,
+                                              @RequestParam(required = false) Long upToId,
+                                              @AuthenticationPrincipal CurrentUser me) {
+        // same as update: validation already guarantees read is true
+        return alerts.markAllRead(userId(me), upToId);
     }
 
     private Long userId(CurrentUser me) {
