@@ -138,6 +138,72 @@ class RecommendationPreferenceHelpersTest {
         assertThat(RecommendationServiceImpl.isStale(madeAt(null), prefs)).isFalse();
     }
 
+    // a recommendation that records which version of the preferences it was written for
+    private Recommendation writtenFor(Instant version, LocalDateTime createdAt) {
+        Recommendation recommendation = madeAt(createdAt);
+        recommendation.setPreferencesVersion(version);
+        return recommendation;
+    }
+
+    @Test
+    void adviceWrittenForAnOlderVersionIsStaleEvenIfItWasSavedAfterTheChange() {
+        // the race: the model started on the old preferences, the traveller changed them, and the
+        // row was saved after that. its createdAt is later than the change, but the advice is not current
+        Instant oldVersion = Instant.parse("2026-11-01T10:00:00Z");
+        UserPreference prefs = savedPrefs(Instant.parse("2026-11-01T10:00:05Z"));
+
+        assertThat(RecommendationServiceImpl.isStale(writtenFor(oldVersion, LocalDateTime.now()), prefs)).isTrue();
+    }
+
+    @Test
+    void adviceWrittenForTheCurrentVersionIsFresh() {
+        Instant version = Instant.parse("2026-11-01T10:00:00Z");
+        UserPreference prefs = savedPrefs(version);
+
+        // equal is not older, so a row is not rebuilt over and over for preferences it already matches
+        assertThat(RecommendationServiceImpl.isStale(writtenFor(version, LocalDateTime.now().minusDays(3)), prefs))
+                .isFalse();
+    }
+
+    @Test
+    void theStoredVersionOutranksWhenTheRowWasMade() {
+        // made long ago, but written for the current preferences, so nothing has changed since
+        Instant version = Instant.parse("2026-11-01T10:00:00Z");
+        UserPreference prefs = savedPrefs(version);
+
+        assertThat(RecommendationServiceImpl.isStale(
+                writtenFor(version, LocalDateTime.of(2020, 1, 1, 0, 0)), prefs)).isFalse();
+    }
+
+    @Test
+    void aRowWithNoVersionFallsBackToWhenItWasMade() {
+        UserPreference prefs = savedPrefs(Instant.now());
+
+        // rows made before the version was kept, they behave as they did before
+        assertThat(RecommendationServiceImpl.isStale(
+                writtenFor(null, LocalDateTime.now().minusHours(2)), prefs)).isTrue();
+        assertThat(RecommendationServiceImpl.isStale(
+                writtenFor(null, LocalDateTime.now().plusHours(1)), prefs)).isFalse();
+    }
+
+    @Test
+    void aVersionNeverMakesAnythingStaleForUnsavedDefaults() {
+        assertThat(RecommendationServiceImpl.isStale(
+                writtenFor(Instant.parse("2020-01-01T00:00:00Z"), LocalDateTime.now()), unsavedPrefs())).isFalse();
+    }
+
+    @Test
+    void theVersionOfSavedPreferencesIsWhenTheyLastChanged() {
+        Instant changedAt = Instant.parse("2026-11-01T10:00:00Z");
+
+        assertThat(RecommendationServiceImpl.versionOf(savedPrefs(changedAt))).isEqualTo(changedAt);
+    }
+
+    @Test
+    void unsavedDefaultsHaveNoVersion() {
+        assertThat(RecommendationServiceImpl.versionOf(unsavedPrefs())).isNull();
+    }
+
     // ----- travellerNotes -----
 
     @Test

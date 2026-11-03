@@ -19,13 +19,15 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.stubbing.Answer;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityCategory;
@@ -268,6 +270,63 @@ class RecommendationServiceImplTest {
         verify(recommendations, never()).delete(any());
     }
 
+    // ----- the preferences version a recommendation is written for -----
+
+    @Test
+    void aRecommendationRecordsTheVersionOfThePreferencesItWasWrittenFor() {
+        Instant version = Instant.parse("2026-11-01T10:00:00Z");
+        preferencesSavedAt(version);
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "MONITOR", null, "Keep watching.");
+
+        assertThat(generateOne().getPreferencesVersion()).isEqualTo(version);
+    }
+
+    @Test
+    void aTravellerWithNoSavedPreferencesGetsNoVersion() {
+        // the unsaved default has no real version, and a made up one would make every row look old
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "MONITOR", null, "Keep watching.");
+
+        assertThat(generateOne().getPreferencesVersion()).isNull();
+    }
+
+    @Test
+    void preferencesChangedWhileTheModelIsAnsweringLeaveTheAdviceOutOfDate() {
+        Instant startedWith = Instant.parse("2026-11-01T10:00:00Z");
+        preferencesSavedAt(startedWith);
+        theImpactsAre(skiImpact(4L));
+        // the traveller saves new preferences while the model is still working
+        when(chatService.ask(anyString(), any())).thenAnswer(invocation -> {
+            ReflectionTestUtils.setField(prefs, "updatedAt", Instant.now());
+            return modelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.").answer(invocation);
+        });
+
+        Recommendation made = generateOne();
+
+        // it is stamped with the version the model was told about, not the one saved afterwards
+        assertThat(made.getPreferencesVersion()).isEqualTo(startedWith);
+        // and createdAt is later than the change, which is what used to make it look current
+        assertThat(made.getCreatedAt()).isAfter(LocalDateTime.now().minusMinutes(1));
+        assertThat(RecommendationServiceImpl.isStale(made, prefs)).isTrue();
+    }
+
+    @Test
+    void aRefreshStampsTheRowWithTheNewVersion() {
+        Instant newVersion = Instant.parse("2026-11-01T12:00:00Z");
+        preferencesSavedAt(newVersion);
+        Recommendation stale = savedRecommendationMadeAt(LocalDateTime.now().minusHours(2));
+        stale.setPreferencesVersion(Instant.parse("2026-11-01T10:00:00Z"));
+        when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(stale));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "MONITOR", null, "Keep watching.");
+
+        generateOne();
+
+        assertThat(stale.getPreferencesVersion()).isEqualTo(newVersion);
+        assertThat(RecommendationServiceImpl.isStale(stale, prefs)).isFalse();
+    }
+
     // ----- two requests at the same moment -----
 
     @Test
@@ -336,6 +395,31 @@ class RecommendationServiceImplTest {
         assertThat(recommendation.getAction()).isEqualTo(Action.REPLACE);
         // the model's advice named the museum, so it is replaced with one that names the mall
         assertThat(recommendation.getAdvice()).isEqualTo("Swap this for Sapporo Mall in Sapporo.");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = { "MONITOR", "RESCHEDULE", "CANCEL", "RELOCATE" })
+    void aSwappedOptionIsAlwaysAReplaceWhateverTheModelSaid(String modelAction) {
+        prefs.setPreferredCategories(Set.of(ActivityCategory.SHOPPING));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", modelAction, 1L, "Do something else.");   // a museum, not shopping
+
+        Recommendation recommendation = generateOne();
+
+        // the advice says "Swap this for ...", so the action must say the same and not contradict it
+        assertThat(recommendation.getSuggestedOption()).isEqualTo(mall);
+        assertThat(recommendation.getAction()).isEqualTo(Action.REPLACE);
+        assertThat(recommendation.getAdvice()).isEqualTo("Swap this for Sapporo Mall in Sapporo.");
+    }
+
+    @Test
+    void aModelPickThatIsAlreadyPreferredKeepsTheActionTheModelGave() {
+        prefs.setPreferredCategories(Set.of(ActivityCategory.SHOPPING));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "RELOCATE", 2L, "Move the day to the mall.");   // nothing was swapped
+
+        // only a swap forces REPLACE. when the code did not interfere the model's own answer stands
+        assertThat(generateOne().getAction()).isEqualTo(Action.RELOCATE);
     }
 
     @Test

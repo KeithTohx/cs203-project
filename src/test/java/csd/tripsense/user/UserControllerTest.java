@@ -241,6 +241,8 @@ class UserControllerTest {
         verify(userService, never()).changePassword(any(), any(), any());
     }
 
+    // ---------- GET & PATCH /api/user/me/preferences ----------
+
     @Test
     void getPreferences_returnsTheLoggedInUsersPreferences() throws Exception {
         loginAs(alice);
