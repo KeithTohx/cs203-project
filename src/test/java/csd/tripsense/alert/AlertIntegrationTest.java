@@ -186,6 +186,78 @@ class AlertIntegrationTest {
         assertThat(alertService.list(user.getId(), false, 0, 20).content()).hasSize(1);
     }
 
+    @Test void itineraryAndActivitiesAreClaimedTogetherOnlyAfterAssessmentCompletes() {
+        Activity activity = new Activity(); activity.setItinerary(trip); activity.setCountry(trip.getCountry());
+        activity.setName("Mount Batur trek"); activity = activities.saveAndFlush(activity);
+        evaluate();
+        Long tripAlert = alertService.list(user.getId(), false, 0, 20).content().getFirst().id();
+        assertThat(emailStore.claim(tripAlert, java.time.Instant.now().plusSeconds(1))).isEmpty();
+        impactService.evaluateActivityForNews(activity, article);
+        Long activityAlert = alertService.list(user.getId(), false, 0, 20).content().getFirst().id();
+        var now = java.time.Instant.now().plusSeconds(1);
+        var delivery = emailStore.claim(activityAlert, now).orElseThrow();
+        assertThat(delivery.relatedAlerts()).hasSize(2);
+        assertThat(delivery.relatedAlerts()).extracting(AlertResponse::activityName).containsExactly(null, "Mount Batur trek");
+        assertThat(emailStore.claim(tripAlert, now)).isEmpty();
+        assertThat(emailStore.claim(activityAlert, now)).isEmpty();
+        emailStore.sent(delivery, now);
+        assertThat(alertService.list(user.getId(), false, 0, 20).content()).hasSize(2)
+                .allSatisfy(a -> assertThat(a.emailStatus()).isEqualTo(EmailStatus.SENT));
+        assertThat(emailStore.claim(tripAlert, now.plusSeconds(1000))).isEmpty();
+    }
+
+    @Test void groupedRetryPreservesMessageIdentityAndCompletesAllMembers() {
+        Activity activity = new Activity(); activity.setItinerary(trip); activity.setCountry(trip.getCountry());
+        activity.setName("Trek"); activity = activities.saveAndFlush(activity);
+        evaluate(); impactService.evaluateActivityForNews(activity, article);
+        Long id = alertService.list(user.getId(), false, 0, 20).content().getFirst().id();
+        var now = java.time.Instant.now().plusSeconds(1);
+        var first = emailStore.claim(id, now).orElseThrow();
+        emailStore.failed(first, now);
+        assertThat(emailStore.claim(id, now.plusSeconds(59))).isEmpty();
+        var retry = emailStore.claim(id, now.plusSeconds(61)).orElseThrow();
+        assertThat(retry.key()).isEqualTo(first.key());
+        assertThat(retry.claims()).hasSize(2).allSatisfy(c -> assertThat(c.attempt()).isEqualTo(2));
+        emailStore.sent(first, now.plusSeconds(62));
+        assertThat(alertService.list(user.getId(), false, 0, 20).content())
+                .allSatisfy(a -> assertThat(a.emailStatus()).isEqualTo(EmailStatus.SENDING));
+        emailStore.sent(retry, now.plusSeconds(63));
+        assertThat(alertService.list(user.getId(), false, 0, 20).content())
+                .allSatisfy(a -> assertThat(a.emailStatus()).isEqualTo(EmailStatus.SENT));
+    }
+
+    @Test void lateActivityForAlreadyNotifiedNewsDoesNotSendAnotherEmail() {
+        evaluate();
+        Long id = alertService.list(user.getId(), false, 0, 20).content().getFirst().id();
+        var now = java.time.Instant.now().plusSeconds(1);
+        emailStore.sent(emailStore.claim(id, now).orElseThrow(), now);
+        Activity activity = new Activity(); activity.setItinerary(trip); activity.setCountry(trip.getCountry());
+        activity.setName("Added later"); activity = activities.saveAndFlush(activity);
+        impactService.evaluateActivityForNews(activity, article);
+        Long added = alertService.list(user.getId(), false, 0, 20).content().getFirst().id();
+        assertThat(emailStore.claim(added, now.plusSeconds(1000))).isEmpty();
+        assertThat(alertService.list(user.getId(), false, 0, 20).content()).hasSize(2);
+    }
+
+    @Test void activityOnlyDisruptionStillGetsAnEmailAndOtherNewsIsSeparate() {
+        Activity activity = new Activity(); activity.setItinerary(trip); activity.setCountry(trip.getCountry());
+        activity.setName("Trek"); activity = activities.saveAndFlush(activity);
+        verdict(false); impactService.evaluateItineraryForNews(trip, article);
+        verdict(true); impactService.evaluateActivityForNews(activity, article);
+        Long id = alertService.list(user.getId(), false, 0, 20).content().getFirst().id();
+        var now = java.time.Instant.now().plusSeconds(1);
+        var delivery = emailStore.claim(id, now).orElseThrow();
+        assertThat(delivery.relatedAlerts()).hasSize(1);
+        assertThat(delivery.alert().activityId()).isEqualTo(activity.getId());
+        emailStore.sent(delivery, now);
+        News other = new News(); other.setTitle("Another event"); other.setUrl("https://example.com/" + UUID.randomUUID());
+        other = news.saveAndFlush(other);
+        impactService.evaluateItineraryForNews(trip, other);
+        impactService.evaluateActivityForNews(activity, other);
+        Long newAlert = alertService.list(user.getId(), false, 0, 20).content().getFirst().id();
+        assertThat(emailStore.claim(newAlert, java.time.Instant.now().plusSeconds(1))).isPresent();
+    }
+
     @Test void acceptedEmailIsNotSentAgainAndRejectedImpactsAreNotEmailed() {
         Impact impact = evaluate(); Long id = alertService.list(user.getId(), false, 0, 20).content().getFirst().id();
         var now = java.time.Instant.now().plusSeconds(1);
