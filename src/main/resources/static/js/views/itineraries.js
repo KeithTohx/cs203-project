@@ -437,6 +437,7 @@ const createLatestNews = detailsList => {
 const createItineraryCard = ({ itinerary, activities, impacts, recommendations, failed }) => {
     const itineraryId = Number(itinerary.id);
     const isPast = isTripOver(itinerary);
+    const tripCountdown = countdown(itinerary);
     // what the user rejected no longer counts as impacted, but is kept in its own section so it can be restored
     const impactedOnly = stillImpacted(impacts);
     const dismissed = impacts.filter(impact => impact.impacted && impact.rejected);
@@ -462,7 +463,7 @@ const createItineraryCard = ({ itinerary, activities, impacts, recommendations, 
             <div class="row">
                 <h2>
                     ${escapeHtml(itinerary.name)}
-                    ${isPast ? `<span class="tag">Past</span>` : `<span class="tag${countdown(itinerary) === "Happening now" ? " ok" : ""}">${escapeHtml(countdown(itinerary))}</span>`}
+                    ${isPast ? `<span class="tag">Past</span>` : `<span class="tag${tripCountdown === "Happening now" ? " ok" : ""}">${escapeHtml(tripCountdown)}</span>`}
                     ${impactedOnly.length ? `<span class="tag bad">Impacted</span>` : ""}
                 </h2>
                 <a class="btn" href="#/itineraries/${itineraryId}/edit" aria-label="Edit ${escapeHtml(itinerary.name)}">${icon("pencil")}Edit</a>
@@ -554,6 +555,8 @@ async function toggleRejected(button, detailsById, onAuthLost, onChange) {
         return;
     }
 
+    // the user may have left the page while waiting, so there is no card to redraw
+    if (!card.isConnected) return;
     redrawCard(card, details, button);
     onChange();
 }
@@ -564,7 +567,7 @@ async function suggestPlans(button, detailsById, onAuthLost, onChange) {
     const details = detailsById.get(Number(card.dataset.itinerary));
     const errorMessage = card.querySelector("[data-impact-error]");
     const status = card.querySelector("[data-suggest-status]");
-    const originalLabel = button.textContent;
+    const originalLabel = button.innerHTML;   // innerHTML so the sparkle icon comes back too
 
     button.disabled = true;
     button.textContent = "Working it out…";
@@ -576,7 +579,7 @@ async function suggestPlans(button, detailsById, onAuthLost, onChange) {
         generated = (await api.generateRecommendations(details.itinerary.id)) ?? [];
     } catch (error) {
         button.disabled = false;
-        button.textContent = originalLabel;
+        button.innerHTML = originalLabel;
         status.textContent = "";
         if (error.status === 401) return onAuthLost();
         errorMessage.textContent = error.message;
@@ -588,6 +591,8 @@ async function suggestPlans(button, detailsById, onAuthLost, onChange) {
     for (const recommendation of generated) byId.set(recommendation.id, recommendation);
     details.recommendations = [...byId.values()];
 
+    // generating is slow, so the user may well have left the page by now
+    if (!card.isConnected) return;
     redrawCard(card, details, button);
     onChange();
 }

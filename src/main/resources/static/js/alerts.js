@@ -276,7 +276,7 @@ const createPanel = () => {
         <div class="alert-panel" id="alert-panel" role="dialog" aria-label="Alerts">
             <div class="row">
                 <h2 tabindex="-1">Alerts</h2>
-                ${hasUnread ? `<button class="link-button" type="button" data-read-all>Mark all as read</button>` : ""}
+                ${hasUnread ? `<button class="link-button" type="button" data-bell-read-all>Mark all as read</button>` : ""}
             </div>
             ${list}
             <a class="alert-panel-footer" href="#/alerts" data-view-all>${viewAllText}</a>
@@ -438,7 +438,8 @@ document.addEventListener("click", event => {
     }
 
     // checked before "clicked outside", since redrawing removes the button that was clicked from the page
-    if (event.target.closest("[data-read-all]")) return readAll();
+    // its own attribute, since the alerts page has a "mark all as read" button of its own
+    if (event.target.closest("[data-bell-read-all]")) return readAll();
 
     const link = event.target.closest("[data-alert-link]");
     if (link) return goToTrip(link);

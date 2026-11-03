@@ -130,6 +130,9 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
         } catch (error) {
             loadMoreButton.disabled = false;
             loadMoreButton.textContent = "Load older alerts";
+            // an error for a view already switched away from is not worth showing, unless the session ended
+            const isStale = viewAsked !== currentView && error.status !== 401;
+            if (isStale) return;
             return showError(status, error, onAuthLost);
         }
         if (viewAsked !== currentView) return;   // switched view while waiting
@@ -161,6 +164,11 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
 
     // a failed save is shown after reloading, so the list is back to what the server has
     const showSaveFailure = async error => {
+        // left for a trip page while saving, so there is nothing here to reload
+        if (!list.isConnected) {
+            if (error.status === 401) onAuthLost();
+            return;
+        }
         await reload();
         showError(status, error, onAuthLost);
     };

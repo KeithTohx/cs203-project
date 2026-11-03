@@ -95,6 +95,7 @@ export async function showNews(root, user, onAuthLost) {
     const switchContainer = root.querySelector("#news-switch");
 
     let nextPage = 0;
+    let hasMore = false;   // whether the last page loaded was full, so there may be another
     let loadedNews = [];
     let tripsByNews = new Map();
     let affectingNews = [];
@@ -119,7 +120,7 @@ export async function showNews(root, user, onAuthLost) {
         status.innerHTML = newestFirst.length ? "" : emptyState({
             iconHtml: icon("check"),
             title: "Nothing affects your trips",
-            text: "None of the news so far affects your upcoming trips.",
+            text: "None of the news so far affects your trips.",
         });
         loadMoreButton.hidden = true;
     };
@@ -143,12 +144,13 @@ export async function showNews(root, user, onAuthLost) {
         const unseen = page.filter(news => !shownIds.has(news.id));
         loadedNews = [...loadedNews, ...unseen];
         nextPage += 1;
+        hasMore = page.length === PAGE_SIZE;
         loadMoreButton.disabled = false;
         loadMoreButton.textContent = "Load older news";
 
         if (currentView === "all") {
             drawAll();
-            loadMoreButton.hidden = page.length < PAGE_SIZE;
+            loadMoreButton.hidden = !hasMore;
         }
     };
 
@@ -160,8 +162,8 @@ export async function showNews(root, user, onAuthLost) {
         if (view === "mine") return drawMine();
 
         drawAll();
-        // the last page loaded decides whether there is more, so ask again only if it was full
-        loadMoreButton.hidden = loadedNews.length < nextPage * PAGE_SIZE;
+        // not worked out from loadedNews, which skips repeats and so can come up short of a full page
+        loadMoreButton.hidden = !hasMore;
     };
 
     // trips are extra, so the news still shows if they fail to load
