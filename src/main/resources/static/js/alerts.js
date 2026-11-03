@@ -99,17 +99,49 @@ function sessionEnded() {
     state.onAuthLost();
 }
 
+// counts every refresh started, so a slow older one cannot land on top of a newer one
+let latestRefresh = 0;
+
+// pages showing alerts of their own, told when new ones arrive so they do not fall behind the bell
+const newAlertListeners = new Set();
+
+// gives back a function that stops listening
+export function onNewAlerts(listener) {
+    newAlertListeners.add(listener);
+    return () => newAlertListeners.delete(listener);
+}
+
+// one listener failing should not stop the others, or count as the bell failing to load
+function tellListeners(newAlerts) {
+    for (const listener of newAlertListeners) {
+        try {
+            listener(newAlerts, state.unreadCount);
+        } catch (error) {
+            console.error(error);
+        }
+    }
+}
+
 async function refresh() {
     const userId = state.userId;
     if (userId == null) return;
 
+    latestRefresh += 1;
+    const thisRefresh = latestRefresh;
+
     try {
         const page = await api.alerts({ size: 20 });
-        if (state.userId !== userId) return;   // logged out or switched account while waiting
+        const switchedAccount = state.userId !== userId;   // logged out or switched account while waiting
+        const isOutdated = thisRefresh !== latestRefresh;   // a newer refresh has started since
+        if (switchedAccount || isOutdated) return;
+
         state.alerts = page?.content ?? [];
         state.unreadCount = page?.unreadCount ?? 0;
         draw();
-        announceNewAlerts();
+
+        const newAlerts = findNewAlerts();
+        announceNewAlerts(newAlerts);
+        if (newAlerts.length) tellListeners(newAlerts);
     } catch (error) {
         // a failed load keeps the last alerts and tries again on the next event or check
         if (error.status === 401) sessionEnded();
@@ -345,8 +377,7 @@ function createToast() {
     return toast;
 }
 
-function announceNewAlerts() {
-    const newAlerts = findNewAlerts();
+function announceNewAlerts(newAlerts) {
     if (!newAlerts.length || state.isOpen) return;   // with the panel open they are already in view
 
     // alerts arriving while a pop-up is still up join it, so there is only ever one, grouped like the bell.

@@ -20,7 +20,8 @@ const nav = document.getElementById("nav");
 // ---------------------------------------------------------------------------
 // ROUTE TABLE: to add a screen, add one line here. Nothing else in this file changes.
 //   path  - URL after the "#". ":name" parts become context.params.name
-//   view  - function that draws into context.root. context = { root, user, params, reauth }
+//   view  - function that draws into context.root. context = { root, user, params, reauth, onLeave }
+//           onLeave(cleanup) runs cleanup once the page is left, eg to stop listening for live updates
 //   nav   - text for the top bar link (leave out to hide it from the nav)
 //   icon  - name from icons.js shown before the nav text (optional)
 //   role  - only users with this role may open it (optional)
@@ -39,7 +40,7 @@ const routes = [
 	{ path: "/admin/audit", nav: "Activity", icon: "activity", role: "ADMIN", view: context => showAdminAudit(context.root, context.user, context.reauth) },
 	{ path: "/news", nav: "News", icon: "news", view: context => showNews(context.root, context.user, context.reauth) },
 	// opened from the bell, so it has no link of its own in the top bar
-	{ path: "/alerts", role: "USER", view: context => showAlerts(context.root, context.user, context.reauth) },
+	{ path: "/alerts", role: "USER", view: context => showAlerts(context.root, context.user, context.reauth, context.onLeave) },
 	{ path: "/account", view: context => showAccount(context.root, context.user, context.reauth) },
 	{ path: "/account/preferences", role: "USER", view: context => showEditPreferences(context.root, context.user, context.reauth) },
 	{ path: "/account/details", view: context => showEditDetails(context.root, context.user, context.reauth) },
@@ -140,12 +141,19 @@ function loginNotice() {
 
 const showMessage = (text) => { root.innerHTML = `<div class="msg">${text} <a href="#${home().path}">${home().label}</a></div>`; };
 
+// set by the page on screen, run just before the next one is drawn
+let leaveCurrentPage = null;
+const onLeave = cleanup => { leaveCurrentPage = cleanup; };
+
 function render() {
+	leaveCurrentPage?.();
+	leaveCurrentPage = null;
+
 	showFlashToast();   // eg "Itinerary saved." left by the page before
 	const matched = findRoute(currentPath());
 	if (!user) {
 		nav.innerHTML = "";
-		if (matched?.route.public) return matched.route.view({ root, user, params: matched.params, reauth });
+		if (matched?.route.public) return matched.route.view({ root, user, params: matched.params, reauth, onLeave });
 		return showLogin(root, reauth, loginNotice());   // the url is kept, so logging in returns to that page
 	}
 	if (matched?.route.public) { location.hash = home().path; return; }   // hashchange redraws
@@ -153,7 +161,7 @@ function render() {
 	if (!matched) return showMessage("Page not found.");
 	if (matched.route.role && matched.route.role !== user.role) return showMessage("You don't have access to this page.");
 	try {
-		matched.route.view({ root, user, params: matched.params, reauth });
+		matched.route.view({ root, user, params: matched.params, reauth, onLeave });
 	} catch (error) {                      // a bug in one view shouldn't blank the whole app
 		console.error(error);
 		root.innerHTML = `<div class="msg err" role="alert">Something went wrong showing this page.</div>`;

@@ -1,7 +1,7 @@
 // every alert, newest first, with older ones on demand and a filter for unread ones
 import { api } from "../api.js";
 import {
-    alertMetaParts, alertTitle, groupAlerts, isGroupUnread, isUnread, markAlertsRead, markAllAlertsRead,
+    alertMetaParts, alertTitle, groupAlerts, isGroupUnread, isUnread, markAlertsRead, markAllAlertsRead, onNewAlerts,
 } from "../alerts.js";
 import { emptyState, escapeHtml, hostnameOf, safeUrl, showError } from "../util.js";
 import { icon } from "../icons.js";
@@ -56,7 +56,7 @@ const createViewSwitch = (view, unreadCount) => `
     </div>
 `;
 
-export async function showAlerts(root, user, onAuthLost) {
+export async function showAlerts(root, user, onAuthLost, onLeave) {
     root.innerHTML = `
         <h1>Alerts</h1>
         <p class="meta">News that affects your trips, newest first.</p>
@@ -81,14 +81,27 @@ export async function showAlerts(root, user, onAuthLost) {
     let hasMore = false;
     let nextBeforeId = null;   // the cursor the backend gave for the next page, null for the newest
 
-    const shownGroups = () => groupAlerts(loadedAlerts);
+    // alerts read while on the unread view drop out of it straight away
+    const shownGroups = () => {
+        const groups = groupAlerts(loadedAlerts);
+        if (currentView !== "unread") return groups;
+        return groups.filter(isGroupUnread);
+    };
+
+    // loaded alerts are left out, since a new one can arrive live while a page of them is still loading
+    const addAlerts = (alerts, { atTop }) => {
+        const loadedIds = new Set(loadedAlerts.map(alert => alert.id));
+        const notLoaded = alerts.filter(alert => !loadedIds.has(alert.id));
+        loadedAlerts = atTop ? [...notLoaded, ...loadedAlerts] : [...loadedAlerts, ...notLoaded];
+    };
 
     const draw = () => {
+        const groups = shownGroups();
         switchContainer.innerHTML = createViewSwitch(currentView, unreadCount);
-        list.innerHTML = shownGroups().map(createAlertItem).join("");
+        list.innerHTML = groups.map(createAlertItem).join("");
         loadMoreButton.hidden = !hasMore;
 
-        if (loadedAlerts.length) {
+        if (groups.length) {
             status.innerHTML = "";
         } else if (currentView === "unread") {
             status.innerHTML = emptyState({
@@ -121,8 +134,7 @@ export async function showAlerts(root, user, onAuthLost) {
         }
         if (viewAsked !== currentView) return;   // switched view while waiting
 
-        const newAlerts = page?.content ?? [];
-        loadedAlerts = [...loadedAlerts, ...newAlerts];
+        addAlerts(page?.content ?? [], { atTop: false });
         unreadCount = page?.unreadCount ?? 0;
         hasMore = page?.hasMore ?? false;
         nextBeforeId = page?.nextBeforeId ?? null;
@@ -213,6 +225,15 @@ export async function showAlerts(root, user, onAuthLost) {
     });
 
     loadMoreButton.addEventListener("click", loadMore);
+
+    // the bell hears about new alerts live, so they are added to the top here as well.
+    // new alerts are unread, so they belong in both views
+    const stopListening = onNewAlerts((newAlerts, latestUnreadCount) => {
+        addAlerts(newAlerts, { atTop: true });
+        unreadCount = latestUnreadCount;
+        draw();
+    });
+    onLeave(stopListening);
 
     await loadMore();
 }
