@@ -195,7 +195,7 @@ class AlertIntegrationTest {
         assertThat(emailStore.claim(tripAlert, java.time.Instant.now().plusSeconds(1))).isEmpty();
         impactService.evaluateActivityForNews(activity, article);
         Long activityAlert = alertService.list(user.getId(), false, 0, 20).content().getFirst().id();
-        var now = java.time.Instant.now().plusSeconds(1);
+        var now = java.time.Instant.now().plusSeconds(31);
         var delivery = emailStore.claim(activityAlert, now).orElseThrow();
         assertThat(delivery.relatedAlerts()).hasSize(2);
         assertThat(delivery.relatedAlerts()).extracting(AlertResponse::activityName).containsExactly(null, "Mount Batur trek");
@@ -225,6 +225,97 @@ class AlertIntegrationTest {
         emailStore.sent(retry, now.plusSeconds(63));
         assertThat(alertService.list(user.getId(), false, 0, 20).content())
                 .allSatisfy(a -> assertThat(a.emailStatus()).isEqualTo(EmailStatus.SENT));
+    }
+
+    @Test void incompleteGroupIsDeferredAndSendsAvailableImpactsAtTheDeadline() {
+        Activity activity = new Activity(); activity.setItinerary(trip); activity.setCountry(trip.getCountry());
+        activity.setName("Not yet assessed"); activity = activities.saveAndFlush(activity);
+        evaluate();
+        AlertResponse alert = alertService.list(user.getId(), false, 0, 20).content().getFirst();
+        var now = alert.createdAt().plusSeconds(1);
+        assertThat(emailStore.claim(alert.id(), now)).isEmpty();
+        Alert waiting = alerts.findById(alert.id()).orElseThrow();
+        assertThat(waiting.getEmailNextAttemptAt()).isEqualTo(now.plusSeconds(30));
+        assertThat(waiting.getEmailAttempts()).isZero();
+        assertThat(emailStore.claim(alert.id(), now.plusSeconds(29))).isEmpty();
+        // Checking near the deadline must not push it back another whole recheck interval.
+        assertThat(emailStore.claim(alert.id(), alert.createdAt().plusSeconds(119))).isEmpty();
+        assertThat(alerts.findById(alert.id()).orElseThrow().getEmailNextAttemptAt())
+                .isEqualTo(alert.createdAt().plusSeconds(120));
+        var partial = emailStore.claim(alert.id(), alert.createdAt().plusSeconds(120)).orElseThrow();
+        assertThat(partial.partialAssessment()).isTrue();
+        assertThat(partial.relatedAlerts()).hasSize(1);
+        emailStore.sent(partial, alert.createdAt().plusSeconds(121));
+        verdict(true); impactService.evaluateActivityForNews(activity, article);
+        var late = alertService.list(user.getId(), false, 0, 20).content().getFirst();
+        assertThat(emailStore.claim(late.id(), alert.createdAt().plusSeconds(122))).isEmpty();
+        assertThat(alertService.list(user.getId(), false, 0, 20).content()).hasSize(2);
+    }
+
+    @Test void lateAlertInAFailedGroupBecomesFailedEvenWhenOtherAssessmentsAreMissing() {
+        evaluate();
+        var firstAlert = alertService.list(user.getId(), false, 0, 20).content().getFirst();
+        var now = firstAlert.createdAt().plusSeconds(1);
+        var first = emailStore.claim(firstAlert.id(), now).orElseThrow(); emailStore.failed(first, now);
+        var second = emailStore.claim(firstAlert.id(), now.plusSeconds(61)).orElseThrow();
+        emailStore.failed(second, now.plusSeconds(61));
+        var third = emailStore.claim(firstAlert.id(), now.plusSeconds(182)).orElseThrow();
+        emailStore.failed(third, now.plusSeconds(182));
+        Activity lateActivity = new Activity(); lateActivity.setItinerary(trip); lateActivity.setCountry(trip.getCountry());
+        lateActivity.setName("Late activity"); lateActivity = activities.saveAndFlush(lateActivity);
+        Activity missing = new Activity(); missing.setItinerary(trip); missing.setCountry(trip.getCountry());
+        missing.setName("Still unassessed"); activities.saveAndFlush(missing);
+        impactService.evaluateActivityForNews(lateActivity, article);
+        var late = alertService.list(user.getId(), false, 0, 20).content().getFirst();
+        assertThat(emailStore.claim(late.id(), now.plusSeconds(183))).isEmpty();
+        assertThat(alerts.findById(late.id()).orElseThrow().getEmailStatus()).isEqualTo(EmailStatus.FAILED);
+        assertThat(alerts.findEmailReady(AlertEmailStore.RETRYABLE, now.plusSeconds(1000),
+                org.springframework.data.domain.PageRequest.of(0, 1000)))
+                .doesNotContain(late.id(), firstAlert.id());
+        assertThat(alertService.list(user.getId(), false, 0, 20).content()).hasSize(2);
+    }
+
+    @Test void fiftyIncompleteGroupsDoNotStarveANewerEmailRetry() {
+        var now = java.time.Instant.now();
+        // Other tests keep their own fixtures in this isolated SQLite database. Park their jobs
+        // so the first fifty candidates below are exactly this scenario's blocked groups.
+        new TransactionTemplate(transactions).executeWithoutResult(status -> {
+            for (Alert existing : alerts.findAll()) {
+                alerts.finishEmail(existing.getId(), existing.getEmailAttempts(), AlertEmailStore.RETRYABLE,
+                        existing.getEmailStatus(), existing.getEmailSentAt(), now.plusSeconds(3600));
+            }
+        });
+        java.util.List<Long> blocked = new java.util.ArrayList<>();
+        for (int i = 0; i < 50; i++) {
+            Itinerary other = new Itinerary(); other.setUser(user); other.setCountry(trip.getCountry());
+            other.setName("Waiting trip " + i); other = itineraries.saveAndFlush(other);
+            Activity missing = new Activity(); missing.setItinerary(other); missing.setCountry(trip.getCountry());
+            missing.setName("Missing assessment"); activities.saveAndFlush(missing);
+            blocked.add(pendingAt(other, java.time.Instant.EPOCH, now).getId());
+        }
+        Alert healthy = pendingAt(trip, java.time.Instant.EPOCH.plusMillis(1), now);
+        var page = org.springframework.data.domain.PageRequest.of(0, 50);
+        var first = alerts.findEmailReady(AlertEmailStore.RETRYABLE, now.plusSeconds(1), page);
+        assertThat(first).containsExactlyElementsOf(blocked);
+        for (Long id : first) assertThat(emailStore.claim(id, now.plusSeconds(1))).isEmpty();
+        var next = alerts.findEmailReady(AlertEmailStore.RETRYABLE, now.plusSeconds(1), page);
+        assertThat(next).contains(healthy.getId()).doesNotContainAnyElementsOf(blocked);
+        var delivery = emailStore.claim(healthy.getId(), now.plusSeconds(1)).orElseThrow();
+        // A failed first send must still receive a retry while all fifty old groups remain incomplete.
+        emailStore.failed(delivery, now.plusSeconds(1));
+        for (Long id : blocked) assertThat(emailStore.claim(id, now.plusSeconds(61))).isEmpty();
+        assertThat(alerts.findEmailReady(AlertEmailStore.RETRYABLE, now.plusSeconds(61), page)).contains(healthy.getId());
+        assertThat(emailStore.claim(healthy.getId(), now.plusSeconds(61))).isPresent();
+    }
+
+    private Alert pendingAt(Itinerary itinerary, java.time.Instant readyAt, java.time.Instant createdAt) {
+        Impact impact = new Impact(); impact.setUser(user); impact.setItinerary(itinerary); impact.setNews(article);
+        impact.setImpacted(true); impact.setAlertEligible(true); impact.setReason("Saved impact");
+        impact = impacts.saveAndFlush(impact);
+        Alert alert = new Alert(impact);
+        org.springframework.test.util.ReflectionTestUtils.setField(alert, "createdAt", createdAt);
+        org.springframework.test.util.ReflectionTestUtils.setField(alert, "emailNextAttemptAt", readyAt);
+        return alerts.saveAndFlush(alert);
     }
 
     @Test void lateActivityForAlreadyNotifiedNewsDoesNotSendAnotherEmail() {

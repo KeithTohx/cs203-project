@@ -45,10 +45,19 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
             select a.id from Alert a where a.emailStatus in :states and a.emailNextAttemptAt <= :now
               and a.impact.impacted = true and (a.impact.rejected = false or a.impact.rejected is null)
               and (a.impact.itinerary.user.enabled = true or a.impact.itinerary.user.enabled is null)
-            order by a.id
+            order by a.emailNextAttemptAt, a.id
             """)
     java.util.List<Long> findEmailReady(@Param("states") java.util.List<EmailStatus> states,
                                        @Param("now") java.time.Instant now, Pageable page);
+
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("""
+            update Alert a set a.emailNextAttemptAt = :next
+            where a.id = :id and a.emailStatus = :pending and a.emailAttempts = :attempts
+              and a.emailNextAttemptAt < :next
+            """)
+    int deferEmail(@Param("id") Long id, @Param("attempts") int attempts,
+                   @Param("pending") EmailStatus pending, @Param("next") java.time.Instant next);
 
     @org.springframework.data.jpa.repository.Modifying
     @Query("""

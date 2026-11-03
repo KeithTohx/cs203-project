@@ -36,6 +36,13 @@
  * delivery. SMTP cannot guarantee exactly-once delivery if acceptance succeeds but the
  * acknowledgement is lost. The saved in-app alert remains available if email fails.
  *
+ * <p>Email groups wait at most 120 seconds from the first saved alert for missing assessments,
+ * then send the available impacts with a partial-assessment notice. Incomplete groups are
+ * deferred for 30 seconds between checks, and due work is ordered by its next-attempt time.
+ * Override with alerts.email.max-group-wait-seconds and alerts.email.group-recheck-seconds.
+ * A terminally failed group marks late members FAILED too; it is not retried automatically.
+ * Later assessments remain available in-app without sending a second email for the same group.
+ *
  * <p>Real-time delivery begins after impact assessment, not at the time a news event occurs.
  * Feed polling and model runtime still determine detection latency. SSE subscribers are
  * held in memory on one server; a shared broker would be needed for multi-instance push.

@@ -74,6 +74,10 @@ public class AlertEmailSender {
                 : activityAlert
                 ? "This alert concerns one activity in your itinerary."
                 : "This alert concerns your itinerary overall.";
+        if (delivery.partialAssessment()) {
+            explanation += " Some assessments are still pending. This email includes the impacts assessed so far; "
+                    + "check TripSense for later updates.";
+        }
         String plainAssessment = delivery.relatedAlerts().stream().map(a ->
                 (a.activityId() == null ? "Overall itinerary" : "Activity: " + text(a.activityName()))
                         + "\n" + text(a.reason())).collect(java.util.stream.Collectors.joining("\n\n"));

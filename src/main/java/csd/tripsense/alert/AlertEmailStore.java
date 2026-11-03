@@ -1,8 +1,14 @@
 package csd.tripsense.alert;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -13,15 +19,27 @@ public class AlertEmailStore {
     static final int MAX_ATTEMPTS = 3;
     static final List<EmailStatus> RETRYABLE = List.of(EmailStatus.PENDING, EmailStatus.SENDING);
     private final AlertRepository alerts;
+    private final long maxGroupWaitSeconds;
+    private final long groupRecheckSeconds;
 
-    public AlertEmailStore(AlertRepository alerts) { this.alerts = alerts; }
+    public AlertEmailStore(AlertRepository alerts,
+            @Value("${alerts.email.max-group-wait-seconds:120}") long maxGroupWaitSeconds,
+            @Value("${alerts.email.group-recheck-seconds:30}") long groupRecheckSeconds) {
+        this.alerts = alerts;
+        this.maxGroupWaitSeconds = Math.max(0, maxGroupWaitSeconds);
+        this.groupRecheckSeconds = Math.max(1, groupRecheckSeconds);
+    }
 
     public record ClaimedAlert(Long id, int attempt) {}
     public record Delivery(Long alertId, int attempt, String key, String recipient, AlertResponse alert,
-                           List<AlertResponse> relatedAlerts, List<ClaimedAlert> claims) {
+                           List<AlertResponse> relatedAlerts, List<ClaimedAlert> claims, boolean partialAssessment) {
+        public Delivery(Long alertId, int attempt, String key, String recipient, AlertResponse alert,
+                        List<AlertResponse> relatedAlerts, List<ClaimedAlert> claims) {
+            this(alertId, attempt, key, recipient, alert, relatedAlerts, claims, false);
+        }
         public Delivery(Long alertId, int attempt, String key, String recipient, AlertResponse alert) {
             this(alertId, attempt, key, recipient, alert,
-                    alert == null ? List.of() : List.of(alert), List.of(new ClaimedAlert(alertId, attempt)));
+                    alert == null ? List.of() : List.of(alert), List.of(new ClaimedAlert(alertId, attempt)), false);
         }
     }
 
@@ -45,31 +63,53 @@ public class AlertEmailStore {
             }
             return Optional.empty();
         }
-        if (alerts.countIncompleteEmailGroups(impact.getItinerary().getId(), impact.getNews().getId(),
-                java.time.LocalDateTime.ofInstant(now, java.time.ZoneId.systemDefault())) != 0) return Optional.empty();
+        // A new member must not bypass an active SMTP lease or another member's retry backoff.
+        Instant nextReady = group.stream().filter(a -> RETRYABLE.contains(a.getEmailStatus()))
+                .map(Alert::getEmailNextAttemptAt).max(Comparator.naturalOrder()).orElse(now);
+        if (nextReady.isAfter(now)) {
+            deferPending(group, nextReady);
+            return Optional.empty();
+        }
+        // Failure belongs to the news/trip group. Late members inherit it rather than waiting forever.
+        if (group.stream().anyMatch(a -> a.getEmailStatus() == EmailStatus.FAILED
+                || a.getEmailAttempts() >= MAX_ATTEMPTS)) {
+            for (Alert member : group) alerts.finishEmail(member.getId(), member.getEmailAttempts(), RETRYABLE,
+                    EmailStatus.FAILED, null, now);
+            return Optional.empty();
+        }
+        boolean incomplete = alerts.countIncompleteEmailGroups(impact.getItinerary().getId(), impact.getNews().getId(),
+                LocalDateTime.ofInstant(now, ZoneId.systemDefault())) != 0;
+        Instant deadline = group.stream().map(Alert::getCreatedAt).min(Comparator.naturalOrder())
+                .orElse(now).plusSeconds(maxGroupWaitSeconds);
+        if (incomplete && now.isBefore(deadline)) {
+            Instant recheck = now.plusSeconds(groupRecheckSeconds);
+            deferPending(group, recheck.isBefore(deadline) ? recheck : deadline);
+            return Optional.empty();
+        }
         var members = group.stream().filter(a -> Boolean.TRUE.equals(a.getImpact().getImpacted())
                 && !Boolean.TRUE.equals(a.getImpact().getRejected())).toList();
         if (members.isEmpty() || members.stream().anyMatch(a -> !RETRYABLE.contains(a.getEmailStatus())
                 || a.getEmailNextAttemptAt().isAfter(now))) return Optional.empty();
-        if (members.stream().anyMatch(a -> a.getEmailAttempts() >= MAX_ATTEMPTS)) {
-            for (Alert member : members) alerts.finishEmail(member.getId(), member.getEmailAttempts(), RETRYABLE,
-                    EmailStatus.FAILED, null, now);
-            return Optional.empty();
-        }
-        var claims = new java.util.ArrayList<ClaimedAlert>();
+        var claims = new ArrayList<ClaimedAlert>();
         for (Alert member : members) {
             int attempt = member.getEmailAttempts() + 1;
             if (alerts.claimEmail(member.getId(), attempt - 1, RETRYABLE, EmailStatus.SENDING,
                     now, now.plusSeconds(120)) != 1) {
                 // Roll back every claim if another worker acquired any part of this group.
-                throw new org.springframework.dao.OptimisticLockingFailureException("Email group already claimed");
+                throw new OptimisticLockingFailureException("Email group already claimed");
             }
             claims.add(new ClaimedAlert(member.getId(), attempt));
         }
         Alert leader = members.getFirst();
         return Optional.of(new Delivery(leader.getId(), claims.getFirst().attempt(), leader.getEmailDeliveryKey(),
                 recipient.getEmail(), AlertResponse.from(leader),
-                members.stream().map(AlertResponse::from).toList(), List.copyOf(claims)));
+                members.stream().map(AlertResponse::from).toList(), List.copyOf(claims), incomplete));
+    }
+
+    private void deferPending(List<Alert> group, Instant next) {
+        for (Alert member : group) {
+            alerts.deferEmail(member.getId(), member.getEmailAttempts(), EmailStatus.PENDING, next);
+        }
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

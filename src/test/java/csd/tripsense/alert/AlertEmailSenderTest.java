@@ -106,6 +106,20 @@ class AlertEmailSenderTest {
                 "Ski lifts are closed", "Activity cancelled").doesNotContain("arrive separately");
     }
 
+    @Test void partialSummaryExplainsThatSomeAssessmentsAreStillPending() throws Exception {
+        JavaMailSender mail = mock(JavaMailSender.class);
+        when(mail.createMimeMessage()).thenReturn(new MimeMessage(Session.getInstance(new Properties())));
+        Delivery original = delivery();
+        Delivery partial = new Delivery(original.alertId(), original.attempt(), original.key(), original.recipient(),
+                original.alert(), original.relatedAlerts(), original.claims(), true);
+        new AlertEmailSender(provider(mail), true, "alerts@example.com").send(partial);
+        var captor = ArgumentCaptor.forClass(MimeMessage.class);
+        verify(mail).send(captor.capture());
+        MimeMessage message = captor.getValue(); message.saveChanges();
+        assertThat(body(message, "text/plain")).contains("Some assessments are still pending", "impacts assessed so far");
+        assertThat(body(message, "text/html")).contains("Some assessments are still pending", "impacts assessed so far");
+    }
+
     @Test void enabledEmailRequiresHostAndSender() {
         assertThatThrownBy(() -> new AlertEmailSender(provider(null), true, "alerts@example.com").validate())
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("spring.mail.host");
