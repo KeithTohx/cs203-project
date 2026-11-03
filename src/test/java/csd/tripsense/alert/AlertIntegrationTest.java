@@ -57,6 +57,7 @@ class AlertIntegrationTest {
     @Autowired AlertRepository alerts;
     @Autowired AlertService alertService;
     @Autowired AlertEmailStore emailStore;
+    @Autowired csd.tripsense.recommendation.RecommendationRepository recommendations;
     @Autowired AlertEvaluationListener recovery;
     @Autowired ApplicationEventPublisher events;
     @Autowired PlatformTransactionManager transactions;
@@ -299,6 +300,116 @@ class AlertIntegrationTest {
         impact.setImpacted(true); impact.setReason("Old assessment"); impacts.saveAndFlush(impact);
         recovery.reconcile();
         assertThat(alertService.list(user.getId(), false, 0, 20).content()).isEmpty();
+    }
+
+    private DemoDisruptionService demo(boolean enabled) {
+        return new DemoDisruptionService(impacts, alerts, recommendations, itineraries, users, events,
+                enabled, user.getId(), trip.getId(), article.getId());
+    }
+
+    @Test void demoResetRemovesTheDisruptionAndTriggerRestoresItWithoutCallingAi() {
+        Activity activity = new Activity(); activity.setItinerary(trip); activity.setCountry(trip.getCountry());
+        activity.setName("Demo trek"); activity = activities.saveAndFlush(activity);
+        Impact overall = evaluate(); impactService.evaluateActivityForNews(activity, article);
+        var recommendation = new csd.tripsense.recommendation.Recommendation();
+        recommendation.setImpact(overall);
+        recommendation.setSeverity(csd.tripsense.recommendation.Severity.MEDIUM);
+        recommendation.setAction(csd.tripsense.recommendation.Action.MONITOR);
+        recommendation.setAdvice("Demo advice"); recommendations.saveAndFlush(recommendation);
+        var originalKeys = alerts.findEmailGroup(trip.getId(), article.getId()).stream()
+                .map(Alert::getEmailDeliveryKey).toList();
+        var service = demo(true);
+        var tx = new TransactionTemplate(transactions);
+        var reset = tx.execute(s -> service.reset(user.getId()));
+        assertThat(reset.state()).isEqualTo("READY");
+        assertThat(alertService.list(user.getId(), false, 0, 20).content()).isEmpty();
+        assertThat(recommendations.findByImpactItineraryId(trip.getId())).isEmpty();
+        assertThat(impacts.findByItineraryIdAndNewsId(trip.getId(), article.getId()))
+                .hasSize(2).allSatisfy(i -> {
+                    assertThat(i.getImpacted()).isFalse();
+                    assertThat(i.getReason()).isEqualTo("Resort closed");
+                });
+        recovery.reconcile();
+        assertThat(alertService.list(user.getId(), false, 0, 20).content()).isEmpty();
+        clearInvocations(ai);
+        var triggered = tx.execute(s -> service.trigger(user.getId()));
+        assertThat(triggered.alerts()).isEqualTo(2);
+        var fresh = alertService.list(user.getId(), false, 0, 20).content();
+        assertThat(fresh).hasSize(2).allSatisfy(a -> {
+            assertThat(a.readAt()).isNull();
+            assertThat(a.emailStatus()).isEqualTo(EmailStatus.PENDING);
+        });
+        assertThat(alerts.findEmailGroup(trip.getId(), article.getId()))
+                .allSatisfy(a -> assertThat(a.getEmailDeliveryKey()).isNotIn(originalKeys));
+        verifyNoInteractions(ai);
+        var delivery = emailStore.claim(fresh.getFirst().id(), java.time.Instant.now().plusSeconds(1)).orElseThrow();
+        assertThat(delivery.relatedAlerts()).hasSize(2);
+        emailStore.sent(delivery, java.time.Instant.now());
+        assertThat(alertService.list(user.getId(), false, 0, 20).content())
+                .allSatisfy(a -> assertThat(a.emailStatus()).isEqualTo(EmailStatus.SENT));
+        assertThatThrownBy(() -> tx.execute(s -> service.trigger(user.getId())))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+    }
+
+    @Test void demoRequiresExplicitEnablementAndTheConfiguredOwner() {
+        evaluate();
+        assertThatThrownBy(() -> demo(false).reset(user.getId()))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        assertThatThrownBy(() -> demo(true).reset(user.getId() + 1))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        assertThatThrownBy(() -> demo(true).trigger(null))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        for (String role : java.util.List.of("USER", "ADMIN")) {
+            User other = users.saveAndFlush(new User(UUID.randomUUID() + "@example.com",
+                    "other" + UUID.randomUUID().toString().substring(0, 8), "long-enough-hash", role));
+            assertThatThrownBy(() -> demo(true).reset(other.getId()))
+                    .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                    .hasMessageContaining("404");
+            assertThatThrownBy(() -> demo(true).trigger(other.getId()))
+                    .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                    .hasMessageContaining("404");
+        }
+        assertThat(alertService.list(user.getId(), false, 0, 20).content()).hasSize(1);
+    }
+
+    @Test void demoCannotResetWhileItsEmailIsBeingSent() {
+        evaluate();
+        Long id = alertService.list(user.getId(), false, 0, 20).content().getFirst().id();
+        emailStore.claim(id, java.time.Instant.now().plusSeconds(1)).orElseThrow();
+        assertThatThrownBy(() -> new TransactionTemplate(transactions).execute(s -> demo(true).reset(user.getId())))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("delivery");
+        assertThat(alertService.list(user.getId(), false, 0, 20).content()).hasSize(1);
+    }
+
+    @Test void demoEndpointsAreAbsentByDefault() throws Exception {
+        var session = login(user);
+        var csrf = mvc.perform(get("/").session(session)).andReturn().getResponse().getCookie("XSRF-TOKEN");
+        mvc.perform(post("/api/alerts/demo/reset").session(session).cookie(csrf)
+                .header("X-XSRF-TOKEN", csrf.getValue())).andExpect(status().isNotFound());
+    }
+
+    @Test void enabledDemoRoutesRequireSessionAndCsrfAndPassTheAuthenticatedOwner() throws Exception {
+        DemoDisruptionService service = mock(DemoDisruptionService.class);
+        var routes = MockMvcBuilders.standaloneSetup(new DemoDisruptionController(service))
+                .setCustomArgumentResolvers(new org.springframework.security.web.method.annotation.AuthenticationPrincipalArgumentResolver())
+                .addFilters(security).build();
+        var anonymousCsrf = mvc.perform(get("/")).andReturn().getResponse().getCookie("XSRF-TOKEN");
+        routes.perform(post("/api/alerts/demo/trigger").cookie(anonymousCsrf)
+                .header("X-XSRF-TOKEN", anonymousCsrf.getValue())).andExpect(status().isUnauthorized());
+        var session = login(user);
+        routes.perform(post("/api/alerts/demo/reset").session(session)).andExpect(status().isForbidden());
+        verifyNoInteractions(service);
+        var csrf = mvc.perform(get("/").session(session)).andReturn().getResponse().getCookie("XSRF-TOKEN");
+        when(service.reset(user.getId())).thenReturn(new DemoDisruptionService.Result(trip.getId(), article.getId(), 1, 0, "READY"));
+        when(service.trigger(user.getId())).thenReturn(new DemoDisruptionService.Result(trip.getId(), article.getId(), 1, 1, "TRIGGERED"));
+        routes.perform(post("/api/alerts/demo/reset").session(session).cookie(csrf)
+                .header("X-XSRF-TOKEN", csrf.getValue())).andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("READY"));
+        routes.perform(post("/api/alerts/demo/trigger").session(session).cookie(csrf)
+                .header("X-XSRF-TOKEN", csrf.getValue())).andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("TRIGGERED"));
+        verify(service).reset(user.getId()); verify(service).trigger(user.getId());
     }
 
 }
