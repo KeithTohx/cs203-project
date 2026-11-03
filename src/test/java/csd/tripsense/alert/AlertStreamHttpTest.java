@@ -130,7 +130,7 @@ class AlertStreamHttpTest {
             assertThat(payload.get("itineraryId").asLong()).isEqualTo(trip.getId());
             assertThat(payload.get("reason").asText()).isEqualTo("Resort closed after earthquake");
             assertThat(payload.has("password")).isFalse();
-            var saved = alerts.list(owner.getId(), false, 0, 20).content().getFirst();
+            var saved = alerts.list(owner.getId(), false, null, 20).content().getFirst();
             assertThat(payload.get("id").asLong()).isEqualTo(saved.id());
             assertThat(frame).contains("id:" + saved.id());
             assertThat(otherStream.poll()).isNull();
@@ -146,7 +146,7 @@ class AlertStreamHttpTest {
                 impacts.evaluateItineraryForNews(trip, article); status.setRollbackOnly();
             });
             assertThat(stream.poll()).isNull();
-            assertThat(alerts.list(owner.getId(), false, 0, 20).content()).isEmpty();
+            assertThat(alerts.list(owner.getId(), false, null, 20).content()).isEmpty();
         }
     }
 
