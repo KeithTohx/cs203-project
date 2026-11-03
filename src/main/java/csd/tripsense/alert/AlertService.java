@@ -3,6 +3,7 @@ package csd.tripsense.alert;
 import csd.tripsense.impact.Impact;
 import csd.tripsense.impact.ImpactRepository;
 import csd.tripsense.user.UserRepository;
+import java.time.Instant;
 import java.util.List;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
@@ -57,15 +58,12 @@ public class AlertService {
     public record UnreadCount(long unreadCount) {}
 
     // marks every visible unread alert, not just one page. upToId null means no upper limit
-    // loads the alerts so the read rule stays in Alert.markRead and visibility stays in AlertRepository.VISIBLE
+    // one bulk update instead of loading every alert, see AlertRepository.markAllReadForUser for why
     @Transactional
     public UnreadCount markAllRead(Long userId, Long upToId) {
         requireActiveAccount(userId);
-        List<Alert> unread = alerts.findUnreadForUser(userId, upToId);
-        for (Alert alert : unread) {
-            alert.markRead();
-        }
-        alerts.saveAll(unread);
+        Instant now = Instant.now();
+        alerts.markAllReadForUser(userId, upToId, now);
         return new UnreadCount(alerts.countUnread(userId));
     }
 

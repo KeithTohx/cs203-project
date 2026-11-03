@@ -254,16 +254,29 @@ class AlertServiceTest {
     void markAllRead_ShouldMarkEveryAlert_WhenUserHasUnreadAlerts() {
         // Arrange
         givenActiveAccount();
-        when(alertRepository.findUnreadForUser(USER_ID, null)).thenReturn(List.of(newerAlert, olderAlert));
         when(alertRepository.countUnread(USER_ID)).thenReturn(0L);
 
         // Act
         AlertService.UnreadCount result = alertService.markAllRead(USER_ID, null);
 
         // Assert
-        assertNotNull(newerAlert.getReadAt());
-        assertNotNull(olderAlert.getReadAt());
+        verify(alertRepository).markAllReadForUser(eq(USER_ID), isNull(), any(Instant.class));
         assertEquals(0L, result.unreadCount());
+    }
+
+    @Test
+    @DisplayName("Should pass upToId through and return what is left unread when newer alerts arrived")
+    void markAllRead_ShouldReturnRemainingUnread_WhenNewerAlertsArrived() {
+        // Arrange
+        givenActiveAccount();
+        when(alertRepository.countUnread(USER_ID)).thenReturn(1L);
+
+        // Act
+        AlertService.UnreadCount result = alertService.markAllRead(USER_ID, 100L);
+
+        // Assert
+        verify(alertRepository).markAllReadForUser(eq(USER_ID), eq(100L), any(Instant.class));
+        assertEquals(1L, result.unreadCount());
     }
 
     @Test
@@ -278,6 +291,6 @@ class AlertServiceTest {
 
         // Assert
         assertEquals(HttpStatus.UNAUTHORIZED, exception.getStatusCode());
-        verify(alertRepository, never()).findUnreadForUser(any(), any());
+        verify(alertRepository, never()).markAllReadForUser(any(), any(), any());
     }
 }
