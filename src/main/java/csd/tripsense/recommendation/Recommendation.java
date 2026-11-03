@@ -1,5 +1,6 @@
 package csd.tripsense.recommendation;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 
 import csd.tripsense.impact.Impact;
@@ -58,6 +59,11 @@ public class Recommendation {
     @ManyToOne
     @JoinColumn(name = "suggested_option_id")
     private ActivityOption suggestedOption;
+
+    // the version (UserPreference.updatedAt) of the preferences this advice was written for.
+    // null on rows made before this existed, and for travellers who never saved preferences
+    @Column(name = "preferences_version")
+    private Instant preferencesVersion;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;

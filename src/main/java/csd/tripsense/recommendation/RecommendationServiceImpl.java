@@ -87,9 +87,15 @@ public class RecommendationServiceImpl implements RecommendationService {
         // get user preferences
         UserPreference prefs = preferenceService.getPreferences(userId);
 
+        // which version of the preferences this whole run is written for. it is read here, before
+        // the first model call, and not when each row is saved. the model takes seconds, and the
+        // traveller can change a setting in that time. the advice is for the preferences we started
+        // with, so that is the version it must be stamped with
+        Instant version = versionOf(prefs);
+
         List<Recommendation> made = new ArrayList<>();
         for (Impact impact : impactService.findImpacted(userId, itineraryId)) {
-            made.add(forImpact(itinerary, impact, prefs));
+            made.add(forImpact(itinerary, impact, prefs, version));
         }
         return sorted(made);
     }
@@ -118,7 +124,8 @@ public class RecommendationServiceImpl implements RecommendationService {
      *    so two requests creating the very first row at once cannot both win. 
      *    The loser reads the winner's row instead of failing.
      */
-    private Recommendation forImpact(Itinerary itinerary, Impact impact, UserPreference prefs) {
+    private Recommendation forImpact(Itinerary itinerary, Impact impact, UserPreference prefs,
+                                     Instant version) {
         Optional<Recommendation> cached = recommendations.findByImpactId(impact.getId());
         if (cached.isPresent() && !isStale(cached.get(), prefs)) {
             return cached.get();
@@ -129,7 +136,7 @@ public class RecommendationServiceImpl implements RecommendationService {
 
         try {
             // the existing row when there is one, otherwise a new one
-            return store(cached.orElseGet(Recommendation::new), impact, draft);
+            return store(cached.orElseGet(Recommendation::new), impact, draft, version);
         } catch (DataIntegrityViolationException e) {
             // another request inserted this impact's row between our lookup and our insert.
             // its answer is as good as ours, so use it. if it cannot be found something else is wrong
@@ -138,20 +145,44 @@ public class RecommendationServiceImpl implements RecommendationService {
     }
 
     /**
-     * Stale = made before the preferences last changed. 
+     * Stale = written for an older version of the preferences than the traveller has now. 
      * Package private and static so a test can hit it without a spring context.
-     * 
+     *
+     * The comparison is against the preferences version stored on the recommendation, 
+     * not against when it was saved. The save happens after the model finishes, which can be after
+     * the traveller changed a setting, and a save time would then make advice written for the old
+     * settings look current. 
+     *
      * An unsaved default (id is null, the user never set anything) is never stale. 
      * Its updatedAt is "now", which would otherwise make every row look old and call the model on every request. 
-     * A row with no createdAt (seeded data) is left alone for the same reason. 
+     *
+     * A row made before the version was kept has none, so it falls back to when it was made. 
+     * A row with no createdAt either (seeded data) is left alone for the same reason as above. 
      * createdAt is a LocalDateTime made with LocalDateTime.now(), so it is in the server's zone
      */
     static boolean isStale(Recommendation recommendation, UserPreference prefs) {
-        if (prefs.getId() == null || recommendation.getCreatedAt() == null) {
+        if (prefs.getId() == null) {
+            return false;
+        }
+
+        Instant writtenFor = recommendation.getPreferencesVersion();
+        if (writtenFor != null) {
+            return writtenFor.isBefore(prefs.getUpdatedAt());
+        }
+
+        if (recommendation.getCreatedAt() == null) {
             return false;
         }
         Instant madeAt = recommendation.getCreatedAt().atZone(ZoneId.systemDefault()).toInstant();
         return madeAt.isBefore(prefs.getUpdatedAt());
+    }
+
+    /**
+     * The version of the preferences, which is when they last changed. Null for an unsaved default, 
+     * which has no real version (see isStale)
+     */
+    static Instant versionOf(UserPreference prefs) {
+        return prefs.getId() == null ? null : prefs.getUpdatedAt();
     }
 
     /** worst first, Severity is declared HIGH to LOW so natural order already does it */
@@ -198,6 +229,14 @@ public class RecommendationServiceImpl implements RecommendationService {
             boolean refused = !allowed.contains(action);
             if (refused) {
                 action = fallbackAction;
+            }
+
+            // the advice for a swapped option is "Swap this for X", so the action has to say the
+            // same. the model may have answered MONITOR, RESCHEDULE or CANCEL for the place it
+            // chose, and that must not survive next to advice telling the traveller to go somewhere
+            // else. REPLACE is always allowed, only RESCHEDULE is ever ruled out
+            if (swapped) {
+                action = Action.REPLACE;
             }
 
             // low severity means nothing has to change, so we do not hand back somewhere else
@@ -411,13 +450,16 @@ public class RecommendationServiceImpl implements RecommendationService {
      * Reusing the existing row (same id) is what keeps a refresh from ever leaving the impact
      * without a recommendation, or with two
      */
-    private Recommendation store(Recommendation target, Impact impact, Draft draft) {
+    private Recommendation store(Recommendation target, Impact impact, Draft draft, Instant version) {
         target.setImpact(impact);
         target.setSeverity(draft.severity());
         target.setAction(draft.action());
         target.setSuggestedOption(draft.option());
         target.setAdvice(truncate(draft.advice()));
         target.setCreatedAt(LocalDateTime.now());
+        // the version the advice was written for, taken before the model ran (see generate).
+        // createdAt is only when it was saved, and is no use for deciding whether it is current
+        target.setPreferencesVersion(version);
         return recommendations.save(target);
     }
 
