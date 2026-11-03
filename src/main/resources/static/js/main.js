@@ -10,6 +10,8 @@ import { showAdminUsers } from "./views/admin-users.js";
 import { showAdminUser } from "./views/admin-user.js";
 import { showAdminAudit } from "./views/admin-audit.js";
 import { showNews } from "./views/news.js";
+import { showAlerts } from "./views/alerts.js";
+import { mountAlertBell, stopAlerts } from "./alerts.js";
 import { icon, logoMark } from "./icons.js";
 
 const root = document.getElementById("root");
@@ -36,6 +38,8 @@ const routes = [
 	{ path: "/admin/users/:id", role: "ADMIN", view: context => showAdminUser(context.root, context.user, context.reauth, context.params.id) },
 	{ path: "/admin/audit", nav: "Activity", icon: "activity", role: "ADMIN", view: context => showAdminAudit(context.root, context.user, context.reauth) },
 	{ path: "/news", nav: "News", icon: "news", view: context => showNews(context.root, context.user, context.reauth) },
+	// opened from the bell, so it has no link of its own in the top bar
+	{ path: "/alerts", role: "USER", view: context => showAlerts(context.root, context.user, context.reauth) },
 	{ path: "/account", view: context => showAccount(context.root, context.user, context.reauth) },
 	{ path: "/account/preferences", role: "USER", view: context => showEditPreferences(context.root, context.user, context.reauth) },
 	{ path: "/account/details", view: context => showEditDetails(context.root, context.user, context.reauth) },
@@ -72,6 +76,7 @@ async function reauth(nextPath) {
 	try { user = await api.me(); } catch { user = null; }
 
 	if (wasLoggedIn && !user) sessionExpired = true;
+	if (!user) stopAlerts();   // nothing should keep checking for alerts behind the login page
 	if (user) sessionExpired = false;
 
 	if (user && nextPath && location.hash !== "#" + nextPath) { location.hash = nextPath; return; }  // hashchange redraws
@@ -80,6 +85,7 @@ async function reauth(nextPath) {
 
 async function logout() {
 	try { await api.logout(); } catch { }
+	stopAlerts();
 	user = null;
 	sessionExpired = false;
 	location.hash = "";
@@ -109,6 +115,7 @@ function drawNav() {
 			${links}
 		</div>
 		<div class="nav-user">
+			<span id="alert-slot"></span>
 			<a class="profile-link" href="#/account" title="Your account"${onAccountPage ? ' aria-current="page"' : ""}>
 				<span class="avatar" aria-hidden="true">${escapeHtml(initialOf(user.username))}</span>
 				${escapeHtml(user.username)}
@@ -117,6 +124,8 @@ function drawNav() {
 		</div>
 	</nav>`;
 	document.getElementById("logout-button").onclick = logout;
+	// alerts are about trips, so only travellers get the bell
+	if (user.role === "USER") mountAlertBell(document.getElementById("alert-slot"), user, { onAuthLost: reauth, redraw: render });
 }
 
 // why the login screen is showing, if it isn't just a fresh visit or a logout

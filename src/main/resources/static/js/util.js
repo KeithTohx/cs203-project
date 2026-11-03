@@ -137,8 +137,8 @@ export function confirmTwice(button, { confirmText, onConfirm, onArm = () => { }
     return disarm;
 }
 
-// a short message in the bottom corner that fades out by itself, read out by screen readers
-export function showToast(message) {
+// the bottom corner every toast stacks in, made the first time one is shown
+export const findToastShelf = () => {
     let shelf = document.getElementById("toasts");
     if (!shelf) {
         shelf = document.createElement("div");
@@ -147,7 +147,12 @@ export function showToast(message) {
         shelf.setAttribute("aria-live", "polite");
         document.body.append(shelf);
     }
+    return shelf;
+};
 
+// a short message in the bottom corner that fades out by itself, read out by screen readers
+export function showToast(message) {
+    const shelf = findToastShelf();
     const toast = document.createElement("div");
     toast.className = "toast";
     toast.innerHTML = icon("check");

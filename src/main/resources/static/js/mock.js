@@ -168,6 +168,33 @@ const SEVERITY_ORDER = ["HIGH", "MEDIUM", "LOW"];
 const worstFirst = recommendations => [...recommendations]
     .sort((first, second) => SEVERITY_ORDER.indexOf(first.severity) - SEVERITY_ORDER.indexOf(second.severity));
 
+// like the backend's alert table, one per assessed impact, and no stream here so the bell polls
+const ALERTS = [
+    { id: 1, impactId: 1, createdAt: "2026-12-14T09:00:00Z", readAt: "2026-12-14T10:00:00Z" },
+    { id: 2, impactId: 2, createdAt: "2026-12-14T09:00:05Z", readAt: "2026-12-14T10:00:00Z" },
+    { id: 3, impactId: 3, createdAt: minutesAgo(90), readAt: null },
+    { id: 4, impactId: 6, createdAt: minutesAgo(12), readAt: null },
+    { id: 5, impactId: 4, createdAt: "2026-11-01T15:00:00Z", readAt: null },
+    { id: 6, impactId: 12, createdAt: "2026-11-04T07:00:00Z", readAt: null },
+    { id: 7, impactId: 11, createdAt: "2027-02-20T10:00:00Z", readAt: null },
+];
+
+// the alert as AlertResponse sends it, or null when the backend would hide it
+const visibleAlert = alert => {
+    const itineraryId = Number(Object.keys(IMPACTS).find(key => IMPACTS[key].some(impact => impact.id === alert.impactId)));
+    const impact = IMPACTS[itineraryId]?.find(candidate => candidate.id === alert.impactId);
+    const itinerary = myItinerary(itineraryId);
+    if (!impact || !itinerary || !impact.impacted || impact.rejected) return null;
+
+    return {
+        id: alert.id, impactId: impact.id, itineraryId, itineraryName: itinerary.name,
+        activityId: impact.activityId, activityName: impact.activityName,
+        newsId: impact.newsId, newsTitle: impact.newsTitle, newsSource: impact.newsSource, newsUrl: impact.newsUrl,
+        reason: impact.reason, createdAt: alert.createdAt, readAt: alert.readAt,
+        emailStatus: "PENDING", emailSentAt: null,
+    };
+};
+
 // itinerary id -> [{ role, content }], oldest first. john's ski trip starts with a short conversation
 const CHATS = {
     1: [
@@ -477,6 +504,51 @@ export const mockApi = {
         return respondWith(newsNewestFirst().slice(start, start + size));
     },
     itineraryImpacts: id => requireLogin() || respondWith(IMPACTS[id] || []),
+    // like the backend: newest first, and unreadCount counts every unread alert, not just this page.
+    // beforeId leaves out that alert and every newer one, and nextBeforeId is null once nothing older is left
+    alerts: ({ unreadOnly = false, beforeId = null, size = 20 } = {}) => {
+        const notLoggedIn = requireLogin();
+        if (notLoggedIn) return notLoggedIn;
+
+        const mine = [...ALERTS].sort((first, second) => second.id - first.id).map(visibleAlert).filter(Boolean);
+        const matching = unreadOnly ? mine.filter(alert => alert.readAt == null) : mine;
+        const listed = beforeId == null ? matching : matching.filter(alert => alert.id < beforeId);
+
+        const pageSize = Math.min(100, Math.max(1, size));
+        const content = listed.slice(0, pageSize);
+        const hasMore = listed.length > pageSize;
+        return respondWith({
+            content,
+            hasMore,
+            nextBeforeId: hasMore ? content.at(-1).id : null,
+            unreadCount: mine.filter(alert => alert.readAt == null).length,
+        });
+    },
+    // like the backend: owner only, and marking an already read alert changes nothing
+    markAlertRead: id => {
+        const notLoggedIn = requireLogin();
+        if (notLoggedIn) return notLoggedIn;
+
+        const alert = ALERTS.find(candidate => candidate.id === Number(id));
+        if (!alert || !visibleAlert(alert)) return fail(404, "Alert not found.");
+        alert.readAt ??= new Date().toISOString();
+        return respondWith(visibleAlert(alert));
+    },
+    // like the backend: every unread alert of this user up to upToId, whichever page it is on,
+    // and the unreadCount left afterwards since newer alerts stay unread
+    markAllAlertsRead: (upToId = null) => {
+        const notLoggedIn = requireLogin();
+        if (notLoggedIn) return notLoggedIn;
+
+        const now = new Date().toISOString();
+        for (const alert of ALERTS) {
+            const isCovered = upToId == null || alert.id <= upToId;
+            if (isCovered && visibleAlert(alert)) alert.readAt ??= now;
+        }
+
+        const unreadCount = ALERTS.filter(alert => alert.readAt == null && visibleAlert(alert)).length;
+        return respondWith({ unreadCount });
+    },
     // like the backend, an impact on someone else's itinerary looks the same as one that does not exist
     setImpactRejected: (id, rejected) => {
         if (requireLogin()) return requireLogin();

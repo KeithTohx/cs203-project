@@ -73,6 +73,21 @@ const realApi = {
   deleteActivity:id => request(`/api/activity/${id}`, "DELETE"),
   news:       ({page = 0, size = 20} = {}) => request(`/api/news?${new URLSearchParams({page, size})}`),   // one page of stored news, newest first -> [{id, title, description, source, url, publishedAt}]
   itineraryImpacts:id => request(`/api/itinerary/${id}/impact`),
+  // newest first -> {content, hasMore, nextBeforeId, unreadCount}. unreadCount covers every alert, not just this page.
+  // send nextBeforeId back as beforeId to load older ones, it is null once there are none left
+  alerts:     ({unreadOnly = false, beforeId = null, size = 20} = {}) => {
+    const params = new URLSearchParams({unreadOnly, size});
+    if (beforeId != null) params.set("beforeId", beforeId);
+    return request(`/api/alerts?${params}`);
+  },
+  markAlertRead:id => request(`/api/alerts/${id}`, "PATCH", {read: true}),            // -> the alert. marking twice is fine
+  // every unread alert up to upToId (the newest one shown), not just the ones loaded, so one arriving meanwhile stays unread.
+  // null means no limit -> {unreadCount} left afterwards
+  markAllAlertsRead:(upToId = null) => {
+    const query = upToId == null ? "" : `?${new URLSearchParams({upToId})}`;
+    return request(`/api/alerts${query}`, "PATCH", {read: true});
+  },
+  alertStreamUrl:"/api/alerts/stream",                                                // server-sent events: "ready" on connect, "alert" when one is saved
   setImpactRejected:(id, rejected) => request(`/api/impact/${id}`, "PATCH", {rejected}),   // true = "not relevant to me", false = restore -> the impact
   itineraryRecommendations:id => request(`/api/itinerary/${id}/recommendation`),       // -> the stored ones, worst first. never calls the model
   generateRecommendations:itineraryId => request("/api/recommendation/generate", "POST", {itineraryId}),   // slow: asks the model once per impact without one -> every current one, worst first
