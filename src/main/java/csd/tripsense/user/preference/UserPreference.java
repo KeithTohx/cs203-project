@@ -47,7 +47,8 @@ public class UserPreference {
     // kinds of activity to suggest when something is disrupted. empty = no preference
     // MUSEUM_GALLERY, FOOD_DINING, SHOPPING and WELLNESS_SPA
     @Convert(converter = ActivityCategorySetConverter.class)
-    @Column(name = "preferred_categories", nullable = false, length = 255)
+    @Column(name = "preferred_categories", nullable = false, length = 255,
+            columnDefinition = "VARCHAR(255) NOT NULL DEFAULT ''")
     private Set<ActivityCategory> preferredCategories = new HashSet<>();
 
     @Column(nullable = false)

@@ -12,6 +12,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
 import csd.tripsense.activity.Activity;
@@ -69,6 +70,14 @@ public class RecommendationServiceImpl implements RecommendationService {
     private record Suggestion(String severity, String action, Long optionId, String advice) {
     }
 
+    /**
+     * The finished answer for one impact, held in memory until it is complete. 
+     * Nothing is written to the database until the whole draft exists, 
+     * so a failure while working it out cannot damage the recommendation already saved
+     */
+    private record Draft(Severity severity, Action action, ActivityOption option, String advice) {
+    }
+
     @Override
     public List<Recommendation> generate(Long itineraryId) {
         // throws its own not found exception, which spring turns into a 404
@@ -95,18 +104,37 @@ public class RecommendationServiceImpl implements RecommendationService {
      * Impact keys "already evaluated" off reason != null, 
      * which made every seeded row call the model again, so we are not repeating that here.
      * 
-     * Preferences: a saved recommendation is also thrown away when the traveller has changed 
+     * Preferences: a saved recommendation is also refreshed when the traveller has changed 
      * their preferences since it was made, otherwise changing a setting would do nothing until 
-     * the row was deleted by hand. 
-     * This costs one model call per impacted activity
+     * the row was deleted by hand. This costs one model call per impacted activity.
+     *
+     * The refresh is made safe in three ways:
+     * 1. The new answer is worked out completely before anything is written, 
+     *    so if that fails (or the save fails) the old recommendation is still there.
+     * 2. A stale row is updated in place, never deleted and re-inserted,
+     *    so there is no moment when the impact has no recommendation 
+     *    and two requests refreshing at once cannot leave two rows.
+     * 3. The database allows only one recommendation per impact (see Recommendation), 
+     *    so two requests creating the very first row at once cannot both win. 
+     *    The loser reads the winner's row instead of failing.
      */
     private Recommendation forImpact(Itinerary itinerary, Impact impact, UserPreference prefs) {
         Optional<Recommendation> cached = recommendations.findByImpactId(impact.getId());
         if (cached.isPresent() && !isStale(cached.get(), prefs)) {
             return cached.get();
         }
-        cached.ifPresent(recommendations::delete);
-        return build(itinerary, impact, prefs);
+
+        // slow (it calls the model) and writes nothing
+        Draft draft = draft(itinerary, impact, prefs);
+
+        try {
+            // the existing row when there is one, otherwise a new one
+            return store(cached.orElseGet(Recommendation::new), impact, draft);
+        } catch (DataIntegrityViolationException e) {
+            // another request inserted this impact's row between our lookup and our insert.
+            // its answer is as good as ours, so use it. if it cannot be found something else is wrong
+            return recommendations.findByImpactId(impact.getId()).orElseThrow(() -> e);
+        }
     }
 
     /**
@@ -131,12 +159,13 @@ public class RecommendationServiceImpl implements RecommendationService {
         return list.stream().sorted(Comparator.comparing(Recommendation::getSeverity)).toList();
     }
 
-    private Recommendation build(Itinerary itinerary, Impact impact, UserPreference prefs) {
+    /** Works out what to tell the traveller about one impact. Calls the model, never touches the database */
+    private Draft draft(Itinerary itinerary, Impact impact, UserPreference prefs) {
         Activity activity = impact.getActivity();
 
         // a whole trip impact has no single activity to swap, so there is nothing to offer
         if (activity == null) {
-            return save(impact, Severity.MEDIUM, Action.MONITOR, null,
+            return new Draft(Severity.MEDIUM, Action.MONITOR, null,
                     "Affects the whole trip, so follow local updates and keep the plans flexible.");
         }
 
@@ -182,12 +211,12 @@ public class RecommendationServiceImpl implements RecommendationService {
                     ? fallbackAdvice(action, option)
                     : suggestion.advice();
 
-            return save(impact, severity, action, option, advice);
+            return new Draft(severity, action, option, advice);
         } catch (Exception e) {
             // model unreachable, but the shortlist is ours so we can still answer with the best of it
             ActivityOption option = shortlist.isEmpty() ? null : shortlist.get(0);
             Action action = option == null ? Action.MONITOR : Action.REPLACE;
-            return save(impact, Severity.MEDIUM, action, option, fallbackAdvice(action, option));
+            return new Draft(Severity.MEDIUM, action, option, fallbackAdvice(action, option));
         }
     }
 
@@ -324,7 +353,7 @@ public class RecommendationServiceImpl implements RecommendationService {
 
     /**
      * preferences: how long the advice should be. kept under ADVICE_MAX characters, 
-     * and save() cuts anything longer in case the model ignores that
+     * and store() cuts anything longer in case the model ignores that
      */
     static String adviceLength(UserPreference prefs) {
         return prefs.getExplanationDetail() == ExplanationDetail.DETAILED
@@ -377,16 +406,19 @@ public class RecommendationServiceImpl implements RecommendationService {
         return news.getTitle() + " " + (news.getDescription() == null ? "" : news.getDescription());
     }
 
-    private Recommendation save(Impact impact, Severity severity, Action action,
-                                ActivityOption option, String advice) {
-        Recommendation recommendation = new Recommendation();
-        recommendation.setImpact(impact);
-        recommendation.setSeverity(severity);
-        recommendation.setAction(action);
-        recommendation.setSuggestedOption(option);
-        recommendation.setAdvice(truncate(advice));
-        recommendation.setCreatedAt(LocalDateTime.now());
-        return recommendations.save(recommendation);
+    /**
+     * Writes a finished draft onto a row, either the impact's existing one or a new one, and saves it.
+     * Reusing the existing row (same id) is what keeps a refresh from ever leaving the impact
+     * without a recommendation, or with two
+     */
+    private Recommendation store(Recommendation target, Impact impact, Draft draft) {
+        target.setImpact(impact);
+        target.setSeverity(draft.severity());
+        target.setAction(draft.action());
+        target.setSuggestedOption(draft.option());
+        target.setAdvice(truncate(draft.advice()));
+        target.setCreatedAt(LocalDateTime.now());
+        return recommendations.save(target);
     }
 
     /**

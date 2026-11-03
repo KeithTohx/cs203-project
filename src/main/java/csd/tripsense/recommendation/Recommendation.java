@@ -10,6 +10,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
@@ -26,7 +27,8 @@ import lombok.Setter;
  * story that caused it.
  */
 @Entity
-@Table(name = "recommendation")
+@Table(name = "recommendation",
+       indexes = @Index(name = "uk_recommendation_impact", columnList = "impact_id", unique = true))
 @Getter
 @Setter
 @AllArgsConstructor

@@ -1,14 +1,16 @@
 package csd.tripsense.recommendation;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.*;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
-import static org.junit.jupiter.api.Assertions.*;
 
 import java.lang.reflect.Constructor;
 import java.time.Instant;
@@ -19,14 +21,11 @@ import java.util.Set;
 
 import org.mockito.ArgumentCaptor;
 import org.mockito.stubbing.Answer;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityCategory;
@@ -35,15 +34,11 @@ import csd.tripsense.impact.Impact;
 import csd.tripsense.impact.ImpactService;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryService;
-import csd.tripsense.itinerary.ItineraryNotFoundException;
 import csd.tripsense.news.News;
 import csd.tripsense.user.User;
 import csd.tripsense.user.preference.FlexibilityLevel;
 import csd.tripsense.user.preference.PreferenceService;
 import csd.tripsense.user.preference.UserPreference;
-import csd.tripsense.country.Country;
-
-
 
 /**
  * The whole generate flow, with the model, the database and the other services mocked.
@@ -54,6 +49,7 @@ import csd.tripsense.country.Country;
  * ties. That makes the order simple to reason about: by id (museum, mall, restaurant), and with a
  * preferred kind, that kind jumps to the front.
  */
+@DisplayName("RecommendationService Unit Tests")
 class RecommendationServiceImplTest {
 
     private static final Long USER_ID = 1L;
@@ -184,19 +180,134 @@ class RecommendationServiceImplTest {
         verify(recommendations, never()).save(any());
     }
 
+    // ----- refreshing a stale recommendation -----
+    //
+    // the refresh must be atomic: the impact is never left without a recommendation, never given
+    // two, and a failure while refreshing leaves the old one in place
+
     @Test
-    void aRecommendationMadeBeforeThePreferencesChangedIsThrownAwayAndRebuilt() {
+    void aRecommendationMadeBeforeThePreferencesChangedIsUpdatedInPlace() {
         preferencesSavedAt(Instant.now());
         Recommendation stale = savedRecommendationMadeAt(LocalDateTime.now().minusHours(2));
         when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(stale));
         theImpactsAre(skiImpact(4L));
         theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
 
-        Recommendation rebuilt = generateOne();
+        Recommendation refreshed = generateOne();
 
-        verify(recommendations).delete(stale);
-        assertThat(rebuilt).isNotSameAs(stale);
-        assertThat(rebuilt.getSuggestedOption()).isEqualTo(museum);
+        // the same row, not a new one, so the impact still has exactly one recommendation
+        assertThat(refreshed).isSameAs(stale);
+        assertThat(refreshed.getSuggestedOption()).isEqualTo(museum);
+        assertThat(refreshed.getAdvice()).isEqualTo("Visit the art museum.");
+        assertThat(refreshed.getCreatedAt()).isAfter(LocalDateTime.now().minusMinutes(1));   // no longer stale
+        verify(recommendations).save(stale);
+        verify(recommendations, never()).delete(any());
+    }
+
+    @Test
+    void aRefreshNeverDeletesTheOldRowSoThereIsNoMomentWithNoRecommendation() {
+        preferencesSavedAt(Instant.now());
+        Recommendation stale = savedRecommendationMadeAt(LocalDateTime.now().minusHours(2));
+        when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(stale));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "MONITOR", null, "Keep watching.");
+
+        generateOne();
+
+        verify(recommendations, never()).delete(any());
+        verify(recommendations, never()).deleteAll();
+    }
+
+    @Test
+    void aFailedSaveDuringARefreshPropagatesAndNeverTouchesTheOldRow() {
+        preferencesSavedAt(Instant.now());
+        Recommendation stale = savedRecommendationMadeAt(LocalDateTime.now().minusHours(2));
+        when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(stale));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
+        doThrow(new RuntimeException("database is down")).when(recommendations).save(any(Recommendation.class));
+
+        // an ordinary failure is not hidden, and the old row was never deleted, so it is still saved
+        assertThatThrownBy(() -> service.generate(ITINERARY_ID))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("database is down");
+        verify(recommendations, never()).delete(any());
+    }
+
+    @Test
+    void whenTheModelIsDownAStaleRowIsStillRefreshedWithTheFallback() {
+        preferencesSavedAt(Instant.now());
+        Recommendation stale = savedRecommendationMadeAt(LocalDateTime.now().minusHours(2));
+        when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(stale));
+        theImpactsAre(skiImpact(4L));
+        when(chatService.ask(anyString(), any())).thenThrow(new RuntimeException("ollama is not running"));
+
+        Recommendation refreshed = generateOne();
+
+        // the fallback follows the new preferences too, and it lands on the same row
+        assertThat(refreshed).isSameAs(stale);
+        assertThat(refreshed.getSuggestedOption()).isEqualTo(museum);
+        verify(recommendations, never()).delete(any());
+    }
+
+    @Test
+    void nothingIsWrittenUntilTheWholeAnswerIsReady() {
+        preferencesSavedAt(Instant.now());
+        Recommendation stale = savedRecommendationMadeAt(LocalDateTime.now().minusHours(2));
+        stale.setAdvice("the old advice");
+        when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(stale));
+        theImpactsAre(skiImpact(4L));
+        // the shortlist lookup blows up while the new answer is being worked out
+        when(options.findByCountry("Japan")).thenThrow(new IllegalStateException("options table unreadable"));
+
+        assertThatThrownBy(() -> service.generate(ITINERARY_ID)).isInstanceOf(IllegalStateException.class);
+
+        // the old row was neither changed nor saved
+        assertThat(stale.getAdvice()).isEqualTo("the old advice");
+        verify(recommendations, never()).save(any());
+        verify(recommendations, never()).delete(any());
+    }
+
+    // ----- two requests at the same moment -----
+
+    @Test
+    void ifAnotherRequestCreatedTheFirstRowFirstItsRowIsUsedInstead() {
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
+        Recommendation winner = savedRecommendationMadeAt(LocalDateTime.now());
+        // first lookup finds nothing, then the other request's insert lands before ours
+        when(recommendations.findByImpactId(4L)).thenReturn(Optional.empty(), Optional.of(winner));
+        doThrow(new DataIntegrityViolationException("duplicate impact_id"))
+                .when(recommendations).save(any(Recommendation.class));
+
+        Recommendation result = generateOne();
+
+        assertThat(result).isSameAs(winner);
+    }
+
+    @Test
+    void aDuplicateThatCannotBeFoundAgainIsNotHidden() {
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
+        // the constraint fired but there is no row to fall back on, so something else is wrong
+        when(recommendations.findByImpactId(4L)).thenReturn(Optional.empty(), Optional.empty());
+        doThrow(new DataIntegrityViolationException("duplicate impact_id"))
+                .when(recommendations).save(any(Recommendation.class));
+
+        assertThatThrownBy(() -> service.generate(ITINERARY_ID))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void theNewRowIsSavedExactlyOnceWhenThereWasNoneBefore() {
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
+
+        Recommendation created = generateOne();
+
+        assertThat(created.getSuggestedOption()).isEqualTo(museum);
+        verify(recommendations).save(created);
+        verify(recommendations, never()).delete(any());
     }
 
     // ----- picking the option -----
