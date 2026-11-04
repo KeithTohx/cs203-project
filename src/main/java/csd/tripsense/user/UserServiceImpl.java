@@ -8,6 +8,8 @@ import org.springframework.transaction.annotation.Transactional;
 import csd.tripsense.chat.ChatbotService;
 import csd.tripsense.impact.ImpactRepository;
 import csd.tripsense.itinerary.ItineraryRepository;
+import csd.tripsense.recommendation.RecommendationRepository;
+import csd.tripsense.user.preference.UserPreferenceRepository;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
@@ -20,15 +22,21 @@ public class UserServiceImpl implements UserService {
     private final ItineraryRepository itineraryRepository;
     private final ImpactRepository impactRepository;
     private final ChatbotService chatbotService;
-    
+        private final RecommendationRepository recommendationRepository;
+    private final UserPreferenceRepository userPreferenceRepository;
+
     public UserServiceImpl(UserRepository userRepository, PasswordEncoder passwordEncoder,
                         ItineraryRepository itineraryRepository, ImpactRepository impactRepository,
-                        ChatbotService chatbotService) {
+                        ChatbotService chatbotService,
+                        RecommendationRepository recommendationRepository,
+                        UserPreferenceRepository userPreferenceRepository) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.itineraryRepository = itineraryRepository;
         this.impactRepository = impactRepository;
         this.chatbotService = chatbotService;
+        this.recommendationRepository = recommendationRepository;
+        this.userPreferenceRepository = userPreferenceRepository;
     }
 
     @Override
@@ -114,7 +122,7 @@ public class UserServiceImpl implements UserService {
         }
     }
 
-    @Override
+        @Override
     @Transactional
     public void deleteAccount(Long userId, String currentPassword) {
         User user = findById(userId);
@@ -122,32 +130,31 @@ public class UserServiceImpl implements UserService {
         if (!passwordEncoder.matches(currentPassword, user.getPassword())) {
             throw new AccountRuleException(AccountRuleException.Kind.INVALID_INPUT, "current password is incorrect");
         }
-        if ("ADMIN".equals(user.getRole()) && user.isEnabled() && userRepository.countEnabledByRole("ADMIN") <= 1) {
-            throw new AccountRuleException(AccountRuleException.Kind.CONFLICT, "the last admin account cannot be deleted");
-        }
-
-        chatbotService.deleteAllConversationsFor(userId);   // chat history is personal data too
-
-        impactRepository.deleteByUserId(userId);
-        itineraryRepository.deleteAll(itineraryRepository.findByUserId(userId));  // cascades to activities and impacts
-        itineraryRepository.flush();
-        userRepository.delete(user);
+        removeUserAndOwnedData(user);
     }
 
     @Override
     @Transactional
     public void deleteUserAndData(Long userId) {
-        User user = findById(userId);
+        removeUserAndOwnedData(findById(userId));
+    }
+
+    // The single place that knows everything a user owns. Order matters: children before parents.
+    private void removeUserAndOwnedData(User user) {
+        Long userId = user.getId();
 
         if ("ADMIN".equals(user.getRole()) && user.isEnabled() && userRepository.countEnabledByRole("ADMIN") <= 1) {
             throw new AccountRuleException(AccountRuleException.Kind.CONFLICT, "the last admin account cannot be deleted");
         }
 
-        chatbotService.deleteAllConversationsFor(userId);   // chat history is personal data too
+        chatbotService.deleteAllConversationsFor(userId);                 // chat history is personal data too
 
+        recommendationRepository.deleteByImpactUserId(userId);            // reference impacts, so first
         impactRepository.deleteByUserId(userId);
-        itineraryRepository.deleteAll(itineraryRepository.findByUserId(userId));  // cascades to activities and impacts
+        itineraryRepository.deleteAll(itineraryRepository.findByUserId(userId));  // cascades to activities
         itineraryRepository.flush();
+
+        userPreferenceRepository.deleteByUserId(userId);                  // references the user, so before it
         userRepository.delete(user);
     }
 }

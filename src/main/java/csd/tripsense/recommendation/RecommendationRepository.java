@@ -11,4 +11,7 @@ public interface RecommendationRepository extends JpaRepository<Recommendation, 
     Optional<Recommendation> findByImpactId(Long impactId);
 
     List<Recommendation> findByImpactItineraryId(Long itineraryId);
+
+    // every recommendation hanging off this user's impacts; must be removed before the impacts
+    void deleteByImpactUserId(Long userId);
 }

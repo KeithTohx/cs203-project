@@ -3,6 +3,9 @@ package csd.tripsense.user;
 import csd.tripsense.chat.ChatbotService;
 import csd.tripsense.impact.ImpactRepository;
 import csd.tripsense.itinerary.ItineraryRepository;
+import csd.tripsense.recommendation.RecommendationRepository;
+import csd.tripsense.user.preference.UserPreferenceRepository;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -33,9 +36,11 @@ class UserServiceImplTest {
         userRepository = mock(UserRepository.class);
         passwordEncoder = new BCryptPasswordEncoder();
         userService = new UserServiceImpl(userRepository, passwordEncoder,
-                mock(ItineraryRepository.class),
-                mock(ImpactRepository.class),
-                mock(ChatbotService.class));
+            mock(ItineraryRepository.class),
+            mock(ImpactRepository.class),
+            mock(ChatbotService.class),
+            mock(RecommendationRepository.class),
+            mock(UserPreferenceRepository.class));
     }
 
     private static void assertStatus(Throwable e, AccountRuleException.Kind expected) {

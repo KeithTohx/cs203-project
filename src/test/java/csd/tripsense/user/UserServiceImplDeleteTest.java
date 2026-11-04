@@ -10,6 +10,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import csd.tripsense.user.AccountRuleException;
+import csd.tripsense.recommendation.RecommendationRepository;
+import csd.tripsense.user.preference.UserPreferenceRepository;
 
 import java.util.List;
 import java.util.Optional;
@@ -40,8 +42,10 @@ class UserServiceImplDeleteTest {
         impactRepository = mock(ImpactRepository.class);
         chatbotService = mock(ChatbotService.class);
         passwordEncoder = new BCryptPasswordEncoder();
-        service = new UserServiceImpl(userRepository, passwordEncoder, itineraryRepository,
-                impactRepository, chatbotService);
+        service = new UserServiceImpl(userRepository, passwordEncoder,
+        itineraryRepository, impactRepository, chatbotService,
+        mock(RecommendationRepository.class),
+        mock(UserPreferenceRepository.class));
     }
 
     private User accountWithPassword(String role, String password) {

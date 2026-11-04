@@ -29,6 +29,8 @@ import csd.tripsense.chat.ChatbotService;
 import csd.tripsense.impact.ImpactRepository;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryRepository;
+import csd.tripsense.recommendation.RecommendationRepository;
+import csd.tripsense.user.preference.UserPreferenceRepository;
 
 /**
  * LOCATION: src/test/java/csd/tripsense/user/UserServiceImplDeleteAccountTest.java
