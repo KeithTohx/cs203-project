@@ -45,12 +45,18 @@ public class RecommendationServiceImpl implements RecommendationService {
     // matches @Column(length = 500) on Recommendation.advice, a longer string fails the insert
     private static final int ADVICE_MAX = 500;
 
-    private RecommendationRepository recommendations;
-    private ActivityOptionRepository options;
-    private ImpactService impactService;
-    private ItineraryService itineraryService;
-    private ChatService chatService;
-    private PreferenceService preferenceService;   
+    /**
+     * What a traveller who never changed anything has. 
+     * It is read from a fresh entity, so it can never drift from the defaults written in UserPreference
+     */
+    private static final UserPreference DEFAULTS = new UserPreference(null);
+
+    private final RecommendationRepository recommendations;
+    private final ActivityOptionRepository options;
+    private final ImpactService impactService;
+    private final ItineraryService itineraryService;
+    private final ChatService chatService;
+    private final PreferenceService preferenceService;
 
     public RecommendationServiceImpl(RecommendationRepository recommendations,
                                      ActivityOptionRepository options,
@@ -84,25 +90,42 @@ public class RecommendationServiceImpl implements RecommendationService {
         Itinerary itinerary = itineraryService.getItineraryById(itineraryId);
         Long userId = itinerary.getUser().getId();
 
-        // get user preferences
+        // get user preferences. this saves a row of defaults the first time, so there is always
+        // a saved row with a real updatedAt to use as the version
         UserPreference prefs = preferenceService.getPreferences(userId);
 
         // which version of the preferences this whole run is written for. it is read here, before
         // the first model call, and not when each row is saved. the model takes seconds, and the
         // traveller can change a setting in that time. the advice is for the preferences we started
         // with, so that is the version it must be stamped with
-        Instant version = versionOf(prefs);
+        Instant version = prefs.getUpdatedAt();
 
         List<Recommendation> made = new ArrayList<>();
         for (Impact impact : impactService.findImpacted(userId, itineraryId)) {
             made.add(forImpact(itinerary, impact, prefs, version));
         }
+        markStale(made, prefs);
         return sorted(made);
     }
 
+    /**
+     * Never calls the model and never writes, so a recommendation written for older preferences is
+     * still returned as it was, but marked stale. That lets the client show which ones need
+     * redoing (by calling generate) instead of presenting out of date advice as current
+     */
     @Override
     public List<Recommendation> getByItinerary(Long itineraryId) {
-        return sorted(recommendations.findByImpactItineraryId(itineraryId));
+        Long userId = itineraryService.getItineraryById(itineraryId).getUser().getId();
+        UserPreference prefs = preferenceService.getPreferences(userId);
+
+        List<Recommendation> found = recommendations.findByImpactItineraryId(itineraryId);
+        markStale(found, prefs);
+        return sorted(found);
+    }
+
+    // sets the flag the api returns. it is not saved, see Recommendation.stale
+    private void markStale(List<Recommendation> list, UserPreference prefs) {
+        list.forEach(recommendation -> recommendation.setStale(isStale(recommendation, prefs)));
     }
 
     /**
@@ -153,24 +176,23 @@ public class RecommendationServiceImpl implements RecommendationService {
      * the traveller changed a setting, and a save time would then make advice written for the old
      * settings look current. 
      *
-     * An unsaved default (id is null, the user never set anything) is never stale. 
-     * Its updatedAt is "now", which would otherwise make every row look old and call the model on every request. 
+     * A row made before the version was kept has none. Such a row was written with no preferences
+     * at all, which is exactly what default settings ask for, so while the traveller's settings are
+     * still the defaults it matches and is left alone. Without this, the first generate for
+     * someone who never set anything would save their default row stamped with the current time,
+     * and every older recommendation would then look out of date and be redone, one model call each.
      *
-     * A row made before the version was kept has none, so it falls back to when it was made. 
-     * A row with no createdAt either (seeded data) is left alone for the same reason as above. 
+     * Once the settings are no longer the defaults, a row with no version falls back to when it
+     * was made. A row with no createdAt either (seeded data) is left alone. 
      * createdAt is a LocalDateTime made with LocalDateTime.now(), so it is in the server's zone
      */
     static boolean isStale(Recommendation recommendation, UserPreference prefs) {
-        if (prefs.getId() == null) {
-            return false;
-        }
-
         Instant writtenFor = recommendation.getPreferencesVersion();
         if (writtenFor != null) {
             return writtenFor.isBefore(prefs.getUpdatedAt());
         }
 
-        if (recommendation.getCreatedAt() == null) {
+        if (hasDefaultSettings(prefs) || recommendation.getCreatedAt() == null) {
             return false;
         }
         Instant madeAt = recommendation.getCreatedAt().atZone(ZoneId.systemDefault()).toInstant();
@@ -178,11 +200,18 @@ public class RecommendationServiceImpl implements RecommendationService {
     }
 
     /**
-     * The version of the preferences, which is when they last changed. Null for an unsaved default, 
-     * which has no real version (see isStale)
+     * True when every setting is what a new traveller starts with. It looks at the settings and
+     * not at updatedAt, because updatedAt is set the moment the default row is first saved, so it
+     * cannot tell a row nobody edited from one that was edited
      */
-    static Instant versionOf(UserPreference prefs) {
-        return prefs.getId() == null ? null : prefs.getUpdatedAt();
+    static boolean hasDefaultSettings(UserPreference prefs) {
+        return prefs.getRiskTolerance() == DEFAULTS.getRiskTolerance()
+                && prefs.getFlexibilityLevel() == DEFAULTS.getFlexibilityLevel()
+                && prefs.getExplanationDetail() == DEFAULTS.getExplanationDetail()
+                && prefs.getTravelGroup() == DEFAULTS.getTravelGroup()
+                && prefs.isTravellingWithChildren() == DEFAULTS.isTravellingWithChildren()
+                && prefs.isTravellingWithElderly() == DEFAULTS.isTravellingWithElderly()
+                && prefs.getPreferredCategories().equals(DEFAULTS.getPreferredCategories());
     }
 
     /** worst first, Severity is declared HIGH to LOW so natural order already does it */

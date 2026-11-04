@@ -20,7 +20,6 @@ import java.util.Optional;
 import java.util.Set;
 
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -51,7 +50,6 @@ import csd.tripsense.user.preference.UserPreference;
  * ties. That makes the order simple to reason about: by id (museum, mall, restaurant), and with a
  * preferred kind, that kind jumps to the front.
  */
-@DisplayName("RecommendationService Unit Tests")
 class RecommendationServiceImplTest {
 
     private static final Long USER_ID = 1L;
@@ -157,6 +155,15 @@ class RecommendationServiceImplTest {
         ReflectionTestUtils.setField(prefs, "updatedAt", updatedAt);
     }
 
+    // a recommendation written for preferences from long before "now", so it is stale against
+    // preferences saved now. it is stale because of its version, not because of when it was made,
+    // which is the rule the service uses
+    private Recommendation staleRecommendation() {
+        Recommendation recommendation = savedRecommendationMadeAt(LocalDateTime.now().minusHours(2));
+        recommendation.setPreferencesVersion(Instant.now().minusSeconds(7200));
+        return recommendation;
+    }
+
     private Recommendation savedRecommendationMadeAt(LocalDateTime createdAt) {
         Recommendation recommendation = new Recommendation();
         recommendation.setSeverity(Severity.MEDIUM);
@@ -169,8 +176,10 @@ class RecommendationServiceImplTest {
 
     @Test
     void aRecommendationMadeAfterThePreferencesLastChangedIsReusedWithoutTheModel() {
-        preferencesSavedAt(Instant.now().minusSeconds(3600));
+        Instant version = Instant.now().minusSeconds(3600);
+        preferencesSavedAt(version);
         Recommendation cached = savedRecommendationMadeAt(LocalDateTime.now());
+        cached.setPreferencesVersion(version);   // written for exactly the preferences saved now
         when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(cached));
         theImpactsAre(skiImpact(4L));
 
@@ -190,7 +199,7 @@ class RecommendationServiceImplTest {
     @Test
     void aRecommendationMadeBeforeThePreferencesChangedIsUpdatedInPlace() {
         preferencesSavedAt(Instant.now());
-        Recommendation stale = savedRecommendationMadeAt(LocalDateTime.now().minusHours(2));
+        Recommendation stale = staleRecommendation();
         when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(stale));
         theImpactsAre(skiImpact(4L));
         theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
@@ -209,7 +218,7 @@ class RecommendationServiceImplTest {
     @Test
     void aRefreshNeverDeletesTheOldRowSoThereIsNoMomentWithNoRecommendation() {
         preferencesSavedAt(Instant.now());
-        Recommendation stale = savedRecommendationMadeAt(LocalDateTime.now().minusHours(2));
+        Recommendation stale = staleRecommendation();
         when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(stale));
         theImpactsAre(skiImpact(4L));
         theModelSays("MEDIUM", "MONITOR", null, "Keep watching.");
@@ -223,7 +232,7 @@ class RecommendationServiceImplTest {
     @Test
     void aFailedSaveDuringARefreshPropagatesAndNeverTouchesTheOldRow() {
         preferencesSavedAt(Instant.now());
-        Recommendation stale = savedRecommendationMadeAt(LocalDateTime.now().minusHours(2));
+        Recommendation stale = staleRecommendation();
         when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(stale));
         theImpactsAre(skiImpact(4L));
         theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
@@ -239,7 +248,7 @@ class RecommendationServiceImplTest {
     @Test
     void whenTheModelIsDownAStaleRowIsStillRefreshedWithTheFallback() {
         preferencesSavedAt(Instant.now());
-        Recommendation stale = savedRecommendationMadeAt(LocalDateTime.now().minusHours(2));
+        Recommendation stale = staleRecommendation();
         when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(stale));
         theImpactsAre(skiImpact(4L));
         when(chatService.ask(anyString(), any())).thenThrow(new RuntimeException("ollama is not running"));
@@ -255,7 +264,7 @@ class RecommendationServiceImplTest {
     @Test
     void nothingIsWrittenUntilTheWholeAnswerIsReady() {
         preferencesSavedAt(Instant.now());
-        Recommendation stale = savedRecommendationMadeAt(LocalDateTime.now().minusHours(2));
+        Recommendation stale = staleRecommendation();
         stale.setAdvice("the old advice");
         when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(stale));
         theImpactsAre(skiImpact(4L));
@@ -283,12 +292,108 @@ class RecommendationServiceImplTest {
     }
 
     @Test
-    void aTravellerWithNoSavedPreferencesGetsNoVersion() {
-        // the unsaved default has no real version, and a made up one would make every row look old
+    void aTravellerWhoNeverChangedAnythingStillGetsTheirDefaultRowsVersion() {
+        // getPreferences saves a row of defaults the first time, so there is always a real version
         theImpactsAre(skiImpact(4L));
         theModelSays("MEDIUM", "MONITOR", null, "Keep watching.");
 
-        assertThat(generateOne().getPreferencesVersion()).isNull();
+        assertThat(generateOne().getPreferencesVersion()).isEqualTo(prefs.getUpdatedAt());
+    }
+
+    @Test
+    void olderRecommendationsAreNotRedoneJustBecauseTheDefaultRowWasCreated() {
+        // made before versions existed, so no version. the traveller's row of defaults has just been
+        // saved with "now" as its updatedAt, which must not make every older row look out of date
+        preferencesSavedAt(Instant.now());
+        Recommendation older = savedRecommendationMadeAt(LocalDateTime.now().minusDays(30));
+        when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(older));
+        theImpactsAre(skiImpact(4L));
+
+        List<Recommendation> result = service.generate(ITINERARY_ID);
+
+        assertThat(result).containsExactly(older);
+        verifyNoInteractions(chatService);    // no model call per impact
+        verify(recommendations, never()).save(any());
+    }
+
+    @Test
+    void olderRecommendationsAreRedoneOnceTheSettingsHaveChanged() {
+        preferencesSavedAt(Instant.now());
+        prefs.setFlexibilityLevel(FlexibilityLevel.FIXED_DATES);
+        Recommendation older = savedRecommendationMadeAt(LocalDateTime.now().minusDays(30));
+        when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(older));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "MONITOR", null, "Keep watching.");
+
+        generateOne();
+
+        verify(chatService).ask(anyString(), any());
+        verify(recommendations).save(older);
+    }
+
+    // ----- telling the client which recommendations are out of date -----
+
+    @Test
+    void theStoredListMarksAdviceWrittenForOlderPreferencesAsStale() {
+        preferencesSavedAt(Instant.now());
+        Recommendation stale = staleRecommendation();
+        Recommendation current = savedRecommendationMadeAt(LocalDateTime.now());
+        current.setPreferencesVersion(prefs.getUpdatedAt());
+        when(recommendations.findByImpactItineraryId(ITINERARY_ID)).thenReturn(List.of(stale, current));
+
+        List<Recommendation> result = service.getByItinerary(ITINERARY_ID);
+
+        assertThat(stale.isStale()).isTrue();
+        assertThat(current.isStale()).isFalse();
+        assertThat(result).containsExactlyInAnyOrder(stale, current);
+    }
+
+    @Test
+    void readingTheStoredListNeverCallsTheModelOrWrites() {
+        preferencesSavedAt(Instant.now());
+        when(recommendations.findByImpactItineraryId(ITINERARY_ID)).thenReturn(List.of(staleRecommendation()));
+
+        service.getByItinerary(ITINERARY_ID);
+
+        // stale advice is still returned as it was, only marked. redoing it is the client's choice
+        verifyNoInteractions(chatService);
+        verify(recommendations, never()).save(any());
+        verify(recommendations, never()).delete(any());
+    }
+
+    @Test
+    void aTravellerWhoSwitchesToFixedDatesSeesTheOldRescheduleMarkedStale() {
+        // the example from the review: a stored "reschedule" must not look current after the change
+        Recommendation reschedule = savedRecommendationMadeAt(LocalDateTime.now().minusDays(1));
+        reschedule.setAction(Action.RESCHEDULE);
+        reschedule.setPreferencesVersion(Instant.now().minusSeconds(86400));
+        prefs.setFlexibilityLevel(FlexibilityLevel.FIXED_DATES);
+        preferencesSavedAt(Instant.now());
+        when(recommendations.findByImpactItineraryId(ITINERARY_ID)).thenReturn(List.of(reschedule));
+
+        service.getByItinerary(ITINERARY_ID);
+
+        assertThat(reschedule.getAction()).isEqualTo(Action.RESCHEDULE);   // not hidden or changed
+        assertThat(reschedule.isStale()).isTrue();                          // but flagged
+    }
+
+    @Test
+    void aStoredRecommendationWithNoVersionIsNotFlaggedForATravellerOnDefaults() {
+        preferencesSavedAt(Instant.now());
+        Recommendation legacy = savedRecommendationMadeAt(LocalDateTime.now().minusDays(30));
+        when(recommendations.findByImpactItineraryId(ITINERARY_ID)).thenReturn(List.of(legacy));
+
+        service.getByItinerary(ITINERARY_ID);
+
+        assertThat(legacy.isStale()).isFalse();
+    }
+
+    @Test
+    void whatGenerateReturnsIsNotMarkedStale() {
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "MONITOR", null, "Keep watching.");
+
+        assertThat(generateOne().isStale()).isFalse();
     }
 
     @Test
@@ -315,7 +420,7 @@ class RecommendationServiceImplTest {
     void aRefreshStampsTheRowWithTheNewVersion() {
         Instant newVersion = Instant.parse("2026-11-01T12:00:00Z");
         preferencesSavedAt(newVersion);
-        Recommendation stale = savedRecommendationMadeAt(LocalDateTime.now().minusHours(2));
+        Recommendation stale = staleRecommendation();
         stale.setPreferencesVersion(Instant.parse("2026-11-01T10:00:00Z"));
         when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(stale));
         theImpactsAre(skiImpact(4L));

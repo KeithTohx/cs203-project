@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -16,6 +17,7 @@ import csd.tripsense.user.User;
 import csd.tripsense.user.preference.ExplanationDetail;
 import csd.tripsense.user.preference.FlexibilityLevel;
 import csd.tripsense.user.preference.RiskTolerance;
+import csd.tripsense.user.preference.TravelGroup;
 import csd.tripsense.user.preference.UserPreference;
 
 // the small static helpers that turn a traveller's preferences into rules and prompt wording.
@@ -107,35 +109,16 @@ class RecommendationPreferenceHelpersTest {
     }
 
     // ----- isStale -----
+    //
+    // a row's advice is current when it was written for the preferences the traveller has now.
+    // a row with no version was made before versions were kept, and is judged by the settings and
+    // by when it was made instead
 
-    @Test
-    void aRecommendationMadeBeforeThePreferencesChangedIsStale() {
-        UserPreference prefs = savedPrefs(Instant.now());
-
-        assertThat(RecommendationServiceImpl.isStale(madeAt(LocalDateTime.now().minusHours(2)), prefs))
-                .isTrue();
-    }
-
-    @Test
-    void aRecommendationMadeAfterThePreferencesChangedIsFresh() {
-        UserPreference prefs = savedPrefs(Instant.now().minusSeconds(7200));
-
-        assertThat(RecommendationServiceImpl.isStale(madeAt(LocalDateTime.now()), prefs)).isFalse();
-    }
-
-    @Test
-    void unsavedDefaultsNeverMakeAnythingStale() {
-        // an unsaved default has updatedAt = now, which would make every row look old and call the
-        // model on every request. the null id is how we tell it apart from a saved row
-        assertThat(RecommendationServiceImpl.isStale(
-                madeAt(LocalDateTime.now().minusDays(30)), unsavedPrefs())).isFalse();
-    }
-
-    @Test
-    void aSeededRowWithNoCreatedAtIsLeftAlone() {
-        UserPreference prefs = savedPrefs(Instant.now());
-
-        assertThat(RecommendationServiceImpl.isStale(madeAt(null), prefs)).isFalse();
+    // saved preferences that are NOT the defaults, so a row with no version cannot match them
+    private UserPreference customisedPrefs(Instant updatedAt) {
+        UserPreference prefs = savedPrefs(updatedAt);
+        prefs.setFlexibilityLevel(FlexibilityLevel.FIXED_DATES);
+        return prefs;
     }
 
     // a recommendation that records which version of the preferences it was written for
@@ -176,32 +159,82 @@ class RecommendationPreferenceHelpersTest {
     }
 
     @Test
-    void aRowWithNoVersionFallsBackToWhenItWasMade() {
+    void aVersionedRowIsStaleEvenWhenTheSettingsAreBackToTheDefaults() {
+        // written for some other settings, then the traveller changed back. the defaults are not
+        // what it was written for, so it must be redone
+        UserPreference prefs = savedPrefs(Instant.parse("2026-11-01T12:00:00Z"));
+
+        assertThat(RecommendationServiceImpl.hasDefaultSettings(prefs)).isTrue();
+        assertThat(RecommendationServiceImpl.isStale(
+                writtenFor(Instant.parse("2026-11-01T10:00:00Z"), LocalDateTime.now()), prefs)).isTrue();
+    }
+
+    @Test
+    void aRowWithNoVersionMatchesDefaultSettingsWhateverWhenItWasMade() {
+        // the first generate for someone who never set anything saves their default row stamped with
+        // "now". their older recommendations were made with no preferences, which is what the
+        // defaults ask for, so they must not all be redone because that row appeared
         UserPreference prefs = savedPrefs(Instant.now());
 
-        // rows made before the version was kept, they behave as they did before
+        assertThat(RecommendationServiceImpl.isStale(
+                writtenFor(null, LocalDateTime.now().minusDays(30)), prefs)).isFalse();
+    }
+
+    @Test
+    void aRowWithNoVersionIsStaleOnceTheSettingsHaveChanged() {
+        UserPreference prefs = customisedPrefs(Instant.now());
+
         assertThat(RecommendationServiceImpl.isStale(
                 writtenFor(null, LocalDateTime.now().minusHours(2)), prefs)).isTrue();
+    }
+
+    @Test
+    void aRowWithNoVersionMadeAfterTheSettingsChangedIsFresh() {
+        UserPreference prefs = customisedPrefs(Instant.now().minusSeconds(7200));
+
         assertThat(RecommendationServiceImpl.isStale(
-                writtenFor(null, LocalDateTime.now().plusHours(1)), prefs)).isFalse();
+                writtenFor(null, LocalDateTime.now()), prefs)).isFalse();
     }
 
     @Test
-    void aVersionNeverMakesAnythingStaleForUnsavedDefaults() {
-        assertThat(RecommendationServiceImpl.isStale(
-                writtenFor(Instant.parse("2020-01-01T00:00:00Z"), LocalDateTime.now()), unsavedPrefs())).isFalse();
+    void aSeededRowWithNoVersionAndNoCreatedAtIsLeftAlone() {
+        UserPreference prefs = customisedPrefs(Instant.now());
+
+        assertThat(RecommendationServiceImpl.isStale(madeAt(null), prefs)).isFalse();
+    }
+
+    // ----- hasDefaultSettings -----
+
+    @Test
+    void aNewTravellersSettingsAreTheDefaults() {
+        assertThat(RecommendationServiceImpl.hasDefaultSettings(unsavedPrefs())).isTrue();
     }
 
     @Test
-    void theVersionOfSavedPreferencesIsWhenTheyLastChanged() {
-        Instant changedAt = Instant.parse("2026-11-01T10:00:00Z");
+    void changingAnySingleSettingMeansTheyAreNoLongerTheDefaults() {
+        List<Consumer<UserPreference>> changes = List.of(
+                p -> p.setRiskTolerance(RiskTolerance.HIGH),
+                p -> p.setFlexibilityLevel(FlexibilityLevel.FIXED_DATES),
+                p -> p.setExplanationDetail(ExplanationDetail.DETAILED),
+                p -> p.setTravelGroup(TravelGroup.FAMILY),
+                p -> p.setTravellingWithChildren(true),
+                p -> p.setTravellingWithElderly(true),
+                p -> p.setPreferredCategories(Set.of(ActivityCategory.SHOPPING)));
 
-        assertThat(RecommendationServiceImpl.versionOf(savedPrefs(changedAt))).isEqualTo(changedAt);
+        for (Consumer<UserPreference> change : changes) {
+            UserPreference prefs = unsavedPrefs();
+            change.accept(prefs);
+
+            assertThat(RecommendationServiceImpl.hasDefaultSettings(prefs)).isFalse();
+        }
     }
 
     @Test
-    void unsavedDefaultsHaveNoVersion() {
-        assertThat(RecommendationServiceImpl.versionOf(unsavedPrefs())).isNull();
+    void anEmptyCategorySetStillCountsAsTheDefaults() {
+        UserPreference prefs = unsavedPrefs();
+        prefs.setPreferredCategories(Set.of());   // a different kind of empty set, equal to the default one
+
+        assertThat(RecommendationServiceImpl.hasDefaultSettings(prefs)).isTrue();
     }
 
     // ----- travellerNotes -----

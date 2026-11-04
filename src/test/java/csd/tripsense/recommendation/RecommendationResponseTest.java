@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.time.Instant;
+
 import org.junit.jupiter.api.Test;
 
 import csd.tripsense.activity.Activity;
@@ -112,5 +114,27 @@ class RecommendationResponseTest {
         assertThat(response.reason()).isNull();
         assertThat(response.itineraryId()).isNull();
         assertThat(response.optionName()).isEqualTo("Chai Thung Coffee");
+    }
+
+    @Test
+    void carriesTheStaleFlagAndThePreferencesVersionSoTheClientCanTellWhichAdviceNeedsRedoing() {
+        Recommendation recommendation = recommendation(fullImpact(), option);
+        recommendation.setStale(true);
+        recommendation.setPreferencesVersion(Instant.parse("2026-11-01T10:00:00Z"));
+
+        RecommendationResponse response = RecommendationResponse.from(recommendation);
+
+        assertThat(response.stale()).isTrue();
+        assertThat(response.preferencesVersion()).isEqualTo(Instant.parse("2026-11-01T10:00:00Z"));
+    }
+
+    @Test
+    void aRecommendationIsNotStaleAndHasNoVersionUntilTheServiceSaysOtherwise() {
+        RecommendationResponse response = RecommendationResponse.from(recommendation(fullImpact(), option));
+
+        // the flag is never saved, so a recommendation the service has not marked is not stale
+        assertThat(response.stale()).isFalse();
+        // and a row made before versions were kept has none
+        assertThat(response.preferencesVersion()).isNull();
     }
 }
