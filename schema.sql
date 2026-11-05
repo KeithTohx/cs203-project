@@ -105,6 +105,8 @@ create table recommendation {
     advice varchar(500),
     suggested_option_id integer,        -- null when there is nothing to swap to
     created_at timestamp,
+    status varchar not null,            -- PENDING, ACCEPTED, DISMISSED
+    decided_at timestamp,               -- null until they accept or dismiss
 
     foreign key (impact_id) references impact(id),
     foreign key (suggested_option_id) references activity_option(id)
