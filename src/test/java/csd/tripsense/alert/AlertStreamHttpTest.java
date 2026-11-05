@@ -37,7 +37,7 @@ import static org.mockito.Mockito.when;
 
 /** Real HTTP, real security/session cookies, real SSE bytes and real SQLite transactions. Only AI is mocked. */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "gdelt.ingest.enabled=false", "impact.eval.enabled=false", "spring.sql.init.mode=never",
+        "gdelt.ingest.enabled=false", "impact.eval.enabled=false", "impact.eval.new-itinerary.enabled=false", "spring.sql.init.mode=never",
         "spring.jpa.hibernate.ddl-auto=create-drop", "spring.datasource.hikari.maximum-pool-size=2",
         "alerts.reconcile.initial-delay-ms=86400000", "alerts.email.enabled=false"
 })

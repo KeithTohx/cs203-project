@@ -20,6 +20,10 @@ import csd.tripsense.news.NewsService;
 
 @Service
 public class ImpactServiceImpl implements ImpactService {
+    // Shared by manual, ingest and creation-driven calls on this application instance.
+    // Fixed stripes avoid retaining a lock for every itinerary/news pair forever.
+    private final Object[] assessmentLocks = java.util.stream.IntStream.range(0, 128)
+            .mapToObj(i -> new Object()).toArray();
     private ImpactRepository impacts;
     private ChatService chatService;
     private ItineraryService itineraryService;
@@ -112,24 +116,36 @@ public class ImpactServiceImpl implements ImpactService {
 
     @Override
     public Impact evaluateItineraryForNews(Itinerary itinerary, News news) {
-        Optional<Impact> stored = impacts
-                .findFirstByNewsIdAndItineraryIdAndActivityIsNull(news.getId(), itinerary.getId());
-        // a stored row only counts as evaluated if it has a reason (seed rows do not)
-        if (stored.isPresent() && stored.get().getReason() != null) {
-            return stored.get();
+        synchronized (assessmentLock(itinerary, news, null)) {
+            Optional<Impact> stored = impacts
+                    .findFirstByNewsIdAndItineraryIdAndActivityIsNull(news.getId(), itinerary.getId());
+            // a stored row only counts as evaluated if it has a reason (seed rows do not)
+            if (stored.isPresent() && stored.get().getReason() != null) {
+                return stored.get();
+            }
+            Verdict verdict = chatService.ask(buildItineraryPrompt(news, itinerary), Verdict.class);
+            return save(stored.orElseGet(Impact::new), itinerary, news, null, verdict);
         }
-        Verdict verdict = chatService.ask(buildItineraryPrompt(news, itinerary), Verdict.class);
-        return save(stored.orElseGet(Impact::new), itinerary, news, null, verdict);
     }
 
     @Override
     public Impact evaluateActivityForNews(Activity activity, News news) {
-        Optional<Impact> stored = impacts.findFirstByNewsIdAndActivityId(news.getId(), activity.getId());
-        if (stored.isPresent() && stored.get().getReason() != null) {
-            return stored.get();
+        synchronized (assessmentLock(activity.getItinerary(), news, activity)) {
+            Optional<Impact> stored = impacts.findFirstByNewsIdAndActivityId(news.getId(), activity.getId());
+            if (stored.isPresent() && stored.get().getReason() != null) {
+                return stored.get();
+            }
+            Verdict verdict = chatService.ask(buildPrompt(news, activity), Verdict.class);
+            return save(stored.orElseGet(Impact::new), activity.getItinerary(), news, activity, verdict);
         }
-        Verdict verdict = chatService.ask(buildPrompt(news, activity), Verdict.class);
-        return save(stored.orElseGet(Impact::new), activity.getItinerary(), news, activity, verdict);
+    }
+
+    private String assessmentKey(Itinerary itinerary, News news, Activity activity) {
+        return news.getId() + ":" + itinerary.getId() + ":" + (activity == null ? "trip" : activity.getId());
+    }
+
+    private Object assessmentLock(Itinerary itinerary, News news, Activity activity) {
+        return assessmentLocks[Math.floorMod(assessmentKey(itinerary, news, activity).hashCode(), assessmentLocks.length)];
     }
 
     // evaluate() wants a result even when the model fails, so the exception becomes a message here
@@ -217,12 +233,36 @@ public class ImpactServiceImpl implements ImpactService {
         impact.setImpacted(verdict.impacted());
         impact.setReason(verdict.reason());
         impact.setAlertEligible(verdict.impacted() && !Boolean.TRUE.equals(impact.getRejected()));
-        Impact saved = impacts.save(impact);
+        impact.setAssessmentKey(assessmentKey(itinerary, news, activity));
+        Impact saved;
+        try {
+            saved = impacts.save(impact);
+        } catch (org.springframework.dao.DataAccessException collision) {
+            if (!duplicateAssessmentKey(collision)) throw collision;
+            // The unique key also protects separate application instances racing to insert.
+            return (activity == null
+                    ? impacts.findFirstByNewsIdAndItineraryIdAndActivityIsNull(news.getId(), itinerary.getId())
+                    : impacts.findFirstByNewsIdAndActivityId(news.getId(), activity.getId()))
+                    .filter(i -> i.getReason() != null).orElseThrow(() -> collision);
+        }
         log.info("Impact saved: id={} news={} itinerary={} activity={} impacted={} reason={}",
                 saved.getId(), news.getId(), itinerary.getId(),
                 activity == null ? null : activity.getId(), verdict.impacted(), verdict.reason());
         events.publishEvent(new ImpactEvaluatedEvent(saved.getId()));
         return saved;
+    }
+
+    private boolean duplicateAssessmentKey(Throwable failure) {
+        // SQLite unique violations can be translated as JpaSystemException rather than
+        // DataIntegrityViolationException. Recover only this specific constraint violation.
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof java.sql.SQLException sql) {
+                String message = String.valueOf(sql.getMessage());
+                if ((sql.getErrorCode() == 19 || sql.getErrorCode() == 2067 || "23505".equals(sql.getSQLState()))
+                        && (message.contains("impact.assessment_key") || message.contains("uk_impact_assessment_key"))) return true;
+            }
+        }
+        return false;
     }
 
     @Override

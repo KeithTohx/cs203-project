@@ -34,9 +34,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @SpringBootTest(properties = {
-        "gdelt.ingest.enabled=false", "impact.eval.enabled=false", "spring.sql.init.mode=never",
+        "gdelt.ingest.enabled=false", "impact.eval.enabled=false", "impact.eval.new-itinerary.enabled=false", "spring.sql.init.mode=never",
         "spring.jpa.hibernate.ddl-auto=create-drop", "spring.datasource.hikari.maximum-pool-size=1",
-        "alerts.reconcile.initial-delay-ms=86400000", "alerts.email.enabled=false"
+        "alerts.reconcile.initial-delay-ms=86400000", "alerts.email.enabled=false",
+        "alerts.email.initial-group-wait-seconds=0"
 })
 class AlertIntegrationTest {
     private static final Path DATABASE = database();

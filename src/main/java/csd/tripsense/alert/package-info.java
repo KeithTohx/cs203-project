@@ -42,6 +42,14 @@
  * Override with alerts.email.max-group-wait-seconds and alerts.email.group-recheck-seconds.
  * A terminally failed group marks late members FAILED too; it is not retried automatically.
  * Later assessments remain available in-app without sending a second email for the same group.
+ * A first email also waits 30 seconds (alerts.email.initial-group-wait-seconds) so activities
+ * created just after the itinerary can join the initial summary. This does not wait indefinitely
+ * for activities a traveller might add later.
+ *
+ * <p>New itinerary/activity creation queues recent country-matched news durably in the same
+ * transaction as creation. The new-item worker resumes saved progress after failures, restarts,
+ * or its per-pass AI limit; its article snapshot does not expire with the news lookback.
+ * Disable impact.eval.new-itinerary.enabled in tests that create unrelated fixtures.
  *
  * <p>Real-time delivery begins after impact assessment, not at the time a news event occurs.
  * Feed polling and model runtime still determine detection latency. SSE subscribers are

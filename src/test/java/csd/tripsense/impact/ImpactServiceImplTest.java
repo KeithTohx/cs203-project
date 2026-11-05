@@ -86,6 +86,18 @@ class ImpactServiceImplTest {
         return stored;
     }
 
+    @Test void sqliteUniqueCollisionReturnsTheOtherWorkersAssessment() {
+        Impact winner = storedImpact("Already assessed"); winner.setId(99L);
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.empty(), Optional.of(winner));
+        givenModelAnswers(true, "Affected");
+        var sql = new java.sql.SQLException("UNIQUE constraint failed: impact.assessment_key", null, 2067);
+        when(impactRepository.save(any(Impact.class))).thenThrow(
+                new org.springframework.orm.jpa.JpaSystemException(new RuntimeException(sql)));
+        assertSame(winner, impactService.evaluateItineraryForNews(itinerary, news));
+        verifyNoInteractions(events);
+    }
+
     // ===== evaluateItineraryForNews =====
 
     @Test

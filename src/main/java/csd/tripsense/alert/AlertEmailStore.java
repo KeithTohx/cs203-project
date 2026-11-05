@@ -21,13 +21,16 @@ public class AlertEmailStore {
     private final AlertRepository alerts;
     private final long maxGroupWaitSeconds;
     private final long groupRecheckSeconds;
+    private final long initialGroupWaitSeconds;
 
     public AlertEmailStore(AlertRepository alerts,
             @Value("${alerts.email.max-group-wait-seconds:120}") long maxGroupWaitSeconds,
-            @Value("${alerts.email.group-recheck-seconds:30}") long groupRecheckSeconds) {
+            @Value("${alerts.email.group-recheck-seconds:30}") long groupRecheckSeconds,
+            @Value("${alerts.email.initial-group-wait-seconds:30}") long initialGroupWaitSeconds) {
         this.alerts = alerts;
         this.maxGroupWaitSeconds = Math.max(0, maxGroupWaitSeconds);
         this.groupRecheckSeconds = Math.max(1, groupRecheckSeconds);
+        this.initialGroupWaitSeconds = Math.min(this.maxGroupWaitSeconds, Math.max(0, initialGroupWaitSeconds));
     }
 
     public record ClaimedAlert(Long id, int attempt) {}
@@ -81,6 +84,11 @@ public class AlertEmailStore {
                 LocalDateTime.ofInstant(now, ZoneId.systemDefault())) != 0;
         Instant deadline = group.stream().map(Alert::getCreatedAt).min(Comparator.naturalOrder())
                 .orElse(now).plusSeconds(maxGroupWaitSeconds);
+        Instant settleUntil = deadline.minusSeconds(maxGroupWaitSeconds).plusSeconds(initialGroupWaitSeconds);
+        if (group.stream().allMatch(a -> a.getEmailAttempts() == 0) && now.isBefore(settleUntil)) {
+            deferPending(group, settleUntil);
+            return Optional.empty();
+        }
         if (incomplete && now.isBefore(deadline)) {
             Instant recheck = now.plusSeconds(groupRecheckSeconds);
             deferPending(group, recheck.isBefore(deadline) ? recheck : deadline);
