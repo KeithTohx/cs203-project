@@ -106,7 +106,7 @@ class RecommendationServiceImplTest {
     }
 
     private void givenNothingStored() {
-        when(recommendations.findByImpactId(anyLong())).thenReturn(Optional.empty());
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(anyLong())).thenReturn(Optional.empty());
     }
 
     private void givenJapanOptions() {
@@ -144,7 +144,7 @@ class RecommendationServiceImplTest {
         // Arrange
         givenImpacts(skiImpact);
         Recommendation existing = stored(skiImpact, Severity.HIGH);
-        when(recommendations.findByImpactId(100L)).thenReturn(Optional.of(existing));
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(100L)).thenReturn(Optional.of(existing));
 
         // Act
         List<Recommendation> result = recommendationService.generate(1L);
@@ -370,8 +370,8 @@ class RecommendationServiceImplTest {
         Impact onsenImpact = impactOn(102L, onsen, "Baths closed for checks");
 
         givenImpacts(onsenImpact, skiImpact);
-        when(recommendations.findByImpactId(102L)).thenReturn(Optional.of(stored(onsenImpact, Severity.LOW)));
-        when(recommendations.findByImpactId(100L)).thenReturn(Optional.empty());
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(102L)).thenReturn(Optional.of(stored(onsenImpact, Severity.LOW)));
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(100L)).thenReturn(Optional.empty());
         givenJapanOptions();
         givenSaveEchoes();
         givenModelAnswers("HIGH", "REPLACE", 501L, "Go to the museum.");

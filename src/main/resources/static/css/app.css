@@ -243,6 +243,11 @@ h1:has(+ .itinerary-form) {
     margin-left: 0;
 }
 
+.inline-edit.country {
+    width: 14em;
+    max-width: 100%;
+}
+
 /* Activities: the same timeline as the itinerary card */
 .timeline.activity-editor li {
     padding: 8px 0 12px;
@@ -500,6 +505,13 @@ button.ghost.icon-button[data-confirming] {
 
 .actions button {
     margin-top: 0;
+}
+
+/* buttons beside a card heading, like the role and status buttons on an admin's user page */
+.heading-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
 }
 
 /* ===== Cards and content ===== */
@@ -1034,29 +1046,29 @@ button.chat-send {
     margin-top: 12px;
 }
 
-table.users {
+table.data-table {
     width: 100%;
     border-collapse: collapse;
 }
 
-table.users th,
-table.users td {
+table.data-table th,
+table.data-table td {
     text-align: left;
     padding: 8px 10px;
     border-bottom: 1px solid var(--border);
 }
 
-table.users th {
+table.data-table th {
     color: var(--muted);
     font-size: 14px;
     font-weight: 600;
 }
 
-table.users tbody tr:last-child td {
+table.data-table tbody tr:last-child td {
     border-bottom: none;
 }
 
-table.users .tag {
+table.data-table .tag {
     margin-left: 0;
 }
 
@@ -1092,13 +1104,13 @@ table.users .tag {
 }
 
 /* audit details wrap, but never narrower than a few words */
-table.users td:last-child {
+table.data-table td:last-child {
     min-width: 160px;
     overflow-wrap: break-word;
 }
 
 /* tags in tables and details lists line up with the text and never break */
-table.users .tag {
+table.data-table .tag {
     white-space: nowrap;
 }
 
@@ -1299,6 +1311,13 @@ button.link-button {
     margin-top: 0;
     width: 36px;
     height: 36px;
+}
+
+/* the bell is the whole button, so it is bigger than an icon beside text and needs no gap */
+.alert-bell button.icon-button > .icon {
+    width: 20px;
+    height: 20px;
+    margin-right: 0;
 }
 
 /* the unread count, sitting on the bell's corner */
@@ -1583,6 +1602,12 @@ nav a.brand {
     width: 28px;
     height: 28px;
     margin: -4px 0 0;
+}
+
+.alert-toast button.icon-button > .icon {
+    width: 14px;
+    height: 14px;
+    margin-right: 0;
 }
 
 /* no sliding for people who asked their system for less motion */

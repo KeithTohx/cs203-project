@@ -1,4 +1,4 @@
-// Read-only summary. Each section links to its own edit page.
+// read-only summary, each section links to its own edit page
 import { api } from "../api.js";
 import { labelFor } from "../preference-options.js";
 import { escapeHtml } from "../util.js";
@@ -51,34 +51,40 @@ const createPreferenceCard = () => `
 `;
 
 export function showAccount(root, user, onAuthLost) {
-        const isAdmin = user.role === "ADMIN";
-        const deleteDescription = isAdmin
-            ? "Permanently removes your account."
-            : "Permanently removes your account, itineraries and chat history.";
+    const isAdmin = user.role === "ADMIN";
+    const deleteDescription = isAdmin
+        ? "Permanently removes your account."
+        : "Permanently removes your account, itineraries and chat history.";
 
-        root.innerHTML = `<h1>Your account</h1>
-    <section class="card">
-        <div class="row">
-            <h2>Details</h2>
-            <a class="btn" href="#/account/details">Edit</a>
-        </div>
-        <dl><dt>Username</dt><dd>${escapeHtml(user.username)}</dd><dt>Email</dt><dd>${escapeHtml(user.email)}</dd></dl>
-    </section>
-    <section class="card">
-        <div class="row">
-            <h2>Password</h2>
-            <a class="btn" href="#/account/password">Change</a>
-        </div>
-        <p class="meta">••••••••</p>
-    </section>
-    ${isAdmin ? "" : createPreferenceCard()}
-    <section class="card danger-zone">
-        <div class="row">
-            <h2>Delete account</h2>
-            <a class="btn danger" href="#/account/delete">Delete</a>
-        </div>
-        <p class="meta">${deleteDescription}</p>
-    </section>
+    root.innerHTML = `
+        <h1>Your account</h1>
+        <section class="card">
+            <div class="row">
+                <h2>Details</h2>
+                <a class="btn" href="#/account/details">Edit</a>
+            </div>
+            <dl>
+                <dt>Username</dt>
+                <dd>${escapeHtml(user.username)}</dd>
+                <dt>Email</dt>
+                <dd>${escapeHtml(user.email)}</dd>
+            </dl>
+        </section>
+        <section class="card">
+            <div class="row">
+                <h2>Password</h2>
+                <a class="btn" href="#/account/password">Change</a>
+            </div>
+            <p class="meta">••••••••</p>
+        </section>
+        ${isAdmin ? "" : createPreferenceCard()}
+        <section class="card danger-zone">
+            <div class="row">
+                <h2>Delete account</h2>
+                <a class="btn danger" href="#/account/delete">Delete</a>
+            </div>
+            <p class="meta">${deleteDescription}</p>
+        </section>
     `;
 
     if (!isAdmin) loadPreferenceSummary(root.querySelector("#preference-summary"), onAuthLost);

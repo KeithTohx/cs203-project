@@ -99,6 +99,7 @@ const realApi = {
   adminUser:  id => request(`/api/admin/users/${id}`),                                 // -> {id, username, email, role, enabled}
   disableUser:id => request(`/api/admin/users/${id}/disable`, "POST"),                 // the account cannot log in and its sessions end, but its data stays
   enableUser: id => request(`/api/admin/users/${id}/enable`, "POST"),
+  changeUserRole:(id, role) => request(`/api/admin/users/${id}/role`, "POST", {role}),   // "USER" | "ADMIN", logs them out. not allowed on yourself or the last enabled admin
   adminDeleteUser:id => request(`/api/admin/users/${id}`, "DELETE"),                   // -> 204, the account and everything in it is gone. not allowed on yourself
   userActivity:(id, {action = "", page = 0} = {}) => request(`/api/admin/users/${id}/actions?${new URLSearchParams({action, page})}`),   // what the account did and what was done to it, newest first
   auditLog:   ({email = "", action = "", page = 0} = {}) => request(`/api/admin/audit?${new URLSearchParams({email, action, page})}`),   // everyone's actions, newest first

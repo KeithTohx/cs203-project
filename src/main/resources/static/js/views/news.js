@@ -1,6 +1,6 @@
 // stored news, newest first, with older stories on demand and a filter for news affecting your trips
 import { api } from "../api.js";
-import { emptyState, escapeHtml, hostnameOf, safeUrl, showError, timeTag } from "../util.js";
+import { emptyState, escapeHtml, hostnameOf, newsTitleOf, safeUrl, showError, timeTag } from "../util.js";
 import { icon } from "../icons.js";
 
 // small enough to read through, and the backend caps a page at 100 anyway
@@ -9,7 +9,7 @@ const PAGE_SIZE = 10;
 // one story, linking to the original article and tagging any trip it affects
 const createNewsItem = (news, affectedTrips = []) => {
     const link = safeUrl(news.url);
-    const title = escapeHtml(news.title || "Untitled news");
+    const title = escapeHtml(newsTitleOf(news.title));
     const heading = link
         ? `<a href="${link}" target="_blank" rel="noopener noreferrer">${title}<span class="sr-only"> (opens in a new tab)</span></a>`
         : `<span>${title}</span>`;
@@ -43,13 +43,22 @@ const createViewSwitch = affectingCount => `
     </div>
 `;
 
-// news id -> names of the user's trips it affects, rejected impacts left out
+// news id -> names of the user's trips it affects, rejected impacts left out.
+// a trip whose impacts fail to load is skipped, so the others still get their labels
 const findAffectedTrips = async user => {
     const itineraries = (await api.itineraries(user.id)) ?? [];
-    const impactsPerTrip = await Promise.all(itineraries.map(async itinerary => ({
+    const results = await Promise.allSettled(itineraries.map(async itinerary => ({
         itinerary,
         impacts: (await api.itineraryImpacts(itinerary.id)) ?? [],
     })));
+
+    // a 401 means every request failed the same way, so it is passed on for the login page
+    const sessionEnded = results.find(result => result.status === "rejected" && result.reason?.status === 401);
+    if (sessionEnded) throw sessionEnded.reason;
+
+    const impactsPerTrip = results
+        .filter(result => result.status === "fulfilled")
+        .map(result => result.value);
 
     const tripsByNews = new Map();
     const newsById = new Map();
@@ -75,7 +84,15 @@ const findAffectedTrips = async user => {
     return { tripsByNews, affectingNews: [...newsById.values()] };
 };
 
-export async function showNews(root, user, onAuthLost) {
+export async function showNews(root, user, reauth) {
+    // the news and the trips load side by side, so an ended session would otherwise be reported twice
+    let authLostReported = false;
+    const onAuthLost = () => {
+        if (authLostReported) return;
+        authLostReported = true;
+        reauth();
+    };
+
     root.innerHTML = `
         <h1>News</h1>
         <p class="meta">Travel news the system has picked up, newest first. New stories are added automatically.</p>
@@ -95,6 +112,7 @@ export async function showNews(root, user, onAuthLost) {
     const switchContainer = root.querySelector("#news-switch");
 
     let nextPage = 0;
+    let hasMore = false;   // whether the last page loaded was full, so there may be another
     let loadedNews = [];
     let tripsByNews = new Map();
     let affectingNews = [];
@@ -119,7 +137,7 @@ export async function showNews(root, user, onAuthLost) {
         status.innerHTML = newestFirst.length ? "" : emptyState({
             iconHtml: icon("check"),
             title: "Nothing affects your trips",
-            text: "None of the news so far affects your upcoming trips.",
+            text: "None of the news so far affects your trips.",
         });
         loadMoreButton.hidden = true;
     };
@@ -143,12 +161,13 @@ export async function showNews(root, user, onAuthLost) {
         const unseen = page.filter(news => !shownIds.has(news.id));
         loadedNews = [...loadedNews, ...unseen];
         nextPage += 1;
+        hasMore = page.length === PAGE_SIZE;
         loadMoreButton.disabled = false;
         loadMoreButton.textContent = "Load older news";
 
         if (currentView === "all") {
             drawAll();
-            loadMoreButton.hidden = page.length < PAGE_SIZE;
+            loadMoreButton.hidden = !hasMore;
         }
     };
 
@@ -160,19 +179,24 @@ export async function showNews(root, user, onAuthLost) {
         if (view === "mine") return drawMine();
 
         drawAll();
-        // the last page loaded decides whether there is more, so ask again only if it was full
-        loadMoreButton.hidden = loadedNews.length < nextPage * PAGE_SIZE;
+        // not worked out from loadedNews, which skips repeats and so can come up short of a full page
+        loadMoreButton.hidden = !hasMore;
     };
 
-    // trips are extra, so the news still shows if they fail to load
-    if (user.role === "USER") {
+    // trips are extra, so the news still shows if they fail to load.
+    // they take a request per trip, so the news is not kept waiting and gets its trip labels once they arrive
+    const loadAffectedTrips = async () => {
         try {
             ({ tripsByNews, affectingNews } = await findAffectedTrips(user));
-            switchContainer.innerHTML = createViewSwitch(affectingNews.length);
         } catch (error) {
-            if (error.status === 401) return onAuthLost();
+            if (error.status === 401) onAuthLost();
+            return;
         }
-    }
+
+        switchContainer.innerHTML = createViewSwitch(affectingNews.length);
+        const newsIsShowing = currentView === "all" && loadedNews.length > 0;
+        if (newsIsShowing) drawAll();
+    };
 
     switchContainer.addEventListener("click", event => {
         const button = event.target.closest("[data-view]");
@@ -180,5 +204,6 @@ export async function showNews(root, user, onAuthLost) {
     });
     loadMoreButton.addEventListener("click", loadNextPage);
 
-    await loadNextPage();
+    const tripsLoading = user.role === "USER" ? loadAffectedTrips() : null;
+    await Promise.all([loadNextPage(), tripsLoading]);
 }

@@ -14,6 +14,7 @@ export const AUDIT_ACTIONS = [
     { value: "ACCOUNT_DISABLED", label: "Disabled account" },
     { value: "ACCOUNT_ENABLED", label: "Enabled account" },
     { value: "ACCOUNT_DELETED", label: "Deleted account" },
+    { value: "ROLE_CHANGED", label: "Changed role" },
 ];
 
 // the text for an action, or the raw value if the backend sends one this file does not know yet
@@ -65,7 +66,7 @@ export const createAuditTable = entries => {
 
     return `
         <div class="table-scroll">
-            <table class="users">
+            <table class="data-table">
                 <thead>
                     <tr>
                         <th scope="col">When</th>

@@ -1,5 +1,7 @@
 package csd.tripsense.recommendation;
 
+import java.time.LocalDateTime;
+
 import csd.tripsense.impact.Impact;
 
 /**
@@ -10,6 +12,8 @@ import csd.tripsense.impact.Impact;
  */
 public record RecommendationResponse(
         Long id,
+        RecommendationStatus status,
+        LocalDateTime decidedAt,
         Severity severity,
         Action action,
         String advice,
@@ -32,6 +36,8 @@ public record RecommendationResponse(
 
         return new RecommendationResponse(
                 recommendation.getId(),
+                recommendation.getStatus(),
+                recommendation.getDecidedAt(),
                 recommendation.getSeverity(),
                 recommendation.getAction(),
                 recommendation.getAdvice(),

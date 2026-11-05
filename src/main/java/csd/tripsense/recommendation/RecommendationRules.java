@@ -64,6 +64,19 @@ public final class RecommendationRules {
     public static List<ActivityOption> shortlist(List<ActivityOption> options,
                                                  ActivityCategory category,
                                                  String address, String newsText) {
+        return shortlist(options, category, address, newsText, Set.of());
+    }
+
+    /**
+     * Same, but leaves out options we have already offered for this impact.
+     *
+     * @param exclude option ids already suggested, so a regenerate cannot repeat one they
+     *                have just turned down
+     */
+    public static List<ActivityOption> shortlist(List<ActivityOption> options,
+                                                 ActivityCategory category,
+                                                 String address, String newsText,
+                                                 Set<Long> exclude) {
         Set<ActivityCategory> substitutes = substitutesFor(category);
         if (substitutes.isEmpty()) {
             return List.of();
@@ -84,6 +97,8 @@ public final class RecommendationRules {
                                       localAreaIsInTheNews(options, where, news));
 
         return options.stream()
+                // already offered for this impact, so offering it again is not a new suggestion
+                .filter(option -> !exclude.contains(option.getId()))
                 .filter(option -> substitutes.contains(option.getCategory()))
                 // a keyword guard, not geography. "flooding closes bangkok" drops every
                 // bangkok option, but a quake headline naming only hokkaido keeps sapporo
