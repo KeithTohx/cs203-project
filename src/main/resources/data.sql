@@ -106,21 +106,30 @@ INSERT OR IGNORE INTO impact (id, user_id, news_id, itinerary_id, activity_id, i
 -- recommendations for karwei's trips, so the demo has advice to show without calling ollama.
 -- generate() keys "already done" off the row existing, so these are served straight back.
 -- suggested_option_id points at activity_option, which comes from options.sql
-INSERT OR IGNORE INTO recommendation (id, impact_id, severity, action, advice, suggested_option_id, created_at) VALUES
+INSERT OR IGNORE INTO recommendation (id, impact_id, severity, action, advice, suggested_option_id, created_at, status, decided_at) VALUES
     (1, 1, 'HIGH',   'REPLACE',
         'Lifts may be shut on the 16th, so swap the ski day for the Nishimura Museum of Art in Niseko and keep the skis for later in the week.',
-        123464807, '2026-10-24 12:00:00'),
+        123464807, '2026-10-24 12:00:00', 'PENDING',   NULL),
     (2, 2, 'MEDIUM', 'REPLACE',
         'Jozankei may be closed for safety checks, so spend the evening at the Sapporo Clock Tower instead, a short ride from the city centre.',
-        1140619,   '2026-10-24 12:00:00'),
+        1140619,   '2026-10-24 12:00:00', 'ACCEPTED',  '2026-10-25 09:30:00'),
     -- whole trip impact, no single activity to swap so no option either
     (3, 3, 'MEDIUM', 'MONITOR',
         'The quake affects the whole trip, so follow the Hokkaido aftershock updates and leave the 15th and 16th flexible.',
-        NULL,      '2026-10-24 12:00:00'),
+        NULL,      '2026-10-24 12:00:00', 'PENDING',   NULL),
     -- low severity still says something, "no change needed" is the answer the story asks for
     (4, 6, 'LOW',    'MONITOR',
         'The maintenance dates are not confirmed, so no change is needed yet. Check the park calendar a week before the 9th.',
-        NULL,      '2026-10-24 12:00:00');
+        NULL,      '2026-10-24 12:00:00', 'DISMISSED', '2026-10-25 09:31:00'),
+    -- second attempt on impact 1, so one impact shows a regenerate chain. highest id wins,
+    -- so this is the live one and row 1 drops into the history
+    (5, 1, 'HIGH',   'REPLACE',
+        'Lifts still look shut, so try the Shu Ogawara Museum of Art instead, a different gallery from the first suggestion.',
+        132545224, '2026-10-25 10:00:00', 'PENDING',   NULL);
+-- Rows seeded before status existed are skipped by INSERT OR IGNORE above, so they would load
+-- with a null status. Undecided is the right answer for them. Safe to re-run.
+UPDATE recommendation SET status = 'PENDING' WHERE status IS NULL;
+
 -- Rows that already exist (created before country_id existed) are skipped by INSERT OR IGNORE,
 -- so fill them in. Safe to re-run: it only touches rows where country_id is still null.
 UPDATE activity

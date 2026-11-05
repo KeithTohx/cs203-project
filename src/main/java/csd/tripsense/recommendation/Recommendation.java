@@ -59,4 +59,16 @@ public class Recommendation {
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
+
+    // one impact can hold several attempts now, so the decision sits on the attempt and not
+    // on the impact. newest row per impact is the live one
+    // the default is what lets sqlite add this column to a database that already has rows,
+    // it refuses a not null column otherwise and every existing db would fail to start
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, columnDefinition = "varchar(255) default 'PENDING' not null")
+    private RecommendationStatus status;
+
+    // null until they accept or dismiss, the story wants the decision and when it was made
+    @Column(name = "decided_at")
+    private LocalDateTime decidedAt;
 }

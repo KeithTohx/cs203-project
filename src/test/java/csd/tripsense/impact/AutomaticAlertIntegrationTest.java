@@ -106,7 +106,7 @@ class AutomaticAlertIntegrationTest {
         listener.processPending();
         assertThat(tasks.count()).isZero();
         assertThat(impacts.findByItineraryId(trip.getId())).hasSize(2);
-        var saved = alerts.list(owner.getId(), false, 0, 20).content();
+        var saved = alerts.list(owner.getId(), false, null, 20).content();
         assertThat(saved).hasSize(2);
         verify(ai, times(2)).ask(anyString(), any(Class.class));
         verify(streams, times(2)).onCreated(argThat(e -> e.userId().equals(owner.getId())));
@@ -115,7 +115,7 @@ class AutomaticAlertIntegrationTest {
         email.sent(delivery, Instant.now());
         assertThat(email.claim(saved.getLast().id(), Instant.now().plusSeconds(1000))).isEmpty();
         User other = users.saveAndFlush(new User(UUID.randomUUID() + "@example.com", "other" + owner.getId(), "long-enough-hash", "USER"));
-        assertThat(alerts.list(other.getId(), false, 0, 20).content()).isEmpty();
+        assertThat(alerts.list(other.getId(), false, null, 20).content()).isEmpty();
     }
 
     @Test void rollbackAlsoRemovesQueuedWorkAndNeverCallsAi() {
@@ -146,7 +146,7 @@ class AutomaticAlertIntegrationTest {
         assertThat(tasks.count()).isZero();
         assertThat(impacts.findByItineraryId(trip.getId())).hasSize(1)
                 .allSatisfy(i -> assertThat(i.getAlertEligible()).isFalse());
-        assertThat(alerts.list(owner.getId(), false, 0, 20).content()).isEmpty();
+        assertThat(alerts.list(owner.getId(), false, null, 20).content()).isEmpty();
     }
 
     @Test void cappedWorkResumesAfterWorkerReplacementWithoutRepeatingCompletedCalls() {
@@ -174,7 +174,7 @@ class AutomaticAlertIntegrationTest {
         verdict(); readyAll();
         try (var replacement = new Worker(worker(200))) { replacement.listener.processPending(); }
         assertThat(tasks.count()).isZero();
-        assertThat(alerts.list(owner.getId(), false, 0, 20).content()).hasSize(1);
+        assertThat(alerts.list(owner.getId(), false, null, 20).content()).hasSize(1);
         assertThat(impacts.findByItineraryId(trip.getId())).hasSize(1);
     }
 
@@ -185,15 +185,15 @@ class AutomaticAlertIntegrationTest {
         assertThat(tasks.count()).isEqualTo(1);
         listener.processPending(); listener.processPending();
         verify(ai, times(1)).ask(anyString(), any(Class.class));
-        assertThat(alerts.list(owner.getId(), false, 0, 20).content()).hasSize(1);
+        assertThat(alerts.list(owner.getId(), false, null, 20).content()).hasSize(1);
     }
 
     @Test void lateActivityGetsAnInAppAlertWithoutSendingTheSameNewsTwice() {
         Itinerary trip = newTrip(); listener.processPending();
-        var first = alerts.list(owner.getId(), false, 0, 20).content().getFirst();
+        var first = alerts.list(owner.getId(), false, null, 20).content().getFirst();
         email.sent(email.claim(first.id(), Instant.now().plusSeconds(1)).orElseThrow(), Instant.now());
         activity(trip); listener.processPending();
-        var saved = alerts.list(owner.getId(), false, 0, 20).content();
+        var saved = alerts.list(owner.getId(), false, null, 20).content();
         assertThat(saved).hasSize(2);
         assertThat(email.claim(saved.getFirst().id(), Instant.now().plusSeconds(1))).isEmpty();
         verify(ai, times(2)).ask(anyString(), any(Class.class));
@@ -226,7 +226,7 @@ class AutomaticAlertIntegrationTest {
                     .isEqualTo(second.get(5, java.util.concurrent.TimeUnit.SECONDS).getId());
         } finally { release.countDown(); }
         assertThat(impacts.findByItineraryId(trip.getId())).hasSize(1);
-        assertThat(alerts.list(owner.getId(), false, 0, 20).content()).hasSize(1);
+        assertThat(alerts.list(owner.getId(), false, null, 20).content()).hasSize(1);
     }
 
     @Test void databaseRejectsDuplicateAssessmentKeys() {
@@ -243,13 +243,13 @@ class AutomaticAlertIntegrationTest {
 
     @Test void initialGroupingWindowIncludesActivitiesAddedImmediatelyAfterTheTrip() {
         Itinerary trip = newTrip(); listener.processPending();
-        var first = alerts.list(owner.getId(), false, 0, 20).content().getFirst();
+        var first = alerts.list(owner.getId(), false, null, 20).content().getFirst();
         var grouping = new AlertEmailStore(alertRows, 120, 30, 30);
         var tx = new TransactionTemplate(transactions);
         var waiting = tx.execute(s -> grouping.claim(first.id(), first.createdAt().plusSeconds(1)));
         assertThat(waiting).isEmpty();
         activity(trip); listener.processPending();
-        var second = alerts.list(owner.getId(), false, 0, 20).content().getFirst();
+        var second = alerts.list(owner.getId(), false, null, 20).content().getFirst();
         var delivery = tx.execute(s -> grouping.claim(second.id(), first.createdAt().plusSeconds(31))).orElseThrow();
         assertThat(delivery.relatedAlerts()).hasSize(2);
         assertThat(delivery.partialAssessment()).isFalse();

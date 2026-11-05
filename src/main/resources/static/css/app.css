@@ -1,29 +1,42 @@
-/* ===== Theme tokens: change colors here, everything else follows ===== */
 :root {
-    --bg: #f1f4f9;
-    --panel: #fff;
-    --text: #16252b;
-    --muted: #5d6f76;
-    --border: hsl(168, 14%, 85%);
-    --accent: #0088ff;
-    --bad: #d7312f;
-    --bad-bg: #fbeceb;
-    --ok: #3f7d6a;
-    --ok-bg: #e9f3ec;
+    --bg: #f7f9fc;
+    --panel: #ffffff;
+    --text: #14233a;
+    --muted: #53627a;
+    --border: #dfe6f0;
+    --tag: #e6edf7;
+    --accent: #d3e4fb;
+    --on-accent: #1655a8;
+    --link: #2a73d3;
+    --bad: #c0392b;
+    --bad-bg: #fcecea;
+    --on-bad: #ffffff;
+    --ok: #2e7a4f;
+    --ok-bg: #e7f3ec;
+    --warn: #8a5a00;
+    --warn-bg: #fcf2db;
+    /* 14px padding either side of the 36px bell, plus the border */
+    --nav-height: 65px;
 }
 
 @media (prefers-color-scheme: dark) {
     :root {
-        --bg: #121212;
-        --panel: #161c2b;
-        --text: #e8e9f0;
-        --muted: #93a7ad;
-        --border: #274048;
-        --accent: #0088ff;
-        --bad: #ff7b6d;
-        --bad-bg: #2e1a19;
-        --ok: #7fc58f;
-        --ok-bg: #183024;
+        --bg: #0d1520;
+        --panel: #141e2c;
+        --text: #e4ebf4;
+        --muted: #9eaec2;
+        --border: #273649;
+        --tag: #223246;
+        --accent: #1f3d63;
+        --on-accent: #d3e4fb;
+        --link: #8fbcf5;
+        --bad: #f28b7f;
+        --bad-bg: #2f1a18;
+        --on-bad: #1c0b09;
+        --ok: #7fcf9f;
+        --ok-bg: #15291e;
+        --warn: #f2c46d;
+        --warn-bg: #33270f;
     }
 }
 
@@ -40,12 +53,12 @@ body {
 }
 
 :focus-visible {
-    outline: 3px solid var(--accent);
+    outline: 3px solid var(--link);
     outline-offset: 2px;
 }
 
 a {
-    color: var(--accent);
+    color: var(--link);
 }
 
 h1,
@@ -54,6 +67,18 @@ h2 {
 }
 
 /* ===== Layout ===== */
+/* the top bar stays put while the page scrolls, so jumping to a trip card stops below it */
+html {
+    scroll-padding-top: calc(var(--nav-height) + 16px);
+}
+
+/* the wrapper is what sticks, the bar fills it exactly so would have no room to move on its own */
+#nav {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+}
+
 nav {
     display: flex;
     justify-content: space-between;
@@ -113,7 +138,7 @@ main:has(.login-panel) {
 .notice {
     margin: 0 0 4px;
     padding: 8px 12px;
-    border-left: 4px solid var(--accent);
+    border-left: 4px solid var(--link);
     background: var(--bg);
     border-radius: 4px;
     font-size: 14px;
@@ -160,9 +185,9 @@ h1:has(+ .itinerary-form) {
 .inline-edit:focus,
 .inline-edit:focus-visible {
     background: var(--panel);
-    border-color: var(--accent);
+    border-color: var(--link);
     outline: none;
-    box-shadow: 0 0 0 2px var(--accent);
+    box-shadow: 0 0 0 2px var(--link);
 }
 
 .inline-edit::placeholder {
@@ -216,6 +241,11 @@ h1:has(+ .itinerary-form) {
 
 .inline-range .inline-edit {
     margin-left: 0;
+}
+
+.inline-edit.country {
+    width: 14em;
+    max-width: 100%;
 }
 
 /* Activities: the same timeline as the itinerary card */
@@ -333,20 +363,31 @@ fieldset:disabled label.check {
     color: var(--muted);
 }
 
+/* outlined by default, the main action of a page or form adds "primary" */
 button {
     font: inherit;
     font-weight: 600;
     cursor: pointer;
     border-radius: 6px;
     margin-top: 14px;
-    border: 1px solid var(--accent);
-    background: var(--accent);
-    color: #fff;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
     padding: 9px 14px;
 }
 
 button:hover {
-    filter: brightness(1.1);
+    border-color: var(--text);
+}
+
+button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent);
+}
+
+button.primary:hover {
+    border-color: var(--link);
 }
 
 button:disabled {
@@ -367,7 +408,9 @@ button.ghost:hover {
 }
 
 .btn {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
     text-decoration: none;
     font-weight: 600;
     border-radius: 6px;
@@ -383,11 +426,11 @@ button.ghost:hover {
 .btn.primary {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
 }
 
 .btn.primary:hover {
-    filter: brightness(1.1);
+    border-color: var(--link);
 }
 
 /* Page title with a button beside it */
@@ -428,15 +471,20 @@ button.danger:hover {
 
 /* the main button of a form that removes something for good, e.g. "Delete my account" */
 button.destructive {
-    color: #fff;
+    color: var(--on-bad);
     background: var(--bad);
     border-color: var(--bad);
+}
+
+button.destructive:hover {
+    border-color: var(--bad);
+    filter: brightness(1.1);
 }
 
 /* Waiting for the second click (confirmTwice): solid red, for both "Delete itinerary?" and "Remove?" */
 button.ghost.danger[data-confirming],
 button.ghost.icon-button[data-confirming] {
-    color: #fff;
+    color: var(--on-bad);
     background: var(--bad);
     border-color: var(--bad);
 }
@@ -457,6 +505,13 @@ button.ghost.icon-button[data-confirming] {
 
 .actions button {
     margin-top: 0;
+}
+
+/* buttons beside a card heading, like the role and status buttons on an admin's user page */
+.heading-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
 }
 
 /* ===== Cards and content ===== */
@@ -494,7 +549,7 @@ button.ghost.icon-button[data-confirming] {
     font-weight: 600;
     padding: 2px 8px;
     border-radius: 99px;
-    background: var(--border);
+    background: var(--tag);
     margin-left: 8px;
 }
 
@@ -537,7 +592,7 @@ h3 {
     height: 8px;
     border-radius: 50%;
     background: var(--panel);
-    border: 2px solid var(--accent);
+    border: 2px solid var(--link);
 }
 
 .timeline li.hit::before {
@@ -660,8 +715,8 @@ a.source-bubble {
 }
 
 a.source-bubble:hover {
-    border-color: var(--accent);
-    color: var(--accent);
+    border-color: var(--link);
+    color: var(--link);
 }
 
 /* padding-top bridges the gap so the mouse can move onto the popover without it closing */
@@ -910,7 +965,7 @@ button.chat-suggestion {
 }
 
 button.chat-suggestion:hover {
-    border-color: var(--accent);
+    border-color: var(--link);
     filter: none;
 }
 
@@ -927,7 +982,7 @@ button.chat-suggestion:hover {
 }
 
 .chat-composer:focus-within {
-    border-color: var(--accent);
+    border-color: var(--link);
 }
 
 .chat-composer textarea {
@@ -991,33 +1046,749 @@ button.chat-send {
     margin-top: 12px;
 }
 
-table.users {
+table.data-table {
     width: 100%;
     border-collapse: collapse;
 }
 
-table.users th,
-table.users td {
+table.data-table th,
+table.data-table td {
     text-align: left;
     padding: 8px 10px;
     border-bottom: 1px solid var(--border);
 }
 
-table.users th {
+table.data-table th {
     color: var(--muted);
     font-size: 14px;
     font-weight: 600;
 }
 
-table.users tbody tr:last-child td {
+table.data-table tbody tr:last-child td {
     border-bottom: none;
 }
 
-table.users .tag {
+table.data-table .tag {
     margin-left: 0;
 }
 
 .tag.admin {
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
+}
+
+/* previous and next under a paged table */
+.pager {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.pager button {
+    margin-top: 0;
+}
+
+/* search box and dropdown side by side above a table, stacked on narrow screens */
+.filters {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+}
+
+.filters input,
+.filters select,
+.filter select {
+    width: auto;
+    min-width: 200px;
+}
+
+/* audit details wrap, but never narrower than a few words */
+table.data-table td:last-child {
+    min-width: 160px;
+    overflow-wrap: break-word;
+}
+
+/* tags in tables and details lists line up with the text and never break */
+table.data-table .tag {
+    white-space: nowrap;
+}
+
+dd .tag {
+    margin-left: 0;
+}
+
+/* a note under a details list */
+dl + .hint {
+    margin-top: 14px;
+}
+
+.msg + .card {
+    margin-top: 12px;
+}
+
+/* ===== recommendations ===== */
+.tag.warn {
+    background: var(--warn-bg);
+    color: var(--warn);
+}
+
+.tag.ok {
+    background: var(--ok-bg);
+    color: var(--ok);
+}
+
+.advice-list {
+    list-style: none;
+    padding: 0;
+    margin: 8px 0;
+}
+
+/* a neutral edge, so advice does not read as another warning */
+.advice {
+    margin-top: 8px;
+    padding: 10px 12px;
+    border-left: 4px solid var(--link);
+    background: var(--panel);
+    border-radius: 4px;
+}
+
+.advice p {
+    margin: 4px 0 0;
+}
+
+.advice-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 0;
+}
+
+.advice-head .tag {
+    white-space: nowrap;
+}
+
+.suggested-place {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 6px;
+}
+
+/* the empty message and the suggest button on one line */
+.suggest-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+    margin: 6px 0;
+}
+
+.suggest-row p {
+    margin: 0;
+}
+
+.suggest-row button {
+    margin-top: 0;
+}
+
+/* ===== news page ===== */
+.view-switch {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 14px 0 4px;
+}
+
+/* the view being shown looks selected, like a filled button */
+.view-switch button[aria-pressed="true"] {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent);
+}
+
+.news-list {
+    list-style: none;
+    padding: 0;
+    margin: 12px 0 0;
+}
+
+.news-item {
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.news-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 0;
+}
+
+.news-head .tag {
+    white-space: nowrap;
+}
+
+/* long gdelt descriptions are cut to three lines so the list stays easy to scan */
+.news-description {
+    margin: 6px 0 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* ===== summary at the top of the itineraries page ===== */
+.card.trip-summary {
+    margin-top: 12px;
+}
+
+.trip-summary h2 {
+    margin: 0 0 4px;
+}
+
+.trip-summary p {
+    margin: 0;
+}
+
+.trip-summary ul {
+    list-style: none;
+    padding: 0;
+    margin: 8px 0 0;
+}
+
+.trip-summary li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 10px;
+    margin: 4px 0;
+}
+
+/* a button that looks like a link, for actions that stay on the page */
+button.link-button {
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    color: var(--link);
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+/* only keyboard focus shows a ring on the card a summary link jumped to */
+[data-itinerary]:focus {
+    outline: none;
+}
+
+[data-itinerary]:focus-visible {
+    outline: 3px solid var(--link);
+}
+
+/* ===== alerts bell ===== */
+/* bell, name and log out stay on one line, on a phone the links wrap instead */
+.nav-user {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+.alert-bell {
+    position: relative;
+    margin-right: 8px;
+}
+
+.alert-bell button.icon-button {
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+    margin-top: 0;
+    width: 36px;
+    height: 36px;
+}
+
+/* the bell is the whole button, so it is bigger than an icon beside text and needs no gap */
+.alert-bell button.icon-button > .icon {
+    width: 20px;
+    height: 20px;
+    margin-right: 0;
+}
+
+/* the unread count, sitting on the bell's corner */
+.alert-badge {
+    position: absolute;
+    top: -4px;
+    right: -6px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 99px;
+    background: var(--bad);
+    color: var(--on-bad);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+}
+
+/* opens under the bell, kept inside the screen on phones */
+.alert-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 20;
+    width: min(360px, calc(100vw - 32px));
+    max-height: 70vh;
+    overflow-y: auto;
+    padding: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .15);
+    text-align: left;
+    white-space: normal;
+}
+
+/* on a phone the panel spans the top bar, the bell is too close to the edge */
+@media (max-width: 600px) {
+    /* the links wrap on a phone and make the bar too tall to keep on screen */
+    #nav {
+        position: static;
+    }
+
+    nav {
+        position: relative;
+    }
+
+    html {
+        scroll-padding-top: 0;
+    }
+
+    .alert-bell {
+        position: static;
+    }
+
+    .alert-panel {
+        top: 100%;
+        left: 16px;
+        right: 16px;
+        width: auto;
+    }
+}
+
+.alert-panel h2 {
+    font-size: 16px;
+    margin: 0 0 8px;
+}
+
+.alert-panel ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.alert-panel li + li {
+    border-top: 1px solid var(--border);
+}
+
+.alert-panel h2:focus {
+    outline: none;
+}
+
+.alert-panel li a {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 6px;
+    margin: 0;
+    color: var(--text);
+    font-weight: 400;
+    text-decoration: none;
+    border-radius: 4px;
+}
+
+.alert-panel li a:hover {
+    background: var(--bg);
+}
+
+/* unread alerts get a blue edge */
+.alert-panel li.is-new a {
+    box-shadow: inset 3px 0 0 var(--link);
+}
+
+/* the way to the alerts page, under the list */
+.alert-panel-footer {
+    display: block;
+    margin: 8px 0 0;   /* the top bar gives its links a right margin */
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    text-align: center;
+    color: var(--link);
+}
+
+/* ===== alerts page ===== */
+/* the view buttons on the left, mark all as read pushed to the right */
+.view-switch button.link-button {
+    margin-left: auto;
+}
+
+/* unread alerts get the same blue edge as in the bell */
+.alert-item.is-new {
+    box-shadow: inset 3px 0 0 var(--link);
+}
+
+.alert-reason {
+    margin: 6px 0 0;
+}
+
+.alert-item button.link-button {
+    margin-top: 8px;
+}
+
+/* ===== icons and logo ===== */
+.icon {
+    width: 1.05em;
+    height: 1.05em;
+    flex: none;
+    vertical-align: -0.15em;
+}
+
+/* a gap between an icon and the words after it */
+a > .icon,
+button > .icon,
+.trip-meta .icon {
+    margin-right: 6px;
+}
+
+.nav-links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 16px;
+}
+
+.nav-links a {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 0;
+}
+
+nav a.brand {
+    gap: 8px;
+    margin-right: 8px;
+    font-size: 1.3rem;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.logo-mark {
+    display: inline-grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: var(--link);
+    color: var(--panel);
+}
+
+.logo-mark .icon {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+}
+
+/* the tick in a toast */
+.toast > .icon {
+    color: var(--ok);
+}
+
+/* logo and name together at the top of the login and sign up cards */
+.auth-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 18px;
+    font-size: 1.3rem;
+    font-weight: 700;
+}
+
+.auth-brand + h1 {
+    margin-top: 0;
+    font-size: 1.6rem;
+}
+
+.trip-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 16px;
+}
+
+.imp-head > .icon {
+    color: var(--bad);
+}
+
+/* ===== toasts ===== */
+#toasts {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: min(360px, calc(100vw - 32px));
+}
+
+.toast {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--text);
+    font-weight: 600;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .2);
+    animation: toast-in .2s ease-out;
+    transition: opacity .4s, transform .4s;
+}
+
+.toast.leaving {
+    opacity: 0;
+    transform: translateY(8px);
+}
+
+@keyframes toast-in {
+    from { opacity: 0; transform: translateY(8px); }
+}
+
+/* new alerts: the same toast with a little more in it, a news icon and a link */
+.alert-toast {
+    align-items: flex-start;
+    padding: 12px 8px 12px 16px;
+}
+
+/* blue like the unread edge in the bell, rather than the green tick of confirmations */
+.alert-toast > .icon {
+    margin-top: 2px;
+    color: var(--link);
+}
+
+.alert-toast-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.alert-toast-body .meta {
+    font-weight: 400;
+}
+
+.alert-toast-body a {
+    margin-top: 4px;
+}
+
+.alert-toast button.icon-button {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    margin: -4px 0 0;
+}
+
+.alert-toast button.icon-button > .icon {
+    width: 14px;
+    height: 14px;
+    margin-right: 0;
+}
+
+/* no sliding for people who asked their system for less motion */
+@media (prefers-reduced-motion: reduce) {
+    .toast {
+        animation: none;
+        transition: none;
+    }
+}
+
+/* ===== empty states ===== */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 40px 16px;
+    text-align: center;
+    background: var(--panel);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+}
+
+.empty-state > .icon {
+    width: 40px;
+    height: 40px;
+    padding: 10px;
+    border-radius: 50%;
+    background: var(--tag);
+    color: var(--link);
+    box-sizing: content-box;
+}
+
+.empty-state h2 {
+    margin: 4px 0 0;
+    font-size: 18px;
+}
+
+.empty-state p {
+    max-width: 380px;
+}
+
+.empty-state .btn {
+    margin-top: 8px;
+}
+
+/* ===== avatar and flags ===== */
+.avatar {
+    display: inline-grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    margin-right: 6px;
+    border-radius: 50%;
+    background: var(--tag);
+    color: var(--link);
+    font-weight: 700;
+    font-size: 14px;
+}
+
+.flag {
+    margin-right: 6px;
+    font-size: 1.05em;
+}
+
+.itinerary-meta > .icon,
+.itinerary-meta .inline-range > .icon {
+    color: var(--muted);
+}
+
+/* the avatar and name together link to the account page */
+nav a.profile-link {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 10px;
+    padding: 3px 10px 3px 3px;
+    border-radius: 99px;
+    font-weight: 600;
+}
+
+nav a.profile-link:hover,
+nav a.profile-link[aria-current] {
+    background: var(--tag);
+    text-decoration: none;
+}
+
+/* ===== itineraries dashboard: trips on the left, overview on the right ===== */
+main:has(.dashboard) {
+    max-width: 1180px;
+}
+
+.dashboard {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 24px;
+    align-items: start;
+}
+
+.dashboard-main h2.section:first-child {
+    margin-top: 12px;
+}
+
+/* stays in view while the trips scroll past */
+.dashboard-side {
+    position: sticky;
+    top: calc(var(--nav-height) + 16px);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.dashboard-side .card {
+    margin: 0;
+}
+
+.side-extra:empty {
+    display: none;
+}
+
+.side-card h2,
+.dashboard-side .trip-summary h2 {
+    margin: 0 0 6px;
+    font-size: 16px;
+    color: var(--muted);
+}
+
+/* the summary's tag moves to its own line in the sidebar rather than breaking in two */
+.dashboard-side .trip-summary .tag {
+    display: inline-block;
+    white-space: nowrap;
+    margin: 4px 0 0;
+}
+
+.side-card p {
+    margin: 0 0 4px;
+}
+
+.next-trip-countdown {
+    font-size: 1.6rem;
+    font-weight: 700;
+}
+
+.side-news {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 10px;
+}
+
+.side-news li {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 0;
+}
+
+.side-news li + li {
+    border-top: 1px solid var(--border);
+}
+
+.side-card > a {
+    display: inline-flex;
+    align-items: center;
+    font-weight: 600;
+}
+
+/* narrower screens: one column, with only the summary above the trips */
+@media (max-width: 1099px) {
+    .dashboard {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0;
+    }
+
+    .dashboard-side {
+        order: -1;
+        position: static;
+    }
+
+    .side-extra {
+        display: none;
+    }
 }

@@ -2,6 +2,7 @@ package csd.tripsense.admin;
 
 import csd.tripsense.audit.AuditEntryResponse;
 import csd.tripsense.audit.AuditService;
+import csd.tripsense.user.Role;
 import csd.tripsense.user.User;
 import csd.tripsense.user.UserNotFoundException;
 import csd.tripsense.user.UserRepository;
@@ -26,6 +27,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class AdminServiceImplTest {
@@ -81,6 +83,8 @@ class AdminServiceImplTest {
         assertThatThrownBy(() -> service.deleteUser(5L, 3L))
                 .isInstanceOfSatisfying(AccountRuleException.class,
                         e -> assertThat(e.getKind()).isEqualTo(AccountRuleException.Kind.CONFLICT));
+
+        verify(userService, never()).deleteUserAndData(any());
     }
 
     // ---------- view ----------
@@ -153,6 +157,20 @@ class AdminServiceImplTest {
     }
 
     @Test
+    void disableUser_adminAccountsAreProtected() {
+        User otherAdmin = new User("other@example.com", "other", "hash", "ADMIN");
+        when(userRepository.findById(5L)).thenReturn(Optional.of(otherAdmin));
+
+        // an admin has to be demoted through role management first
+        assertThatThrownBy(() -> service.disableUser(5L, 3L))
+                .isInstanceOfSatisfying(AccountRuleException.class,
+                        e -> assertThat(e.getKind()).isEqualTo(AccountRuleException.Kind.CONFLICT));
+
+        assertThat(otherAdmin.isEnabled()).isTrue();
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
     void enableUser_letsTheAccountLogInAgain() {
         User bob = new User("bob@example.com", "bob", "hash", "USER");
         bob.setEnabled(false);
@@ -160,6 +178,55 @@ class AdminServiceImplTest {
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
 
         assertThat(service.enableUser(4L).isEnabled()).isTrue();
+    }
+
+    // ---------- change role ----------
+
+    @Test
+    void changeRole_toAdmin_savesThePromotion() {
+        User bob = new User("bob@example.com", "bob", "hash", "USER");
+        when(userRepository.findById(4L)).thenReturn(Optional.of(bob));
+        when(userRepository.saveAndFlush(bob)).thenReturn(bob);
+
+        User result = service.changeRole(4L, Role.ADMIN, 3L);
+
+        assertThat(result.getRole()).isEqualTo("ADMIN");
+        verify(userRepository).saveAndFlush(bob);
+    }
+
+    @Test
+    void changeRole_toUser_savesTheDemotion_whenAnotherAdminIsLeft() {
+        User otherAdmin = new User("other@example.com", "other", "hash", "ADMIN");
+        when(userRepository.findById(5L)).thenReturn(Optional.of(otherAdmin));
+        when(userRepository.countEnabledByRole("ADMIN")).thenReturn(2L);
+        when(userRepository.saveAndFlush(otherAdmin)).thenReturn(otherAdmin);
+
+        User result = service.changeRole(5L, Role.USER, 3L);
+
+        assertThat(result.getRole()).isEqualTo("USER");
+    }
+
+    @Test
+    void changeRole_onOwnAccount_isRefusedAndNothingIsTouched() {
+        assertThatThrownBy(() -> service.changeRole(3L, Role.USER, 3L))
+                .isInstanceOfSatisfying(AccountRuleException.class,
+                        e -> assertThat(e.getKind()).isEqualTo(AccountRuleException.Kind.INVALID_INPUT));
+
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    void changeRole_lastEnabledAdmin_cannotBeDemoted() {
+        User lastAdmin = new User("admin@example.com", "admin", "hash", "ADMIN");
+        when(userRepository.findById(5L)).thenReturn(Optional.of(lastAdmin));
+        when(userRepository.countEnabledByRole("ADMIN")).thenReturn(1L);
+
+        assertThatThrownBy(() -> service.changeRole(5L, Role.USER, 3L))
+                .isInstanceOfSatisfying(AccountRuleException.class,
+                        e -> assertThat(e.getKind()).isEqualTo(AccountRuleException.Kind.CONFLICT));
+
+        assertThat(lastAdmin.getRole()).isEqualTo("ADMIN");
+        verify(userRepository, never()).saveAndFlush(any());
     }
 
     // ---------- review what a user did ----------

@@ -9,11 +9,16 @@
  *
  * <p>API contract for future frontend integration (frontend files are unchanged):
  * <ul>
- * <li>GET /api/alerts?page=0&amp;size=20&amp;unreadOnly=false: saved history and unreadCount.</li>
+ * <li>GET /api/alerts?beforeId=&amp;size=20&amp;unreadOnly=false: saved history, newest first, and
+ * unreadCount. Send the response's nextBeforeId back as beforeId to load older alerts.</li>
  * <li>GET /api/alerts/stream: ready/alert SSE events, session cookie required. Fetch history
  * on every ready event to recover any missed messages. Streams expire after 30 minutes
  * and clients can reconnect; heartbeats are sent every 15 seconds.</li>
- * <li>PATCH /api/alerts/{id}/read: idempotent, owner-only, requires the normal CSRF token.</li>
+ * <li>PATCH /api/alerts/{id} with {"read": true}: marks one alert as read. Idempotent, owner-only,
+ * requires the normal CSRF token.</li>
+ * <li>PATCH /api/alerts?upToId= with {"read": true}: marks every alert of the user as read. Pass the
+ * newest alert id shown so alerts that arrive meanwhile stay unread. Returns the unreadCount left
+ * afterwards. Idempotent, requires the normal CSRF token.</li>
  * </ul>
  *
  * <p>Email remains disabled until configured externally. No resource, frontend or

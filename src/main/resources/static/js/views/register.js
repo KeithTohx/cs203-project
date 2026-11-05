@@ -2,6 +2,7 @@
 // On success: log straight in. If that fails, go back to the login screen with a message.
 import { api } from "../api.js";
 import { flash, passwordProblem, PASSWORD_MAX, PASSWORD_MIN } from "../util.js";
+import { logoMark } from "../icons.js";
 
 const capitalise = text => text.charAt(0).toUpperCase() + text.slice(1);
 // The backend sends 409 when the username or email is taken, and 400 when a field fails validation.
@@ -13,6 +14,7 @@ const explainError = error =>
 export function showRegister(root, onLoggedIn) {
     root.innerHTML = `
         <form class="login-panel" id="register-form" novalidate>
+            <div class="auth-brand">${logoMark()}TripSense</div>
             <h1>Create an account</h1>
             <label for="username">Username</label>
             <input id="username" name="username" autocomplete="username" minlength="3" maxlength="30" required>
@@ -29,7 +31,7 @@ export function showRegister(root, onLoggedIn) {
             <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" required>
 
             <p class="err" id="error-message" role="alert"></p>
-            <button type="submit">Create account</button>
+            <button class="primary" type="submit">Create account</button>
             <p class="switch-auth">Already have an account? <a href="#">Log in</a></p>
         </form>
     `;

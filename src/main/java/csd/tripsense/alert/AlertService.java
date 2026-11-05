@@ -3,6 +3,7 @@ package csd.tripsense.alert;
 import csd.tripsense.impact.Impact;
 import csd.tripsense.impact.ImpactRepository;
 import csd.tripsense.user.UserRepository;
+import java.time.Instant;
 import java.util.List;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
@@ -27,17 +28,22 @@ public class AlertService {
         this.events = events;
     }
 
-    public record AlertPage(List<AlertResponse> content, int page, int size, long totalElements,
-                            int totalPages, long unreadCount) {}
+    // nextBeforeId is what the client sends back as beforeId to load older alerts, null once there are none
+    public record AlertPage(List<AlertResponse> content, boolean hasMore, Long nextBeforeId, long unreadCount) {}
 
+    // beforeId null means start from the newest alert
     @Transactional(readOnly = true)
-    public AlertPage list(Long userId, boolean unreadOnly, int page, int size) {
+    public AlertPage list(Long userId, boolean unreadOnly, Long beforeId, int size) {
         requireActiveAccount(userId);
-        var result = alerts.findForUser(userId, unreadOnly,
-                PageRequest.of(Math.max(0, page), Math.min(100, Math.max(1, size))));
-        return new AlertPage(result.getContent().stream().map(AlertResponse::from).toList(),
-                result.getNumber(), result.getSize(), result.getTotalElements(), result.getTotalPages(),
-                alerts.countUnread(userId));
+        int pageSize = Math.min(100, Math.max(1, size));
+        var result = alerts.findForUser(userId, unreadOnly, beforeId, PageRequest.of(0, pageSize));
+
+        List<AlertResponse> content = result.getContent().stream().map(AlertResponse::from).toList();
+        Long nextBeforeId = null;
+        if (result.hasNext()) {
+            nextBeforeId = content.getLast().id();
+        }
+        return new AlertPage(content, result.hasNext(), nextBeforeId, alerts.countUnread(userId));
     }
 
     @Transactional
@@ -46,6 +52,19 @@ public class AlertService {
         Alert alert = alerts.findOwned(id, userId).orElseThrow(() -> new AlertNotFoundException(id));
         alert.markRead();
         return AlertResponse.from(alerts.save(alert));
+    }
+
+    // what is left unread after marking all as read. not always 0, since alerts newer than upToId are skipped
+    public record UnreadCount(long unreadCount) {}
+
+    // marks every visible unread alert, not just one page. upToId null means no upper limit
+    // one bulk update instead of loading every alert, see AlertRepository.markAllReadForUser for why
+    @Transactional
+    public UnreadCount markAllRead(Long userId, Long upToId) {
+        requireActiveAccount(userId);
+        Instant now = Instant.now();
+        alerts.markAllReadForUser(userId, upToId, now);
+        return new UnreadCount(alerts.countUnread(userId));
     }
 
     /** Called after assessment commit; a notification failure cannot roll back an impact. */

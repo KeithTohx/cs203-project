@@ -5,15 +5,21 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 
 import csd.tripsense.activity.Activity;
+import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.chat.ChatService;
 import csd.tripsense.impact.Impact;
+import csd.tripsense.impact.ImpactNotFoundException;
 import csd.tripsense.impact.ImpactService;
 import csd.tripsense.itinerary.Itinerary;
+import csd.tripsense.itinerary.ItineraryAccess;
 import csd.tripsense.itinerary.ItineraryService;
 import csd.tripsense.news.News;
 
@@ -32,17 +38,20 @@ public class RecommendationServiceImpl implements RecommendationService {
     private ImpactService impactService;
     private ItineraryService itineraryService;
     private ChatService chatService;
+    private ItineraryAccess access;
 
     public RecommendationServiceImpl(RecommendationRepository recommendations,
                                      ActivityOptionRepository options,
                                      ImpactService impactService,
                                      ItineraryService itineraryService,
-                                     ChatService chatService) {
+                                     ChatService chatService,
+                                     ItineraryAccess access) {
         this.recommendations = recommendations;
         this.options = options;
         this.impactService = impactService;
         this.itineraryService = itineraryService;
         this.chatService = chatService;
+        this.access = access;
     }
 
     // the shape we ask the model to answer in
@@ -60,7 +69,7 @@ public class RecommendationServiceImpl implements RecommendationService {
             // cached on the row existing and not on a field being filled. impact keys
             // "already evaluated" off reason != null, which made every seeded row call the
             // model again, so we are not repeating that here
-            made.add(recommendations.findByImpactId(impact.getId())
+            made.add(recommendations.findFirstByImpactIdOrderByIdDesc(impact.getId())
                     .orElseGet(() -> build(itinerary, impact)));
         }
         return sorted(made);
@@ -71,12 +80,75 @@ public class RecommendationServiceImpl implements RecommendationService {
         return sorted(recommendations.findByImpactItineraryId(itineraryId));
     }
 
+    @Override
+    public List<Recommendation> getByItinerary(Long itineraryId, boolean includeDismissed,
+                                               CurrentUser me) {
+        access.requireAccess(itineraryService.getItineraryById(itineraryId), me);
+
+        // only the live attempt per impact, the superseded ones belong in the history
+        List<Recommendation> live = recommendations.findByImpactItineraryId(itineraryId).stream()
+                .collect(Collectors.groupingBy(r -> r.getImpact().getId(),
+                        Collectors.maxBy(Comparator.comparing(Recommendation::getId))))
+                .values().stream()
+                .flatMap(Optional::stream)
+                .filter(r -> includeDismissed || r.getStatus() != RecommendationStatus.DISMISSED)
+                .toList();
+
+        return sorted(live);
+    }
+
+    @Override
+    public Recommendation decide(Long recommendationId, RecommendationStatus status,
+                                 CurrentUser me) {
+        Recommendation recommendation = mine(recommendationId, me);
+        recommendation.setStatus(status);
+        // pending means undecided, so clearing the time back to null keeps the two honest
+        recommendation.setDecidedAt(status == RecommendationStatus.PENDING
+                ? null : LocalDateTime.now());
+        return recommendations.save(recommendation);
+    }
+
+    @Override
+    public Recommendation regenerate(Long recommendationId, CurrentUser me) {
+        Recommendation rejected = mine(recommendationId, me);
+        Impact impact = rejected.getImpact();
+
+        // everything we have already put in front of them for this impact, so the rules cannot
+        // hand back the same venue and call it a different suggestion
+        Set<Long> seen = recommendations.findByImpactIdOrderByIdAsc(impact.getId()).stream()
+                .map(Recommendation::getSuggestedOption)
+                .filter(Objects::nonNull)
+                .map(ActivityOption::getId)
+                .collect(Collectors.toSet());
+
+        return build(impact.getItinerary(), impact, seen);
+    }
+
+    @Override
+    public List<Recommendation> getHistory(Long impactId, CurrentUser me) {
+        access.requireAccess(impactService.getImpact(impactId), me);
+        return recommendations.findByImpactIdOrderByIdAsc(impactId);
+    }
+
+    // loads a recommendation only if the caller owns the trip it hangs off. a row that is not
+    // theirs reads the same as one that does not exist, so ids cannot be probed
+    private Recommendation mine(Long recommendationId, CurrentUser me) {
+        Recommendation recommendation = recommendations.findById(recommendationId)
+                .orElseThrow(() -> new ImpactNotFoundException(recommendationId));
+        access.requireAccess(recommendation.getImpact(), me);
+        return recommendation;
+    }
+
     // worst first, Severity is declared HIGH to LOW so natural order already does it
     private List<Recommendation> sorted(List<Recommendation> list) {
         return list.stream().sorted(Comparator.comparing(Recommendation::getSeverity)).toList();
     }
 
     private Recommendation build(Itinerary itinerary, Impact impact) {
+        return build(itinerary, impact, Set.of());
+    }
+
+    private Recommendation build(Itinerary itinerary, Impact impact, Set<Long> exclude) {
         Activity activity = impact.getActivity();
 
         // a whole trip impact has no single activity to swap, so there is nothing to offer
@@ -85,7 +157,7 @@ public class RecommendationServiceImpl implements RecommendationService {
                     "Affects the whole trip, so follow local updates and keep the plans flexible.");
         }
 
-        List<ActivityOption> shortlist = shortlistFor(itinerary, impact, activity);
+        List<ActivityOption> shortlist = shortlistFor(itinerary, impact, activity, exclude);
         try {
             Suggestion suggestion = chatService.ask(prompt(impact, activity, shortlist),
                                                     Suggestion.class);
@@ -116,7 +188,8 @@ public class RecommendationServiceImpl implements RecommendationService {
     }
 
     // everything in the trip country that could stand in for this activity, cut down by the rules
-    private List<ActivityOption> shortlistFor(Itinerary itinerary, Impact impact, Activity activity) {
+    private List<ActivityOption> shortlistFor(Itinerary itinerary, Impact impact, Activity activity,
+                                              Set<Long> exclude) {
         if (activity.getCategory() == null || itinerary.getCountry() == null) {
             return List.of();
         }
@@ -125,7 +198,8 @@ public class RecommendationServiceImpl implements RecommendationService {
         // the areas before they rank anything, so they need to see areas we would never suggest
         return RecommendationRules.shortlist(
                 options.findByCountry(itinerary.getCountry().getName()),
-                activity.getCategory(), activity.getAddress(), newsText(impact.getNews()));
+                activity.getCategory(), activity.getAddress(), newsText(impact.getNews()),
+                exclude);
     }
 
     private String prompt(Impact impact, Activity activity, List<ActivityOption> shortlist) {
@@ -207,6 +281,8 @@ public class RecommendationServiceImpl implements RecommendationService {
         recommendation.setSuggestedOption(option);
         recommendation.setAdvice(advice);
         recommendation.setCreatedAt(LocalDateTime.now());
+        // nothing is decided until the traveller says so
+        recommendation.setStatus(RecommendationStatus.PENDING);
         return recommendations.save(recommendation);
     }
 }

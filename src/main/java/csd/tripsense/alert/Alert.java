@@ -3,9 +3,13 @@ package csd.tripsense.alert;
 import csd.tripsense.impact.Impact;
 import jakarta.persistence.*;
 import java.time.Instant;
+import org.hibernate.annotations.DynamicUpdate;
 
 /** One durable notification per assessed impact. Ownership follows the impact's itinerary. */
+// dynamic update so saving after markRead only writes readAt and never overwrites the email columns,
+// which AlertEmailStore changes from its own transaction
 @Entity
+@DynamicUpdate
 @Table(name = "alert")
 public class Alert {
     @Id
