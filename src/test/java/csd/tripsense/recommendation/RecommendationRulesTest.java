@@ -2,6 +2,7 @@ package csd.tripsense.recommendation;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
@@ -280,6 +281,28 @@ class RecommendationRulesTest {
     void emptyOptionsDoesNotThrow() {
         assertTrue(RecommendationRules.shortlist(
                 List.of(), SKI_SNOW, "Sapporo", "anything").isEmpty());
+    }
+
+    @Test
+    void anOptionAlreadyOfferedIsNotOfferedAgain() {
+        // what makes a regenerate a genuinely different answer rather than luck
+        List<ActivityOption> options = List.of(
+                option(1, "Sapporo", MUSEUM_GALLERY, "first museum"),
+                option(2, "Sapporo", MUSEUM_GALLERY, "second museum"));
+
+        List<ActivityOption> result = RecommendationRules.shortlist(
+                options, SKI_SNOW, "Sapporo, Japan", "", Set.of(1L));
+
+        assertEquals(1, result.size());
+        assertEquals("second museum", result.get(0).getName());
+    }
+
+    @Test
+    void excludingEverythingLeavesNothingToOffer() {
+        List<ActivityOption> options = List.of(option(1, "Sapporo", MUSEUM_GALLERY, "only museum"));
+
+        assertTrue(RecommendationRules.shortlist(
+                options, SKI_SNOW, "Sapporo, Japan", "", Set.of(1L)).isEmpty());
     }
 
     @Test

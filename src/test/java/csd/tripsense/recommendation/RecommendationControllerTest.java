@@ -1,14 +1,18 @@
 package csd.tripsense.recommendation;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -19,6 +23,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
+import org.springframework.security.web.method.annotation.AuthenticationPrincipalArgumentResolver;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -46,8 +51,13 @@ class RecommendationControllerTest {
 
     @BeforeEach
     void setUp() {
-        // standalone = only this controller, no Spring context, no database
-        mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+        // standalone = only this controller, no Spring context, no database. the resolver is
+        // needed so @AuthenticationPrincipal binds instead of being treated as a request body,
+        // nobody is logged in here so it hands the controller a null and the mocked service
+        // decides what comes back
+        mockMvc = MockMvcBuilders.standaloneSetup(controller)
+                .setCustomArgumentResolvers(new AuthenticationPrincipalArgumentResolver())
+                .build();
     }
 
     // ---------------------------------------------------------------- helpers
@@ -160,7 +170,8 @@ class RecommendationControllerTest {
     @DisplayName("Should list the stored recommendations for an itinerary")
     void getByItinerary_ShouldReturnStored() throws Exception {
         // Arrange
-        when(recommendationService.getByItinerary(1L)).thenReturn(List.of(skiRecommendation()));
+        when(recommendationService.getByItinerary(eq(1L), eq(false), any()))
+                .thenReturn(List.of(skiRecommendation()));
 
         // Act + Assert
         mockMvc.perform(get("/api/itinerary/1/recommendation"))
@@ -173,11 +184,108 @@ class RecommendationControllerTest {
     @DisplayName("Should return an empty list when nothing has been generated yet")
     void getByItinerary_ShouldReturnEmptyList_WhenNoneStored() throws Exception {
         // Arrange
-        when(recommendationService.getByItinerary(1L)).thenReturn(List.of());
+        when(recommendationService.getByItinerary(eq(1L), eq(false), any()))
+                .thenReturn(List.of());
 
         // Act + Assert
         mockMvc.perform(get("/api/itinerary/1/recommendation"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    @DisplayName("Should pass includeDismissed through to the service")
+    void getByItinerary_ShouldPassIncludeDismissed() throws Exception {
+        // Arrange
+        when(recommendationService.getByItinerary(eq(1L), eq(true), any()))
+                .thenReturn(List.of(skiRecommendation()));
+
+        // Act + Assert
+        mockMvc.perform(get("/api/itinerary/1/recommendation?includeDismissed=true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1));
+    }
+
+    // ===== PATCH /api/recommendation/{id} =====
+
+    @Test
+    @DisplayName("Should accept a recommendation and return the decision")
+    void decide_ShouldReturnUpdated() throws Exception {
+        // Arrange
+        Recommendation accepted = skiRecommendation();
+        accepted.setStatus(RecommendationStatus.ACCEPTED);
+        accepted.setDecidedAt(LocalDateTime.of(2026, 10, 25, 9, 30));
+        when(recommendationService.decide(eq(1L), eq(RecommendationStatus.ACCEPTED), any()))
+                .thenReturn(accepted);
+
+        // Act + Assert
+        mockMvc.perform(patch("/api/recommendation/1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\": \"ACCEPTED\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACCEPTED"))
+                .andExpect(jsonPath("$.decidedAt").exists());
+    }
+
+    @Test
+    @DisplayName("Should return 400 and never call the service when status is missing")
+    void decide_ShouldReturn400_WhenStatusMissing() throws Exception {
+        // Act + Assert
+        mockMvc.perform(patch("/api/recommendation/1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+
+        verify(recommendationService, never()).decide(anyLong(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Should return 400 when status is not one we know")
+    void decide_ShouldReturn400_WhenStatusUnknown() throws Exception {
+        // the model never touches this, it is the traveller clicking, so a bad value is a bug
+        mockMvc.perform(patch("/api/recommendation/1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\": \"MAYBE\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    // ===== POST /api/recommendation/{id}/regenerate =====
+
+    @Test
+    @DisplayName("Should return the fresh suggestion when asked for a different one")
+    void regenerate_ShouldReturnNewRow() throws Exception {
+        // Arrange
+        Recommendation fresh = skiRecommendation();
+        fresh.setId(9L);
+        fresh.setStatus(RecommendationStatus.PENDING);
+        when(recommendationService.regenerate(eq(1L), any())).thenReturn(fresh);
+
+        // Act + Assert
+        mockMvc.perform(post("/api/recommendation/1/regenerate"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(9))
+                .andExpect(jsonPath("$.status").value("PENDING"));
+    }
+
+    // ===== GET /api/impact/{impactId}/recommendation =====
+
+    @Test
+    @DisplayName("Should list every attempt made for one impact")
+    void getHistory_ShouldReturnEveryAttempt() throws Exception {
+        // Arrange
+        Recommendation dismissed = skiRecommendation();
+        dismissed.setStatus(RecommendationStatus.DISMISSED);
+        Recommendation live = skiRecommendation();
+        live.setId(9L);
+        live.setStatus(RecommendationStatus.PENDING);
+        when(recommendationService.getHistory(eq(100L), any()))
+                .thenReturn(List.of(dismissed, live));
+
+        // Act + Assert
+        mockMvc.perform(get("/api/impact/100/recommendation"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].status").value("DISMISSED"))
+                .andExpect(jsonPath("$[1].status").value("PENDING"));
     }
 }
