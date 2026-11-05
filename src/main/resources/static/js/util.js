@@ -1,6 +1,6 @@
 import { icon } from "./icons.js";
 
-// Makes text safe to put inside HTML, so user and news text can never inject tags or scripts.
+// makes text safe to put inside html, so user and news text can never inject tags or scripts
 export const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, char =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 export const formatDate = date => date ? new Date(date).toLocaleDateString(undefined,
@@ -13,8 +13,10 @@ export const dateRange = (start, end) => {
 };
 export const sortByStart = activities =>
     [...activities].sort((first, second) => new Date(first.dateStart ?? 0) - new Date(second.dateStart ?? 0));
-// News URLs come from an external API: only allow http(s) links.
+// news urls come from an external api, so only http(s) links are allowed
 export const safeUrl = url => /^https?:\/\//i.test(url || "") ? escapeHtml(url) : "";
+// some gdelt articles come without a title, so every news list falls back to the same text
+export const newsTitleOf = title => title || "Untitled news";
 // the site name from a link, so gdelt news without a source still gets a label
 export const hostnameOf = url => {
     try {
@@ -23,7 +25,7 @@ export const hostnameOf = url => {
         return "";
     }
 };
-// Shared error handler: a 401 means the session ended, so go back to login.
+// shared error handler: a 401 means the session ended, so go back to login
 export function showError(container, error, onAuthLost) {
     if (error.status === 401) return onAuthLost();
     container.innerHTML = `<div class="msg err" role="alert">${escapeHtml(error.message)}</div>`;
@@ -36,7 +38,7 @@ export function passwordProblem(password) {
     if (password.length > PASSWORD_MAX) return `Password can't be longer than ${PASSWORD_MAX} characters.`;
     return null;
 }
-// One-shot message shown on the next screen (e.g. "Details saved.").
+// a one-shot message shown on the next screen, eg "Details saved."
 export const flash = message => { try { sessionStorage.setItem("flash", message); } catch { } };
 export const takeFlash = () => {
     try {
@@ -45,11 +47,11 @@ export const takeFlash = () => {
         return message;
     } catch { return null; }
 };
-// Shared edit-form screen. onSubmit gets the form's inputs by name (inputs.email.value);
-// throwing an error shows its message under the form.
-// Returns { form, errorMessage } so a view can wire up extra buttons (e.g. Delete).
-// formClass sets the form's width: "narrow" (default) or "wide".
-// submitLabel and submitClass change the main button, for forms that do something other than save.
+// shared edit-form screen. onSubmit gets the form's inputs by name (inputs.email.value),
+// and throwing an error shows its message under the form.
+// gives back { form, errorMessage } so a view can wire up extra buttons, eg Delete.
+// formClass sets the form's width, "narrow" (default) or "wide".
+// submitLabel and submitClass change the main button, for forms that do something other than save
 export function formPage(root, { title, fieldsHtml, onSubmit, onAuthLost, cancelLink, extraActions = "", formClass = "narrow",
                                  submitLabel = "Save", submitClass = "" }) {
     const submitClassAttribute = ` class="${submitClass || "primary"}"`;
@@ -74,7 +76,11 @@ export function formPage(root, { title, fieldsHtml, onSubmit, onAuthLost, cancel
         try { await onSubmit(form.elements); }
         catch (error) {
             saveButton.disabled = false;
-            error.status === 401 ? onAuthLost() : (errorMessage.textContent = error.message);
+            if (error.status === 401) {
+                onAuthLost();
+                return;
+            }
+            errorMessage.textContent = error.message;
         }
     };
     return { form, errorMessage };
@@ -102,10 +108,10 @@ export const debounce = (action, waitMs = 300) => {
         timer = setTimeout(() => action(...args), waitMs);
     };
 };
-// Two-click confirm for buttons that remove things, so a misclick doesn't lose anything.
-// The first click shows `confirmText`; a second click runs onConfirm. It goes back to normal when the mouse
-// leaves the button or focus moves away; touch and keyboard (which have no "leave") get a 4 second timeout.
-// Returns a function that puts the button back to normal, for buttons that stay on the page after confirming.
+// two-click confirm for buttons that remove things, so a misclick does not lose anything.
+// the first click shows confirmText and a second click runs onConfirm. it goes back to normal when the mouse
+// leaves the button or focus moves away, and touch and keyboard (which have no "leave") get a 4 second timeout.
+// gives back a function that puts the button back to normal, for buttons that stay on the page after confirming
 export function confirmTwice(button, { confirmText, onConfirm, onArm = () => { }, onDisarm = () => { } }) {
     const original = { text: button.textContent, label: button.getAttribute("aria-label") };
     let timer;
@@ -132,7 +138,7 @@ export function confirmTwice(button, { confirmText, onConfirm, onArm = () => { }
         onConfirm();
     });
     button.addEventListener("blur", disarm);
-    // Touch is left out: a finger "leaves" the button the moment it lifts, which would cancel every tap.
+    // touch is left out, since a finger "leaves" the button the moment it lifts, which would cancel every tap
     button.addEventListener("pointerleave", event => { if (event.pointerType === "mouse") disarm(); });
     return disarm;
 }
@@ -165,10 +171,12 @@ export function showToast(message) {
     setTimeout(() => toast.remove(), 4400);
 }
 
-// a message left by the previous page with flash(), shown as a toast
+// a message left by the previous page with flash(), shown as a toast.
+// gives back whether there was one
 export const showFlashToast = () => {
     const message = takeFlash();
     if (message) showToast(message);
+    return Boolean(message);
 };
 
 // "5 minutes ago" for the last week, the date after that, and the date for anything in the future
@@ -185,7 +193,12 @@ export const timeAgo = date => {
 // a <time> showing timeAgo, with the full date on hover
 export const timeTag = date => {
     if (!date) return "";
-    const iso = new Date(date).toISOString();
+
+    // a malformed date from the news feed would make toISOString throw and take the whole list down
+    const parsed = new Date(date);
+    if (Number.isNaN(parsed.getTime())) return "";
+
+    const iso = parsed.toISOString();
     return `<time datetime="${iso}" title="${escapeHtml(formatDateTime(date))}">${escapeHtml(timeAgo(date))}</time>`;
 };
 
@@ -211,7 +224,13 @@ export const flagFor = countryName => {
             for (let second = 65; second <= 90; second++) {
                 const code = String.fromCharCode(first, second);
                 const name = names.of(code);
-                if (name && name !== code && !codesByName.has(name.toLowerCase())) codesByName.set(name.toLowerCase(), code);
+
+                // unknown codes come back as the code itself, and an alias already set wins
+                const isRealName = name && name !== code;
+                if (!isRealName) continue;
+
+                const key = name.toLowerCase();
+                if (!codesByName.has(key)) codesByName.set(key, code);
             }
         }
     }

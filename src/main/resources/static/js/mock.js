@@ -40,27 +40,27 @@ const ACTIVITIES = [
     makeActivity(8, 2, "Island hopping", "Phi Phi Islands", "2026-11-09T08:00:00", "2026-11-09T17:00:00"),
     // itinerary 6 has no activities, to test the empty state
 ];
-// news id -> the article fields an impact carries. 3 has no source so the label falls back to the
-// link's site name, and 2 has no link so its bubble isn't clickable
 // a time this long before the page loaded, so the "5 minutes ago" style times show in mock mode too
 const minutesAgo = minutes => new Date(Date.now() - minutes * 60_000).toISOString();
 
+// news id -> the article fields an impact carries. 3 has no source so the label falls back to the
+// link's site name, and 2 has no link so its bubble is not clickable
 const NEWS = {
     1: { title: "Magnitude 6.8 earthquake strikes near Hokkaido", source: "Japan Meteorological Agency",
-        url: "https://www.jma.go.jp/jma/indexe.html", publishedAt: "2026-12-14T08:30:00",
+        url: "https://www.jma.go.jp/jma/indexe.html", publishedAt: "2026-12-14T08:30:00Z",
         description: "A strong earthquake hit southern Hokkaido early this morning. Rail services are suspended while tracks are inspected, and several ski resorts have paused lifts." },
     2: { title: "Universal Studios Singapore to close for maintenance", source: "The Straits Times",
-        url: null, publishedAt: "2026-12-30T10:00:00", description: null },
+        url: null, publishedAt: "2026-12-30T10:00:00Z", description: null },
     3: { title: "Cherry blossom forecast: early bloom & record crowds", source: null,
-        url: "https://www.japan-guide.com/sakura", publishedAt: "2027-02-20T09:00:00",
+        url: "https://www.japan-guide.com/sakura", publishedAt: "2027-02-20T09:00:00Z",
         description: "Forecasters expect blossoms in Tokyo up to a week early, with record visitor numbers at popular parks." },
     4: { title: "Flooding closes Bangkok tourist areas", source: "Bangkok Post",
-        url: "https://www.bangkokpost.com/", publishedAt: "2026-11-01T14:00:00",
+        url: "https://www.bangkokpost.com/", publishedAt: "2026-11-01T14:00:00Z",
         description: "Heavy rain has flooded parts of central Bangkok, closing some attractions near the river." },
     5: { title: "Grand Palace closed for royal ceremony", source: "Bangkok Post",
-        url: "https://www.bangkokpost.com/", publishedAt: "2026-10-28T07:00:00", description: null },
+        url: "https://www.bangkokpost.com/", publishedAt: "2026-10-28T07:00:00Z", description: null },
     6: { title: "Storm warning issued for the Andaman coast", source: "Thai Meteorological Department",
-        url: "https://www.tmd.go.th/en", publishedAt: "2026-11-04T06:00:00",
+        url: "https://www.tmd.go.th/en", publishedAt: "2026-11-04T06:00:00Z",
         description: "Strong winds and high waves are expected off Krabi and Phuket, and small boats are told to stay in port." },
     // stories that affect nobody's trip, so the news page has more than one page to load
     7: { title: "Taxi drivers in Seoul plan two-day strike", source: "The Korea Herald",
@@ -224,14 +224,14 @@ const record = (action, actorId, actorEmail, targetId, details = null, occurredA
     AUDIT.push({ id: AUDIT.length + 1, occurredAt, actorId, actorEmail, action, targetId, details });
 
 // a little history so the admin pages are not empty on first load
-record("REGISTER", 1, "john@example.com", 1, null, "2026-10-01T09:12:00");
-record("LOGIN", 1, "john@example.com", 1, null, "2026-10-01T09:13:00");
-record("ITINERARY_CREATED", 1, "john@example.com", 1, "itinerary 1 'Japan Ski Trip'", "2026-10-01T09:20:00");
-record("LOGIN_FAILED", null, "alice@example.com", 2, null, "2026-10-12T22:41:00");
-record("LOGIN", 2, "alice@example.com", 2, null, "2026-10-12T22:42:00");
-record("ITINERARY_UPDATED", 2, "alice@example.com", 2, "itinerary 2 'Thailand Beach Holiday'", "2026-10-12T22:50:00");
-record("ACCOUNT_DISABLED", 3, "admin@example.com", 6, "disabled user 'dave'", "2026-10-19T17:30:00");
-record("LOGIN_FAILED", null, "dave@example.com", 6, "account is disabled", "2026-10-20T08:05:00");
+record("REGISTER", 1, "john@example.com", 1, null, "2026-10-01T09:12:00Z");
+record("LOGIN", 1, "john@example.com", 1, null, "2026-10-01T09:13:00Z");
+record("ITINERARY_CREATED", 1, "john@example.com", 1, "itinerary 1 'Japan Ski Trip'", "2026-10-01T09:20:00Z");
+record("LOGIN_FAILED", null, "alice@example.com", 2, null, "2026-10-12T22:41:00Z");
+record("LOGIN", 2, "alice@example.com", 2, null, "2026-10-12T22:42:00Z");
+record("ITINERARY_UPDATED", 2, "alice@example.com", 2, "itinerary 2 'Thailand Beach Holiday'", "2026-10-12T22:50:00Z");
+record("ACCOUNT_DISABLED", 3, "admin@example.com", 6, "disabled user 'dave'", "2026-10-19T17:30:00Z");
+record("LOGIN_FAILED", null, "dave@example.com", 6, "account is disabled", "2026-10-20T08:05:00Z");
 
 // smaller than the backend's 20, so the pager shows up with this little mock data
 const PAGE_SIZE = 5;
@@ -254,19 +254,24 @@ const requireAdmin = () => requireLogin() || (me.role !== "ADMIN" ? fail(403, "A
 const requireUser = () => requireLogin() || (me.role !== "USER" ? fail(403, "Only for user accounts.") : null);
 const findUser = id => USERS.find(user => user.id === Number(id));
 const userNotFound = id => fail(404, `No user found with id ${id}`);
+const adminMustBeDemoted = () =>
+    fail(409, "admin accounts must be demoted through role management before disabling or deleting");
+
+// the itinerary and everything hanging off it, so a new one reusing its id starts clean
+const removeItinerary = itinerary => {
+    ITINERARIES.splice(ITINERARIES.indexOf(itinerary), 1);
+    for (let index = ACTIVITIES.length - 1; index >= 0; index--) {
+        if (ACTIVITIES[index].itineraryId === itinerary.id) ACTIVITIES.splice(index, 1);
+    }
+    delete IMPACTS[itinerary.id];
+    delete RECOMMENDATIONS[itinerary.id];
+    delete CHATS[itinerary.id];
+};
 
 // the account and everything it owns
 const removeAccount = account => {
     const ownedItineraries = ITINERARIES.filter(itinerary => itinerary.userId === account.id);
-    for (const itinerary of ownedItineraries) {
-        ITINERARIES.splice(ITINERARIES.indexOf(itinerary), 1);
-        for (let index = ACTIVITIES.length - 1; index >= 0; index--) {
-            if (ACTIVITIES[index].itineraryId === itinerary.id) ACTIVITIES.splice(index, 1);
-        }
-        delete IMPACTS[itinerary.id];
-        delete RECOMMENDATIONS[itinerary.id];
-        delete CHATS[itinerary.id];
-    }
+    for (const itinerary of ownedItineraries) removeItinerary(itinerary);
 
     delete PREFERENCES[account.id];
     USERS.splice(USERS.indexOf(account), 1);
@@ -380,16 +385,11 @@ export const mockApi = {
         record("ITINERARY_CREATED", me.id, me.email, me.id, `itinerary ${itinerary.id} '${itinerary.name}'`);
         return respondWith(itinerary);
     },
-    // removes the itinerary's activities, impacts and recommendations too
+    // removes the itinerary's activities, impacts, recommendations and chat too
     deleteItinerary: id => {
         const itinerary = myItinerary(id);
         if (requireLogin() || !itinerary) return requireLogin() || fail(404, "Itinerary not found.");
-        ITINERARIES.splice(ITINERARIES.indexOf(itinerary), 1);
-        for (let index = ACTIVITIES.length - 1; index >= 0; index--) {
-            if (ACTIVITIES[index].itineraryId === itinerary.id) ACTIVITIES.splice(index, 1);
-        }
-        delete IMPACTS[itinerary.id];
-        delete RECOMMENDATIONS[itinerary.id];
+        removeItinerary(itinerary);
         record("ITINERARY_DELETED", me.id, me.email, me.id, `itinerary ${itinerary.id} '${itinerary.name}'`);
         return respondWith(null);
     },
@@ -448,6 +448,7 @@ export const mockApi = {
 
         const account = findUser(id);
         if (!account) return userNotFound(id);
+        if (account.role === "ADMIN") return adminMustBeDemoted();
 
         account.enabled = false;
         record("ACCOUNT_DISABLED", me.id, me.email, account.id, `disabled user '${account.username}'`);
@@ -471,10 +472,29 @@ export const mockApi = {
 
         const account = findUser(id);
         if (!account) return userNotFound(id);
+        if (account.role === "ADMIN") return adminMustBeDemoted();
 
         removeAccount(account);
         record("ACCOUNT_DELETED", me.id, me.email, account.id, `deleted user '${account.username}'`);
         return respondWith(null);
+    },
+    // like the backend: not on yourself, and the last enabled admin cannot be made a user
+    changeUserRole: (id, role) => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+        if (Number(id) === me.id) return fail(400, "admins cannot change their own role");
+
+        const account = findUser(id);
+        if (!account) return userNotFound(id);
+
+        const enabledAdmins = USERS.filter(user => user.role === "ADMIN" && user.enabled).length;
+        const isLastAdmin = account.role === "ADMIN" && role !== "ADMIN" && account.enabled && enabledAdmins <= 1;
+        if (isLastAdmin) return fail(409, "the last enabled admin cannot be demoted");
+
+        const previousRole = account.role;
+        account.role = role;
+        record("ROLE_CHANGED", me.id, me.email, account.id, `role changed from ${previousRole} to ${role}`);
+        return respondWith(withoutPassword(account));
     },
     // kept after the account is deleted, like on the backend
     userActivity: (id, { action = "", page = 0 } = {}) => {

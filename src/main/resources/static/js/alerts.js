@@ -1,6 +1,6 @@
 // alerts bell in the top bar (CS203-5): live from /api/alerts/stream, or checked every minute without it
 import { api } from "./api.js";
-import { escapeHtml, findToastShelf, timeTag } from "./util.js";
+import { escapeHtml, findToastShelf, newsTitleOf, timeTag } from "./util.js";
 import { icon } from "./icons.js";
 
 const CHECK_EVERY_MS = 60_000;
@@ -54,7 +54,7 @@ export const groupAlerts = alerts => {
 
 export const isGroupUnread = group => group.alerts.some(isUnread);
 
-export const alertTitle = group => escapeHtml(group.newsTitle || "Untitled news");
+export const alertTitle = group => escapeHtml(newsTitleOf(group.newsTitle));
 
 // names what the news affects, eg "Museum, Dinner and 2 more on Japan"
 export const describeTarget = group => {
@@ -64,7 +64,7 @@ export const describeTarget = group => {
         .filter(name => name);
     const coversWholeTrip = activityNames.length < group.alerts.length;
 
-    if (coversWholeTrip || !activityNames.length) return `the whole of ${itineraryName}`;
+    if (coversWholeTrip) return `the whole of ${itineraryName}`;
 
     // up to three names in full, past that the rest are counted
     const escapedNames = activityNames.map(escapeHtml);
@@ -89,7 +89,24 @@ export const alertMetaParts = group => {
 
 const groupsInBell = () => groupAlerts(state.alerts);
 
-const findGroup = id => groupsInBell().find(group => group.id === Number(id));
+// a group's id is its newest alert, which changes when another alert joins it,
+// so the group is found by any alert in it and an id drawn a moment ago still works
+export const findGroupWithAlert = (groups, id) => {
+    const alertId = Number(id);
+    return groups.find(group => group.alerts.some(alert => alert.id === alertId));
+};
+
+const findGroup = id => findGroupWithAlert(groupsInBell(), id);
+
+// the same alerts in the same order, each still read or unread as before
+const isSameList = (oldAlerts, newAlerts) => {
+    if (oldAlerts.length !== newAlerts.length) return false;
+
+    return oldAlerts.every((alert, index) => {
+        const other = newAlerts[index];
+        return alert.id === other.id && isUnread(alert) === isUnread(other);
+    });
+};
 
 // ---------------------------------------------------------------- loading and live updates
 
@@ -102,29 +119,65 @@ function sessionEnded() {
 // counts every refresh started, so a slow older one cannot land on top of a newer one
 let latestRefresh = 0;
 
-// pages showing alerts of their own, told when new ones arrive so they do not fall behind the bell
-const newAlertListeners = new Set();
+// pages with alerts of their own, so they keep up with the bell. each change carries unreadCount and one of
+// newAlerts (with outOfStep, set when the count moved for some other reason), readIds, readUpToId (null for all)
+// or saveFailed
+const changeListeners = new Set();
 
 // gives back a function that stops listening
-export function onNewAlerts(listener) {
-    newAlertListeners.add(listener);
-    return () => newAlertListeners.delete(listener);
+export function onAlertsChanged(listener) {
+    changeListeners.add(listener);
+    return () => changeListeners.delete(listener);
 }
 
 // one listener failing should not stop the others, or count as the bell failing to load
-function tellListeners(newAlerts) {
-    for (const listener of newAlertListeners) {
+function tellListeners(change) {
+    const fullChange = { ...change, unreadCount: state.unreadCount };
+    for (const listener of changeListeners) {
         try {
-            listener(newAlerts, state.unreadCount);
+            listener(fullChange);
         } catch (error) {
             console.error(error);
         }
     }
 }
 
+// every save waits for the one before it, since sqlite refuses a second write while one is going.
+// a reload in the middle could bring back reads that are not saved yet, so none happens while saves are
+// running, and the bell reloads once they are all done instead
+let saveQueue = Promise.resolve();
+let savesRunning = 0;
+
+// goes up on logout, so saves still finishing for the old account leave the next one alone
+let saveSession = 0;
+
+const queueSave = save => {
+    const session = saveSession;
+    savesRunning += 1;
+    const queued = saveQueue.then(save);
+    saveQueue = queued.catch(() => { });   // one failed save should not block the ones after it
+
+    saveQueue.then(() => {
+        const isOldSession = session !== saveSession;
+        if (isOldSession) return;
+
+        savesRunning -= 1;
+        const allSaved = savesRunning === 0;
+        if (allSaved) refresh();
+    });
+    return queued;
+};
+
+// whether a save that just finished was for an account that has since logged out
+const isFromOldSession = session => session !== saveSession;
+
+// for the alerts page, so its own loads also wait until the server has every read
+export const waitForSaves = () => saveQueue;
+
 async function refresh() {
     const userId = state.userId;
     if (userId == null) return;
+    if (savesRunning > 0) return;   // the queue reloads once saving is done
 
     latestRefresh += 1;
     const thisRefresh = latestRefresh;
@@ -133,33 +186,77 @@ async function refresh() {
         const page = await api.alerts({ size: 20 });
         const switchedAccount = state.userId !== userId;   // logged out or switched account while waiting
         const isOutdated = thisRefresh !== latestRefresh;   // a newer refresh has started since
-        if (switchedAccount || isOutdated) return;
+        const savingStarted = savesRunning > 0;             // this may be from before the save, the reload after it is not
+        if (switchedAccount || isOutdated || savingStarted) return;
 
-        state.alerts = page?.content ?? [];
-        state.unreadCount = page?.unreadCount ?? 0;
-        draw();
+        const countBefore = state.unreadCount;
+        const isFirstLoad = state.seenIds == null;
+        const loadedAlerts = page?.content ?? [];
+        const loadedCount = page?.unreadCount ?? 0;
+
+        // most checks find nothing new, and redrawing anyway would make screen readers read the bell out again
+        const sameCount = loadedCount === countBefore;
+        const nothingChanged = !isFirstLoad && sameCount && isSameList(state.alerts, loadedAlerts);
+
+        state.alerts = loadedAlerts;
+        state.unreadCount = loadedCount;
+        if (!nothingChanged) draw();
 
         const newAlerts = findNewAlerts();
         announceNewAlerts(newAlerts);
-        if (newAlerts.length) tellListeners(newAlerts);
+
+        // new alerts only ever add to the count, so any other change came from somewhere else,
+        // eg reads in another tab. the first load has nothing to compare with, so it never counts
+        const countChanged = state.unreadCount !== countBefore;
+        const expectedCount = countBefore + newAlerts.length;
+        const outOfStep = !isFirstLoad && state.unreadCount !== expectedCount;
+        if (newAlerts.length || countChanged) tellListeners({ newAlerts, outOfStep });
     } catch (error) {
         // a failed load keeps the last alerts and tries again on the next event or check
         if (error.status === 401) sessionEnded();
     }
 }
 
+// the backend sends one event per alert, so news hitting six activities is six events in a row.
+// they are gathered into one reload instead of six requests for the same list
+const ALERT_BURST_MS = 500;
+let burstTimer = null;
+
+const refreshAfterBurst = () => {
+    clearTimeout(burstTimer);
+    burstTimer = setTimeout(refresh, ALERT_BURST_MS);
+};
+
+const canStream = () => Boolean(api.alertStreamUrl) && typeof EventSource !== "undefined";
+
+// while polling after the stream closed, each check tries the stream again too, eg once the backend is back up.
+// connecting reloads by itself, on "ready" or when it fails again, so that check needs no reload of its own
+function checkAgain() {
+    const canReconnect = canStream() && !state.stream;
+    if (canReconnect) return connectStream();
+    refresh();
+}
+
 function startPolling() {
     if (state.pollTimer) return;
-    state.pollTimer = setInterval(refresh, CHECK_EVERY_MS);
+    state.pollTimer = setInterval(checkAgain, CHECK_EVERY_MS);
+}
+
+function stopPolling() {
+    clearInterval(state.pollTimer);
+    state.pollTimer = null;
 }
 
 // both events reload the list, which also catches anything missed while disconnected
 function connectStream() {
-    if (!api.alertStreamUrl || typeof EventSource === "undefined") return startPolling();
+    if (!canStream()) return startPolling();
 
     const stream = new EventSource(api.alertStreamUrl);
-    stream.addEventListener("ready", refresh);
-    stream.addEventListener("alert", refresh);
+    stream.addEventListener("ready", () => {
+        stopPolling();   // live again, so the checks are not needed
+        refresh();
+    });
+    stream.addEventListener("alert", refreshAfterBurst);
     stream.addEventListener("error", () => {
         if (stream.readyState !== EventSource.CLOSED) return;
         if (state.stream === stream) state.stream = null;
@@ -171,10 +268,9 @@ function connectStream() {
 
 // ---------------------------------------------------------------- marking read, used by the bell and the alerts page
 
-// the alerts are shown as read straight away, here and in the bell, then saved one at a time
-// since sqlite refuses a second write that starts while another is still going.
-// a 401 sends the user to log in. any other failure reloads the bell and is thrown, so the
-// alerts page can show what went wrong
+// the alerts are shown as read straight away, in the bell and on the alerts page, then saved.
+// the bell reloads once saving is done, which also undoes any read that failed.
+// a 401 sends the user to log in. any other failure is thrown, so the alerts page can show what went wrong
 export async function markAlertsRead(alerts) {
     const unread = alerts.filter(isUnread);
     if (!unread.length) return;
@@ -187,14 +283,21 @@ export async function markAlertsRead(alerts) {
     }
     state.unreadCount = Math.max(0, state.unreadCount - unread.length);
     draw();
+    tellListeners({ readIds: unreadIds });
 
+    // queued as one save, so nothing reloads between two alerts of the same group
+    const saveEach = async () => {
+        for (const alert of unread) await api.markAlertRead(alert.id);
+    };
+
+    const session = saveSession;
     try {
-        for (const alert of unread) {
-            await api.markAlertRead(alert.id);
-        }
+        await queueSave(saveEach);
     } catch (error) {
+        // the account logged out meanwhile, so a failure here says nothing about the one now logged in
+        if (isFromOldSession(session)) return;
         if (error.status === 401) return sessionEnded();
-        refresh();
+        tellListeners({ saveFailed: true });
         throw error;
     }
 }
@@ -209,41 +312,35 @@ export async function markAllAlertsRead(upToId = state.alerts[0]?.id ?? null) {
         const isCovered = upToId == null || alert.id <= upToId;
         if (isCovered) alert.readAt ??= now;
     }
-    state.unreadCount = 0;
+    // only alerts newer than upToId are still unread, the server count comes back with the response
+    const newerUnread = state.alerts.filter(isUnread);
+    state.unreadCount = newerUnread.length;
     draw();
+    tellListeners({ readUpToId: upToId });
 
+    // the reload after saving loads any alert that came in meanwhile, so it shows as unread
+    const session = saveSession;
     let result;
     try {
-        result = await api.markAllAlertsRead(upToId);
+        result = await queueSave(() => api.markAllAlertsRead(upToId));
     } catch (error) {
+        if (isFromOldSession(session)) return;
         if (error.status === 401) return sessionEnded();
-        refresh();
+        tellListeners({ saveFailed: true });
         throw error;
     }
+
+    // the count left belongs to the old account, not the one now logged in
+    if (isFromOldSession(session)) return;
 
     const unreadLeft = result?.unreadCount ?? 0;
     state.unreadCount = unreadLeft;
     draw();
-    refresh();   // loads any alert that came in meanwhile, so it shows as unread
+    tellListeners({ readUpToId: upToId });
     return unreadLeft;
 }
 
 // ---------------------------------------------------------------- drawing
-
-const bellIcon = `
-    <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
-        <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
-    </svg>
-`;
-
-const closeIcon = `
-    <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-         stroke-width="2.5" stroke-linecap="round">
-        <path d="M18 6 6 18M6 6l12 12"></path>
-    </svg>
-`;
 
 // one news article on one trip, linking to that trip
 const createAlertItem = group => {
@@ -297,8 +394,45 @@ const createBadgeText = () => {
     return "";
 };
 
+// the bell is drawn from scratch, so whatever had focus inside it is remembered as a selector and found again.
+// these are the things in the bell that can take focus
+const focusableSelectors = ["#alert-button", "[data-bell-read-all]", "[data-view-all]", ".alert-panel h2"];
+
+const findFocusSelector = () => {
+    const focused = document.activeElement;
+    if (!focused || !state.slot.contains(focused)) return null;
+
+    // the alerts are already updated by now, so the group's id may be a newer one than the link shows
+    const alertId = focused.dataset.alertLink;
+    if (alertId) {
+        const group = findGroup(alertId);
+        const currentId = group ? group.id : Number(alertId);
+        return `[data-alert-link="${Number(currentId)}"]`;
+    }
+
+    return focusableSelectors.find(selector => focused.matches(selector)) ?? null;
+};
+
+// a focused link or button that is gone after drawing, like "mark all as read", hands focus to the heading.
+// once the panel has closed it is left alone, eg after following an alert the trip page should not
+// find focus sitting on the bell
+function restoreFocus(selector) {
+    if (!selector) return;
+
+    const sameElement = state.slot.querySelector(selector);
+    if (sameElement) {
+        sameElement.focus();
+        return;
+    }
+
+    if (!state.isOpen) return;
+    state.slot.querySelector(".alert-panel h2")?.focus();
+}
+
 function draw() {
     if (!state.slot?.isConnected) return;
+
+    const focusSelector = findFocusSelector();
 
     const badgeText = createBadgeText();
     const label = badgeText ? `Alerts, ${badgeText} new` : "Alerts";
@@ -310,12 +444,14 @@ function draw() {
         <div class="alert-bell">
             <button class="ghost icon-button" type="button" id="alert-button"
                     aria-label="${label}" aria-expanded="${state.isOpen}" aria-controls="alert-panel">
-                ${bellIcon}
+                ${icon("bell")}
                 ${badge}
             </button>
             ${state.isOpen ? createPanel() : ""}
         </div>
     `;
+
+    restoreFocus(focusSelector);
 }
 
 // ---------------------------------------------------------------- pop-ups for new alerts
@@ -364,7 +500,7 @@ function createToast() {
         ${icon("news")}
         <div class="alert-toast-body"></div>
         <button class="ghost icon-button" type="button" data-close-toast aria-label="Close">
-            ${closeIcon}
+            ${icon("close")}
         </button>
     `;
 
@@ -449,8 +585,14 @@ document.addEventListener("click", event => {
     if (state.isOpen && !event.target.closest(".alert-bell")) close();
 });
 
+// focus goes back to the bell when it was in the bell, or nowhere at all, like after a click in safari,
+// which does not focus buttons. escape in eg the chat panel leaves focus there
 document.addEventListener("keydown", event => {
-    if (event.key === "Escape") close({ returnFocus: true });
+    if (event.key !== "Escape") return;
+
+    const wasInBell = Boolean(event.target.closest?.(".alert-bell"));
+    const wasNowhere = event.target === document.body;
+    close({ returnFocus: wasInBell || wasNowhere });
 });
 
 // ---------------------------------------------------------------- used by the nav
@@ -464,6 +606,8 @@ export function mountAlertBell(slot, user, { onAuthLost, redraw }) {
     if (state.userId !== user.id) {
         stopAlerts();
         state.userId = user.id;
+
+        // loaded straight away rather than waiting for "ready", which a proxy holding the stream back can delay for good
         refresh();
         connectStream();
     }
@@ -475,9 +619,22 @@ export function stopAlerts() {
     state.stream?.close();
     clearInterval(state.pollTimer);
     clearTimeout(state.toastTimer);
+    clearTimeout(burstTimer);
+
+    // saves still running for this account carry on, but no longer hold back the next account's loads
+    saveSession += 1;
+    saveQueue = Promise.resolve();
+    savesRunning = 0;
+
     document.querySelectorAll(".alert-toast").forEach(toast => toast.remove());
-    Object.assign(state, {
-        userId: null, alerts: [], unreadCount: 0, stream: null, pollTimer: null, isOpen: false,
-        seenIds: null, toastAlerts: [], toastTimer: null,
-    });
+
+    state.userId = null;
+    state.alerts = [];
+    state.unreadCount = 0;
+    state.stream = null;
+    state.pollTimer = null;
+    state.isOpen = false;
+    state.seenIds = null;
+    state.toastAlerts = [];
+    state.toastTimer = null;
 }

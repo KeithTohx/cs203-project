@@ -149,12 +149,17 @@ function render() {
 	leaveCurrentPage?.();
 	leaveCurrentPage = null;
 
-	showFlashToast();   // eg "Itinerary saved." left by the page before
+	const shownFlash = showFlashToast();   // eg "Itinerary saved." left by the page before
 	const matched = findRoute(currentPath());
 	if (!user) {
 		nav.innerHTML = "";
 		if (matched?.route.public) return matched.route.view({ root, user, params: matched.params, reauth, onLeave });
-		return showLogin(root, reauth, loginNotice());   // the url is kept, so logging in returns to that page
+
+		// a toast such as "Password changed" already says why, and "session expired" would contradict it
+		// it is cleared too, or opening the register page and coming back would bring the notice up after all
+		const notice = shownFlash ? null : loginNotice();
+		if (shownFlash) sessionExpired = false;
+		return showLogin(root, reauth, notice);   // the url is kept, so logging in returns to that page
 	}
 	if (matched?.route.public) { location.hash = home().path; return; }   // hashchange redraws
 	drawNav();

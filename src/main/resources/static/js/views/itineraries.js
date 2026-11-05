@@ -1,9 +1,11 @@
 import { api } from "../api.js";
-import { dateRange, emptyState, escapeHtml, flagFor, formatDate, hostnameOf, safeUrl, showError, sortByStart, timeTag } from "../util.js";
+import {
+    dateRange, emptyState, escapeHtml, flagFor, formatDate, hostnameOf, newsTitleOf, safeUrl, showError, sortByStart, timeTag,
+} from "../util.js";
 import { openChat } from "./chat.js";
 import { icon } from "../icons.js";
 
-// Group impacts by the news event that caused them, so each event lists the activities it affects.
+// group impacts by the news event that caused them, so each event lists the activities it affects
 const groupByEvent = (impacts) => {
     const events = new Map();
     for (const impact of impacts) {
@@ -26,7 +28,7 @@ const groupByEvent = (impacts) => {
 // each bubble needs its own id so aria-describedby points at the right popover
 let nextPopoverId = 0;
 
-// Component: a small bubble naming where the news came from. hovering or focusing it shows more
+// component: a small bubble naming where the news came from. hovering or focusing it shows more
 // about the article, and clicking opens the original in a new tab
 const createSourceBubble = (event) => {
     const link = safeUrl(event.url);
@@ -76,7 +78,7 @@ const createSourceBubble = (event) => {
     `;
 };
 
-// Component: the button that lets the user overrule the model. on a dismissed impact it puts the impact back.
+// component: the button that lets the user overrule the model. on a dismissed impact it puts the impact back
 // no second click is needed like removing an activity, since a rejection can always be undone
 const createRejectButton = (impact, isDismissed) => {
     const target = impact.activityName ?? "the whole itinerary";
@@ -94,8 +96,8 @@ const createRejectButton = (impact, isDismissed) => {
     `;
 };
 
-// Component: one news event and what it affects. An impact with no activity applies to the whole itinerary.
-// Dismissed events are the ones the user marked as not relevant, shown muted so they can be restored.
+// component: one news event and what it affects. an impact with no activity applies to the whole itinerary.
+// dismissed events are the ones the user marked as not relevant, shown muted so they can be restored
 const createEventCard = (event, isDismissed = false) => {
     const formatReason = impact => impact.reason ? ` <span class="meta">— ${escapeHtml(impact.reason)}</span>` : "";
     const wholeItineraryImpacts = event.impacts.filter(impact => impact.activityId == null);
@@ -128,7 +130,7 @@ const createEventCard = (event, isDismissed = false) => {
         <div class="imp ${isDismissed ? "dismissed" : "hit"}">
             <div class="imp-head">
                 ${isDismissed ? "" : icon("warning")}
-                <strong>${escapeHtml(event.title || "Untitled news")}</strong>
+                <strong>${escapeHtml(newsTitleOf(event.title))}</strong>
                 ${createSourceBubble(event)}
             </div>
             ${wholeItineraryLines}
@@ -137,7 +139,7 @@ const createEventCard = (event, isDismissed = false) => {
     `;
 };
 
-// Component: news the user marked as not relevant, closed by default so it stays out of the way
+// component: news the user marked as not relevant, closed by default so it stays out of the way
 const createDismissedSection = (dismissedEvents) => {
     if (!dismissedEvents.length) return "";
 
@@ -163,7 +165,7 @@ const ACTION_LABELS = {
     CANCEL: "Cancel activity",
 };
 
-// Component: the place suggested instead, if the recommendation named one
+// component: the place suggested instead, if the recommendation named one
 const createSuggestedPlace = recommendation => {
     if (!recommendation.optionName) return "";
 
@@ -177,7 +179,7 @@ const createSuggestedPlace = recommendation => {
     `;
 };
 
-// Component: one recommendation, for one activity or for the whole trip
+// component: one recommendation, for one activity or for the whole trip
 const createRecommendation = recommendation => {
     const severity = SEVERITY_LABELS[recommendation.severity] ?? { text: recommendation.severity, tagClass: "tag" };
     const action = ACTION_LABELS[recommendation.action] ?? recommendation.action;
@@ -199,8 +201,16 @@ const createRecommendation = recommendation => {
     `;
 };
 
-// Component: the button that asks the AI for impacts without a recommendation
-const createSuggestButton = (missingCount, hasSome) => {
+// component: the button that asks the AI for impacts without a recommendation.
+// while a request is going it stays disabled, even if the card is redrawn meanwhile
+const createSuggestButton = (missingCount, hasSome, isSuggesting) => {
+    if (isSuggesting) {
+        return `
+            <button class="small" type="button" data-suggest disabled>Working it out…</button>
+            <span class="meta" data-suggest-status role="status">This can take a few seconds for each activity.</span>
+        `;
+    }
+
     const label = hasSome ? `Suggest what to do for the rest (${missingCount})` : "Suggest what to do";
 
     return `
@@ -221,15 +231,15 @@ const planFor = (impactedOnly, recommendations) => {
 // what the user rejected no longer counts
 const stillImpacted = impacts => impacts.filter(impact => impact.impacted && !impact.rejected);
 
-// Component: what to do about the news, rejected impacts hide their advice
-const createPlanSection = (impactedOnly, recommendations, isPast) => {
+// component: what to do about the news, rejected impacts hide their advice
+const createPlanSection = (impactedOnly, recommendations, isPast, isSuggesting) => {
     if (!impactedOnly.length) return "";
 
     const { current, missingCount } = planFor(impactedOnly, recommendations);
 
     // a trip that is over has nothing left to change
     const canSuggest = missingCount > 0 && !isPast;
-    const suggestButton = canSuggest ? createSuggestButton(missingCount, current.length > 0) : "";
+    const suggestButton = canSuggest ? createSuggestButton(missingCount, current.length > 0, isSuggesting) : "";
 
     // the button sits beside the empty message, or after the list it adds to
     const body = current.length
@@ -252,7 +262,8 @@ const createPlanSection = (impactedOnly, recommendations, isPast) => {
     `;
 };
 
-// Component: the activities in one itinerary as a timeline; a red dot marks those hit by news. Editing happens on the itinerary's edit page.
+// component: the activities in one itinerary as a timeline, a red dot marks those hit by news.
+// editing happens on the itinerary's edit page
 const createActivityList = (itineraryId, activities, impactedActivityIds) => {
     const addLink = `<a class="btn small add" href="#/itineraries/${itineraryId}/activities/new">${icon("plus")}Add activity</a>`;
     if (!activities.length) return `<p class="meta">No activities planned yet.</p>${addLink}`;
@@ -302,7 +313,7 @@ const describeTrip = trip => {
     return parts.join(" · ");
 };
 
-// Component: what needs attention across the upcoming trips
+// component: what needs attention across the upcoming trips
 const createTripSummary = detailsList => {
     const upcoming = detailsList.filter(details => !details.failed && !isTripOver(details.itinerary));
     if (!upcoming.length) return "";
@@ -356,19 +367,29 @@ const createTripSummary = detailsList => {
     `;
 };
 
-// "Happening now", "Tomorrow", "In 3 days", "In 6 weeks", counted in whole calendar days
+// "Happening now", "Tomorrow", "In 3 days", "In 6 weeks", counted in whole calendar days.
+// empty when the start date is missing or unreadable, since format(NaN) would throw
 const days = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 const countdown = itinerary => {
+    const start = new Date(itinerary.dateStart ?? NaN);
+    if (Number.isNaN(start.getTime())) return "";
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const start = new Date(itinerary.dateStart);
     start.setHours(0, 0, 0, 0);
     const daysAway = Math.round((start - today) / 86_400_000);
 
     if (daysAway <= 0) return "Happening now";
-    const phrase = daysAway < 14 ? days.format(daysAway, "day")
-        : daysAway < 60 ? days.format(Math.round(daysAway / 7), "week")
-            : days.format(Math.round(daysAway / 30), "month");
+
+    // days for the next two weeks, then weeks up to two months, then months
+    let phrase;
+    if (daysAway < 14) {
+        phrase = days.format(daysAway, "day");
+    } else if (daysAway < 60) {
+        phrase = days.format(Math.round(daysAway / 7), "week");
+    } else {
+        phrase = days.format(Math.round(daysAway / 30), "month");
+    }
     return phrase.charAt(0).toUpperCase() + phrase.slice(1);
 };
 
@@ -377,7 +398,7 @@ const flagOrPin = countryName => {
     return flag ? `<span class="flag" aria-hidden="true">${flag}</span>` : icon("mapPin");
 };
 
-// Component: the soonest upcoming trip, with how long until it starts
+// component: the soonest upcoming trip, with how long until it starts
 const createNextTrip = detailsList => {
     const next = detailsList
         .filter(details => !isTripOver(details.itinerary))
@@ -385,10 +406,11 @@ const createNextTrip = detailsList => {
     if (!next) return "";
 
     const itinerary = next.itinerary;
+    const tripCountdown = countdown(itinerary);
     return `
         <section class="card side-card" aria-labelledby="next-trip-title">
             <h2 id="next-trip-title">Next trip</h2>
-            <p class="next-trip-countdown">${escapeHtml(countdown(itinerary))}</p>
+            ${tripCountdown ? `<p class="next-trip-countdown">${escapeHtml(tripCountdown)}</p>` : ""}
             <p>
                 <button class="link-button" type="button" data-jump="${Number(itinerary.id)}">${escapeHtml(itinerary.name)}</button>
             </p>
@@ -400,7 +422,7 @@ const createNextTrip = detailsList => {
     `;
 };
 
-// Component: the newest news that still affects an upcoming trip, each story once
+// component: the newest news that still affects an upcoming trip, each story once
 const createLatestNews = detailsList => {
     const stories = new Map();
     for (const details of detailsList.filter(item => !item.failed && !isTripOver(item.itinerary))) {
@@ -416,7 +438,7 @@ const createLatestNews = detailsList => {
 
     const items = newest.map(story => `
         <li>
-            <strong>${escapeHtml(story.title || "Untitled news")}</strong>
+            <strong>${escapeHtml(newsTitleOf(story.title))}</strong>
             <span class="meta">
                 ${timeTag(story.publishedAt)} ·
                 <button class="link-button" type="button" data-jump="${Number(story.trip.id)}">${escapeHtml(story.trip.name)}</button>
@@ -433,8 +455,8 @@ const createLatestNews = detailsList => {
     `;
 };
 
-// Component: Renders a single itinerary card
-const createItineraryCard = ({ itinerary, activities, impacts, recommendations, failed }) => {
+// component: one itinerary card
+const createItineraryCard = ({ itinerary, activities, impacts, recommendations, failed, isSuggesting }) => {
     const itineraryId = Number(itinerary.id);
     const isPast = isTripOver(itinerary);
     const tripCountdown = countdown(itinerary);
@@ -445,6 +467,15 @@ const createItineraryCard = ({ itinerary, activities, impacts, recommendations, 
     const events = groupByEvent(impactedOnly);
     const dismissedEvents = groupByEvent(dismissed);
 
+    // a past trip says so, an upcoming one shows its countdown, green once it has started
+    let timingTag = "";
+    if (isPast) {
+        timingTag = `<span class="tag">Past</span>`;
+    } else if (tripCountdown) {
+        const tagClass = tripCountdown === "Happening now" ? "tag ok" : "tag";
+        timingTag = `<span class="${tagClass}">${escapeHtml(tripCountdown)}</span>`;
+    }
+
     const body = failed
         ? `<div class="msg err" role="alert">Couldn't load the details of this itinerary.</div>`
         : `
@@ -454,7 +485,7 @@ const createItineraryCard = ({ itinerary, activities, impacts, recommendations, 
                 <summary>News affecting this itinerary (${events.length})</summary>
                 ${events.map(event => createEventCard(event)).join("") || `<div class="msg">No news has affected this itinerary.</div>`}
             </details>
-            ${createPlanSection(impactedOnly, recommendations, isPast)}
+            ${createPlanSection(impactedOnly, recommendations, isPast, isSuggesting)}
             ${createDismissedSection(dismissedEvents)}
             <p class="err" data-impact-error role="alert"></p>`;
 
@@ -463,7 +494,7 @@ const createItineraryCard = ({ itinerary, activities, impacts, recommendations, 
             <div class="row">
                 <h2>
                     ${escapeHtml(itinerary.name)}
-                    ${isPast ? `<span class="tag">Past</span>` : `<span class="tag${tripCountdown === "Happening now" ? " ok" : ""}">${escapeHtml(tripCountdown)}</span>`}
+                    ${timingTag}
                     ${impactedOnly.length ? `<span class="tag bad">Impacted</span>` : ""}
                 </h2>
                 <a class="btn" href="#/itineraries/${itineraryId}/edit" aria-label="Edit ${escapeHtml(itinerary.name)}">${icon("pencil")}Edit</a>
@@ -492,7 +523,7 @@ async function loadRecommendations(itineraryId) {
     }
 }
 
-// Fetch activities, impacts and recommendations for one itinerary. A 401 is rethrown; other errors only affect this card.
+// fetches activities, impacts and recommendations for one itinerary. a 401 is rethrown, other errors only affect this card
 async function loadDetails(itinerary) {
     try {
         const [activities, impacts, recommendations] = await Promise.all([
@@ -518,6 +549,11 @@ function redrawCard(card, details, clickedButton) {
         .map(section => section.dataset.section);
     const clickedSection = clickedButton.closest("details[data-section]")?.dataset.section;
 
+    // suggestions take a while, so the user may be typing in the chat by now and should keep their place there.
+    // focus is only moved when it was in this card, or was lost along with the disabled button
+    const focused = document.activeElement;
+    const focusWasHere = !focused || focused === document.body || card.contains(focused);
+
     card.outerHTML = createItineraryCard(details);
 
     // a section that is now empty is not drawn at all, so it simply stays gone
@@ -527,6 +563,8 @@ function redrawCard(card, details, clickedButton) {
         if (section) section.open = true;
     }
 
+    if (!focusWasHere) return;
+
     // the button that was clicked is gone, so keep keyboard users in the section they were working in,
     // or the news section if that one has just emptied
     const clickedSummary = redrawnCard.querySelector(`details[data-section="${clickedSection}"] > summary`);
@@ -534,16 +572,23 @@ function redrawCard(card, details, clickedButton) {
     (clickedSummary ?? fallbackSummary)?.focus();
 }
 
+// the card as it is on the page now. another action on it may have redrawn it while this one was waiting.
+// null once the user has left the page, even if they have since opened a new itineraries page
+const currentCardFor = (list, itineraryId) => {
+    if (!list.isConnected) return null;
+    return list.querySelector(`[data-itinerary="${itineraryId}"]`);
+};
+
 // rejects or restores one impact
 async function toggleRejected(button, detailsById, onAuthLost, onChange) {
-    const card = button.closest("[data-itinerary]");
-    const details = detailsById.get(Number(card.dataset.itinerary));
-    const errorMessage = card.querySelector("[data-impact-error]");
+    const list = button.closest("#itinerary-list");
+    const itineraryId = Number(button.closest("[data-itinerary]").dataset.itinerary);
+    const details = detailsById.get(itineraryId);
     const impactId = Number(button.dataset.impact);
     const rejected = button.dataset.reject === "true";
 
     button.disabled = true;
-    errorMessage.textContent = "";
+    currentCardFor(list, itineraryId).querySelector("[data-impact-error]").textContent = "";
 
     try {
         const saved = await api.setImpactRejected(impactId, rejected);
@@ -551,49 +596,59 @@ async function toggleRejected(button, detailsById, onAuthLost, onChange) {
     } catch (error) {
         button.disabled = false;
         if (error.status === 401) return onAuthLost();
-        errorMessage.textContent = error.message;
+
+        const card = currentCardFor(list, itineraryId);
+        if (card) card.querySelector("[data-impact-error]").textContent = error.message;
         return;
     }
 
-    // the user may have left the page while waiting, so there is no card to redraw
-    if (!card.isConnected) return;
+    const card = currentCardFor(list, itineraryId);
+    if (!card) return;
     redrawCard(card, details, button);
     onChange();
 }
 
 // asks the AI for impacts without a recommendation, which takes a few seconds each
 async function suggestPlans(button, detailsById, onAuthLost, onChange) {
-    const card = button.closest("[data-itinerary]");
-    const details = detailsById.get(Number(card.dataset.itinerary));
-    const errorMessage = card.querySelector("[data-impact-error]");
-    const status = card.querySelector("[data-suggest-status]");
-    const originalLabel = button.innerHTML;   // innerHTML so the sparkle icon comes back too
+    const list = button.closest("#itinerary-list");
+    const itineraryId = Number(button.closest("[data-itinerary]").dataset.itinerary);
+    const details = detailsById.get(itineraryId);
+    const card = currentCardFor(list, itineraryId);
 
+    // kept on the details rather than only on this button, so a redraw meanwhile keeps it disabled
+    details.isSuggesting = true;
     button.disabled = true;
     button.textContent = "Working it out…";
-    status.textContent = "This can take a few seconds for each activity.";
-    errorMessage.textContent = "";
+    card.querySelector("[data-suggest-status]").textContent = "This can take a few seconds for each activity.";
+    card.querySelector("[data-impact-error]").textContent = "";
 
     let generated;
+    let failure = null;
     try {
         generated = (await api.generateRecommendations(details.itinerary.id)) ?? [];
     } catch (error) {
-        button.disabled = false;
-        button.innerHTML = originalLabel;
-        status.textContent = "";
-        if (error.status === 401) return onAuthLost();
-        errorMessage.textContent = error.message;
-        return;
+        failure = error;
+    }
+    details.isSuggesting = false;
+
+    if (failure?.status === 401) return onAuthLost();
+
+    if (!failure) {
+        // generate only sends the current ones, so keep stored ones for rejected impacts in case they are restored
+        const byId = new Map(details.recommendations.map(recommendation => [recommendation.id, recommendation]));
+        for (const recommendation of generated) byId.set(recommendation.id, recommendation);
+        details.recommendations = [...byId.values()];
     }
 
-    // generate only sends the current ones, so keep stored ones for rejected impacts in case they are restored
-    const byId = new Map(details.recommendations.map(recommendation => [recommendation.id, recommendation]));
-    for (const recommendation of generated) byId.set(recommendation.id, recommendation);
-    details.recommendations = [...byId.values()];
-
     // generating is slow, so the user may well have left the page by now
-    if (!card.isConnected) return;
-    redrawCard(card, details, button);
+    const cardNow = currentCardFor(list, itineraryId);
+    if (!cardNow) return;
+    redrawCard(cardNow, details, button);
+
+    if (failure) {
+        currentCardFor(list, itineraryId).querySelector("[data-impact-error]").textContent = failure.message;
+        return;
+    }
     onChange();
 }
 
@@ -663,7 +718,7 @@ export async function showItineraries(root, user, onAuthLost, tripId = null) {
         return showError(itineraryListContainer, error, onAuthLost);
     }
 
-    // Event delegation: an assistant button opens the side panel for that itinerary,
+    // event delegation: an assistant button opens the side panel for that itinerary,
     // a "Not relevant" or "Restore" button changes one impact, and "Suggest what to do" asks the AI
     itineraryListContainer.addEventListener("click", (event) => {
         const impactButton = event.target.closest("[data-impact]");

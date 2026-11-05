@@ -26,7 +26,8 @@ export async function showAdminAudit(root, user, onAuthLost) {
     let latestRequest = 0;
 
     const loadPage = async page => {
-        const thisRequest = ++latestRequest;
+        latestRequest += 1;
+        const thisRequest = latestRequest;
         const filters = { email: emailFilter.value.trim(), action: actionFilter.value, page };
 
         let result;
