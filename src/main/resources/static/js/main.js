@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { escapeHtml } from "./util.js";
+import { escapeHtml, showFlashToast } from "./util.js";
 import { showLogin } from "./views/login.js";
 import { showRegister } from "./views/register.js";
 import { showItineraries } from "./views/itineraries.js";
@@ -7,6 +7,12 @@ import { showAccount } from "./views/account.js";
 import { showEditDetails, showChangePassword, showDeleteAccount, showEditPreferences } from "./views/account-edit.js";
 import { showEditItinerary } from "./views/itinerary-edit.js";
 import { showAdminUsers } from "./views/admin-users.js";
+import { showAdminUser } from "./views/admin-user.js";
+import { showAdminAudit } from "./views/admin-audit.js";
+import { showNews } from "./views/news.js";
+import { showAlerts } from "./views/alerts.js";
+import { mountAlertBell, stopAlerts } from "./alerts.js";
+import { icon, logoMark } from "./icons.js";
 
 const root = document.getElementById("root");
 const nav = document.getElementById("nav");
@@ -14,24 +20,32 @@ const nav = document.getElementById("nav");
 // ---------------------------------------------------------------------------
 // ROUTE TABLE: to add a screen, add one line here. Nothing else in this file changes.
 //   path  - URL after the "#". ":name" parts become context.params.name
-//   view  - function that draws into context.root. context = { root, user, params, reauth }
+//   view  - function that draws into context.root. context = { root, user, params, reauth, onLeave }
+//           onLeave(cleanup) runs cleanup once the page is left, eg to stop listening for live updates
 //   nav   - text for the top bar link (leave out to hide it from the nav)
+//   icon  - name from icons.js shown before the nav text (optional)
 //   role  - only users with this role may open it (optional)
 //   public - shown only to logged-out visitors (optional); logged-in users are sent home
 // ---------------------------------------------------------------------------
 const routes = [
 	{ path: "/register", public: true, view: context => showRegister(context.root, context.reauth) },
-	{ path: "/itineraries", nav: "Itineraries", role: "USER", view: context => showItineraries(context.root, context.user, context.reauth) },
+	{ path: "/itineraries", nav: "Itineraries", icon: "map", role: "USER", view: context => showItineraries(context.root, context.user, context.reauth) },
 	{ path: "/itineraries/new", role: "USER", view: context => showEditItinerary(context.root, context.user, context.reauth, null) },
+	// after "/new", or "new" would be read as an id
+	{ path: "/itineraries/:id", role: "USER", view: context => showItineraries(context.root, context.user, context.reauth, context.params.id) },
 	{ path: "/itineraries/:id/edit", role: "USER", view: context => showEditItinerary(context.root, context.user, context.reauth, context.params.id) },
 	{ path: "/itineraries/:id/activities/new", role: "USER", view: context => showEditItinerary(context.root, context.user, context.reauth, context.params.id, true) },
-	{ path: "/admin/users", nav: "Users", role: "ADMIN", view: context => showAdminUsers(context.root, context.user, context.reauth) },
-	{ path: "/account", nav: "Account", view: context => showAccount(context.root, context.user, context.reauth) },
-	{ path: "/account/preferences", view: context => showEditPreferences(context.root, context.user, context.reauth) },
+	{ path: "/admin/users", nav: "Users", icon: "users", role: "ADMIN", view: context => showAdminUsers(context.root, context.user, context.reauth) },
+	{ path: "/admin/users/:id", role: "ADMIN", view: context => showAdminUser(context.root, context.user, context.reauth, context.params.id) },
+	{ path: "/admin/audit", nav: "Activity", icon: "activity", role: "ADMIN", view: context => showAdminAudit(context.root, context.user, context.reauth) },
+	{ path: "/news", nav: "News", icon: "news", view: context => showNews(context.root, context.user, context.reauth) },
+	// opened from the bell, so it has no link of its own in the top bar
+	{ path: "/alerts", role: "USER", view: context => showAlerts(context.root, context.user, context.reauth, context.onLeave) },
+	{ path: "/account", view: context => showAccount(context.root, context.user, context.reauth) },
+	{ path: "/account/preferences", role: "USER", view: context => showEditPreferences(context.root, context.user, context.reauth) },
 	{ path: "/account/details", view: context => showEditDetails(context.root, context.user, context.reauth) },
 	{ path: "/account/password", view: context => showChangePassword(context.root, context.user, context.reauth) },
 	{ path: "/account/delete", view: context => showDeleteAccount(context.root, context.user, context.reauth) },
-	// { path: "/itineraries/:id", view: context => showItinerary(context.root, context.user, context.reauth, context.params.id) },
 ];
 // Where each role starts. Admins manage accounts and don't have itineraries.
 const home = () => user?.role === "ADMIN"
@@ -63,6 +77,7 @@ async function reauth(nextPath) {
 	try { user = await api.me(); } catch { user = null; }
 
 	if (wasLoggedIn && !user) sessionExpired = true;
+	if (!user) stopAlerts();   // nothing should keep checking for alerts behind the login page
 	if (user) sessionExpired = false;
 
 	if (user && nextPath && location.hash !== "#" + nextPath) { location.hash = nextPath; return; }  // hashchange redraws
@@ -71,6 +86,7 @@ async function reauth(nextPath) {
 
 async function logout() {
 	try { await api.logout(); } catch { }
+	stopAlerts();
 	user = null;
 	sessionExpired = false;
 	location.hash = "";
@@ -80,20 +96,37 @@ async function logout() {
 // ---------------------------------------------------------------------------
 // Drawing
 // ---------------------------------------------------------------------------
+const initialOf = name => String(name ?? "?").trim().charAt(0).toUpperCase() || "?";
+
 function drawNav() {
 	const path = currentPath();
 	const links = routes
 		.filter(route => route.nav && (!route.role || route.role === user.role))
 		.map(route => {
 			const isCurrent = path === route.path || path.startsWith(route.path + "/");
-			return `<a href="#${route.path}"${isCurrent ? ' aria-current="page"' : ""}>${escapeHtml(route.nav)}</a>`;
+			const routeIcon = route.icon ? icon(route.icon) : "";
+			return `<a href="#${route.path}"${isCurrent ? ' aria-current="page"' : ""}>${routeIcon}${escapeHtml(route.nav)}</a>`;
 		}).join("");
+	// the account pages live behind the avatar and name, not in the main links
+	const onAccountPage = path === "/account" || path.startsWith("/account/");
 	nav.innerHTML = `
 	<nav>
-		<div><strong style="font-size: 1.3rem">TripSense</strong> &nbsp;${links}</div>
-    	<div>${escapeHtml(user.username)} &nbsp; <button class="ghost" id="logout-button">Log out</button></div>
+		<div class="nav-links">
+			<a class="brand" href="#${home().path}">${logoMark()}TripSense</a>
+			${links}
+		</div>
+		<div class="nav-user">
+			<span id="alert-slot"></span>
+			<a class="profile-link" href="#/account" title="Your account"${onAccountPage ? ' aria-current="page"' : ""}>
+				<span class="avatar" aria-hidden="true">${escapeHtml(initialOf(user.username))}</span>
+				${escapeHtml(user.username)}
+			</a>
+			<button class="ghost" id="logout-button">${icon("logOut")}Log out</button>
+		</div>
 	</nav>`;
 	document.getElementById("logout-button").onclick = logout;
+	// alerts are about trips, so only travellers get the bell
+	if (user.role === "USER") mountAlertBell(document.getElementById("alert-slot"), user, { onAuthLost: reauth, redraw: render });
 }
 
 // why the login screen is showing, if it isn't just a fresh visit or a logout
@@ -108,19 +141,32 @@ function loginNotice() {
 
 const showMessage = (text) => { root.innerHTML = `<div class="msg">${text} <a href="#${home().path}">${home().label}</a></div>`; };
 
+// set by the page on screen, run just before the next one is drawn
+let leaveCurrentPage = null;
+const onLeave = cleanup => { leaveCurrentPage = cleanup; };
+
 function render() {
+	leaveCurrentPage?.();
+	leaveCurrentPage = null;
+
+	const shownFlash = showFlashToast();   // eg "Itinerary saved." left by the page before
 	const matched = findRoute(currentPath());
 	if (!user) {
 		nav.innerHTML = "";
-		if (matched?.route.public) return matched.route.view({ root, user, params: matched.params, reauth });
-		return showLogin(root, reauth, loginNotice());   // the url is kept, so logging in returns to that page
+		if (matched?.route.public) return matched.route.view({ root, user, params: matched.params, reauth, onLeave });
+
+		// a toast such as "Password changed" already says why, and "session expired" would contradict it
+		// it is cleared too, or opening the register page and coming back would bring the notice up after all
+		const notice = shownFlash ? null : loginNotice();
+		if (shownFlash) sessionExpired = false;
+		return showLogin(root, reauth, notice);   // the url is kept, so logging in returns to that page
 	}
 	if (matched?.route.public) { location.hash = home().path; return; }   // hashchange redraws
 	drawNav();
 	if (!matched) return showMessage("Page not found.");
 	if (matched.route.role && matched.route.role !== user.role) return showMessage("You don't have access to this page.");
 	try {
-		matched.route.view({ root, user, params: matched.params, reauth });
+		matched.route.view({ root, user, params: matched.params, reauth, onLeave });
 	} catch (error) {                      // a bug in one view shouldn't blank the whole app
 		console.error(error);
 		root.innerHTML = `<div class="msg err" role="alert">Something went wrong showing this page.</div>`;

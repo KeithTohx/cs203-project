@@ -23,6 +23,19 @@ class CountryServiceImplTest {
     private CountryServiceImpl countryService;
 
     @Test
+    @DisplayName("Should list countries in alphabetical order")
+    void listCountries_ShouldUseAlphabeticalQuery() {
+        Country albania = new Country();
+        albania.setName("Albania");
+        Country japan = new Country();
+        japan.setName("Japan");
+        when(countryRepository.findAllByOrderByNameAsc()).thenReturn(List.of(albania, japan));
+
+        assertEquals(List.of(albania, japan), countryService.listCountries());
+        verify(countryRepository, never()).findAll();
+    }
+
+    @Test
     @DisplayName("Should return the countries matching the given FIPS codes")
     void getCountriesByFipsCodes_ShouldReturnMatches() {
         Country japan = new Country();

@@ -71,13 +71,38 @@ const realApi = {
   addActivity:activity => request("/api/activity", "POST", activity),
   updateActivity:(id, activity) => request(`/api/activity/${id}`, "PUT", activity),
   deleteActivity:id => request(`/api/activity/${id}`, "DELETE"),
+  news:       ({page = 0, size = 20} = {}) => request(`/api/news?${new URLSearchParams({page, size})}`),   // one page of stored news, newest first -> [{id, title, description, source, url, publishedAt}]
   itineraryImpacts:id => request(`/api/itinerary/${id}/impact`),
+  // newest first -> {content, hasMore, nextBeforeId, unreadCount}. unreadCount covers every alert, not just this page.
+  // send nextBeforeId back as beforeId to load older ones, it is null once there are none left
+  alerts:     ({unreadOnly = false, beforeId = null, size = 20} = {}) => {
+    const params = new URLSearchParams({unreadOnly, size});
+    if (beforeId != null) params.set("beforeId", beforeId);
+    return request(`/api/alerts?${params}`);
+  },
+  markAlertRead:id => request(`/api/alerts/${id}`, "PATCH", {read: true}),            // -> the alert. marking twice is fine
+  // every unread alert up to upToId (the newest one shown), not just the ones loaded, so one arriving meanwhile stays unread.
+  // null means no limit -> {unreadCount} left afterwards
+  markAllAlertsRead:(upToId = null) => {
+    const query = upToId == null ? "" : `?${new URLSearchParams({upToId})}`;
+    return request(`/api/alerts${query}`, "PATCH", {read: true});
+  },
+  alertStreamUrl:"/api/alerts/stream",                                                // server-sent events: "ready" on connect, "alert" when one is saved
   setImpactRejected:(id, rejected) => request(`/api/impact/${id}`, "PATCH", {rejected}),   // true = "not relevant to me", false = restore -> the impact
+  itineraryRecommendations:id => request(`/api/itinerary/${id}/recommendation`),       // -> the stored ones, worst first. never calls the model
+  generateRecommendations:itineraryId => request("/api/recommendation/generate", "POST", {itineraryId}),   // slow: asks the model once per impact without one -> every current one, worst first
   chat:       (itineraryId, message) => request(`/api/itinerary/${itineraryId}/chat`, "POST", {message}),   // -> {role: "assistant", content}
   chatHistory:itineraryId => request(`/api/itinerary/${itineraryId}/chat/history`),   // -> [{role: "user" | "assistant", content}], oldest first
   resetChat:  itineraryId => request(`/api/itinerary/${itineraryId}/chat`, "DELETE"),
-  // planned, not on the backend yet
-  adminUsers: () => request("/api/user"),                                              // admin only: every account, without passwords
+  // admin only, one page at a time -> {content, page, size, totalElements, totalPages}
+  adminUsers: ({search = "", page = 0, size = 20} = {}) => request(`/api/admin/users?${new URLSearchParams({search, page, size})}`),   // search matches part of the email or username
+  adminUser:  id => request(`/api/admin/users/${id}`),                                 // -> {id, username, email, role, enabled}
+  disableUser:id => request(`/api/admin/users/${id}/disable`, "POST"),                 // the account cannot log in and its sessions end, but its data stays
+  enableUser: id => request(`/api/admin/users/${id}/enable`, "POST"),
+  changeUserRole:(id, role) => request(`/api/admin/users/${id}/role`, "POST", {role}),   // "USER" | "ADMIN", logs them out. not allowed on yourself or the last enabled admin
+  adminDeleteUser:id => request(`/api/admin/users/${id}`, "DELETE"),                   // -> 204, the account and everything in it is gone. not allowed on yourself
+  userActivity:(id, {action = "", page = 0} = {}) => request(`/api/admin/users/${id}/actions?${new URLSearchParams({action, page})}`),   // what the account did and what was done to it, newest first
+  auditLog:   ({email = "", action = "", page = 0} = {}) => request(`/api/admin/audit?${new URLSearchParams({email, action, page})}`),   // everyone's actions, newest first
 };
 
 // Mock mode only on localhost, via http://localhost:8080/?mock

@@ -1,14 +1,14 @@
 import { api } from "../api.js";
-import { escapeHtml, takeFlash } from "../util.js";
+import { escapeHtml } from "../util.js";
+import { logoMark } from "../icons.js";
 
 // notice: why they're being asked to log in (e.g. "your session has expired"), or null
 export function showLogin(root, onLoggedIn, notice = null) {
-	const flashMessage = takeFlash();   // e.g. "Account created…" from the sign-up screen
 	root.innerHTML = `
         <form class="login-panel" id="login-form">
-            <h1>Log in to TripSense</h1>
-            ${flashMessage ? `<p class="ok" role="status">${escapeHtml(flashMessage)}</p>` : ""}
-            ${notice && !flashMessage ? `<p class="notice" role="status">${escapeHtml(notice)}</p>` : ""}
+            <div class="auth-brand">${logoMark()}TripSense</div>
+            <h1>Log in</h1>
+            ${notice ? `<p class="notice" role="status">${escapeHtml(notice)}</p>` : ""}
             <label for="email">Email</label>
             <input id="email" name="email" type="email" autocomplete="email" required>
             
@@ -16,7 +16,7 @@ export function showLogin(root, onLoggedIn, notice = null) {
             <input id="password" name="password" type="password" autocomplete="current-password" required>
             
             <p class="err" id="error-message" role="alert"></p>
-            <button type="submit">Log in</button>
+            <button class="primary" type="submit">Log in</button>
             <p class="switch-auth">New here? <a href="#/register">Create an account</a></p>
         </form>
     `;
