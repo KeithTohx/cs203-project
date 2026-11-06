@@ -29,6 +29,11 @@ public final class RecommendationRules {
     private static final Set<ActivityCategory> INDOOR =
             Set.of(MUSEUM_GALLERY, FOOD_DINING, SHOPPING, WELLNESS_SPA);
 
+    // how much closer a preferred category counts as. bigger than SAME_KIND_DETOUR_KM so the
+    // traveller's taste beats "same kind as the cancelled activity" within a city, but small
+    // enough that a place in another city never wins on taste alone
+    private static final double PREFERRED_BONUS_KM = 25;
+
     // how much detour we will accept to keep an indoor activity in its own category. inside one
     // city everything is closer than this, so the kind decides, and between cities distance wins
     private static final double SAME_KIND_DETOUR_KM = 15;
@@ -56,27 +61,27 @@ public final class RecommendationRules {
     /**
      * Narrows a country's options down to the few worth offering for one disrupted activity.
      *
-     * @param options  every option in the trip's country, categories included
-     * @param category what the disrupted activity was, may be null on older rows
-     * @param address  the activity's address, matched against an option's area
-     * @param newsText headline plus description, used to drop areas the news itself names
+     * @param options    every option in the trip's country, categories included
+     * @param category   what the disrupted activity was, may be null on older rows
+     * @param address    the activity's address, matched against an option's area
+     * @param newsText   headline plus description, used to drop areas the news itself names
+     * @param preferred  preferred activity categories
      */
-    public static List<ActivityOption> shortlist(List<ActivityOption> options,
-                                                 ActivityCategory category,
-                                                 String address, String newsText) {
-        return shortlist(options, category, address, newsText, Set.of());
+    public static List<ActivityOption> shortlist(List<ActivityOption> options, ActivityCategory category,
+                                                String address, String newsText) {
+        return shortlist(options, category, address, newsText, Set.of(), Set.of());
     }
-
-    /**
-     * Same, but leaves out options we have already offered for this impact.
-     *
-     * @param exclude option ids already suggested, so a regenerate cannot repeat one they
-     *                have just turned down
-     */
     public static List<ActivityOption> shortlist(List<ActivityOption> options,
                                                  ActivityCategory category,
                                                  String address, String newsText,
                                                  Set<Long> exclude) {
+        return shortlist(options, category, address, newsText, Set.of(), exclude);
+    }
+
+    public static List<ActivityOption> shortlist(List<ActivityOption> options,
+                                                 ActivityCategory category,
+                                                 String address, String newsText,
+                                                 Set<ActivityCategory> preferred, Set<Long> exclude) {
         Set<ActivityCategory> substitutes = substitutesFor(category);
         if (substitutes.isEmpty()) {
             return List.of();
@@ -94,10 +99,9 @@ public final class RecommendationRules {
         boolean preferSameKind = category != null && category.isIndoor();
 
         Context context = new Context(origin, where, category, preferSameKind,
-                                      localAreaIsInTheNews(options, where, news));
+                                      localAreaIsInTheNews(options, where, news), preferred);
 
         return options.stream()
-                // already offered for this impact, so offering it again is not a new suggestion
                 .filter(option -> !exclude.contains(option.getId()))
                 .filter(option -> substitutes.contains(option.getCategory()))
                 // a keyword guard, not geography. "flooding closes bangkok" drops every
@@ -112,7 +116,7 @@ public final class RecommendationRules {
 
     /** What the ranking needs to know, kept together so score stays readable. */
     private record Context(double[] origin, String where, ActivityCategory category,
-                           boolean preferSameKind, boolean localAreaHit) {
+                           boolean preferSameKind, boolean localAreaHit, Set<ActivityCategory> preferred) {
     }
 
     /**
@@ -211,6 +215,11 @@ public final class RecommendationRules {
         if (context.preferSameKind() && option.getCategory() != context.category()) {
             score += SAME_KIND_DETOUR_KM;
         }
+
+        if (context.preferred().contains(option.getCategory())) {
+            score -= PREFERRED_BONUS_KM;
+        }
+
         return score;
     }
 
@@ -227,4 +236,5 @@ public final class RecommendationRules {
     private static String lower(String value) {
         return value == null ? "" : value.toLowerCase(Locale.ROOT);
     }
+    
 }

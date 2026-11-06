@@ -11,6 +11,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import static org.mockito.Mockito.lenient;
+import static org.mockito.ArgumentMatchers.anyLong;
+
 import java.util.List;
 import java.util.Optional;
 
@@ -32,6 +35,11 @@ import csd.tripsense.itinerary.ItineraryService;
 import csd.tripsense.news.News;
 import csd.tripsense.user.User;
 import csd.tripsense.user.UserRepository;
+import csd.tripsense.user.preference.PreferenceService;
+import csd.tripsense.user.preference.UserPreference;
+import java.time.Instant;
+import java.util.Set;
+import org.springframework.test.util.ReflectionTestUtils;
 
 // accept, dismiss and regenerate. ItineraryAccess is the real one so the ownership checks are
 // actually exercised, everything else is mocked
@@ -58,6 +66,8 @@ class RecommendationDecisionTest {
     private final ActivityOption secondMuseum = new ActivityOption(502L, "Japan", "Sapporo",
             ActivityCategory.MUSEUM_GALLERY, "Hokkaido Museum", "Atsubetsu-ku, Sapporo", 43.05, 141.44);
 
+    private UserPreference preferences;
+
     @BeforeEach
     void setUp() {
         recommendations = mock(RecommendationRepository.class);
@@ -68,8 +78,11 @@ class RecommendationDecisionTest {
         // only prepareNew needs the repository and nothing here calls it
         ItineraryAccess access = new ItineraryAccess(mock(UserRepository.class));
 
+        PreferenceService preferenceService = mock(PreferenceService.class);
+        preferences = new UserPreference(null);
+        lenient().when(preferenceService.getPreferences(anyLong())).thenReturn(preferences);
         service = new RecommendationServiceImpl(recommendations, options, impactService,
-                itineraryService, chatService, access);
+                itineraryService, chatService, preferenceService, access);
 
         User owner = mock(User.class);
         when(owner.getId()).thenReturn(karwei.getId());
@@ -170,6 +183,28 @@ class RecommendationDecisionTest {
 
         assertThrows(ImpactNotFoundException.class,
                 () -> service.decide(99L, RecommendationStatus.ACCEPTED, karwei));
+    }
+
+    @Test
+    void regenerationHonoursPreferencesWithoutRepeatingAnEarlierOption() {
+        Instant version = Instant.parse("2026-11-06T00:00:00Z");
+        ReflectionTestUtils.setField(preferences, "updatedAt", version);
+        preferences.setPreferredCategories(Set.of(ActivityCategory.SHOPPING));
+        ActivityOption mall = new ActivityOption(99L, "Japan", "Sapporo",
+                ActivityCategory.SHOPPING, "Sapporo Mall", "Sapporo", 43.06, 141.35);
+        Recommendation previous = stored(1L, RecommendationStatus.DISMISSED, firstMuseum);
+        when(recommendations.findById(1L)).thenReturn(Optional.of(previous));
+        when(recommendations.findByImpactIdOrderByIdAsc(IMPACT_ID)).thenReturn(List.of(previous));
+        when(options.findByCountry("Japan")).thenReturn(List.of(firstMuseum, secondMuseum, mall));
+        when(chatService.ask(any(), any())).thenThrow(new RuntimeException("model down"));
+        when(recommendations.save(any(Recommendation.class))).thenAnswer(i -> i.getArgument(0));
+
+        Recommendation fresh = service.regenerate(1L, karwei);
+
+        assertEquals(mall, fresh.getSuggestedOption());
+        assertEquals(version, fresh.getPreferencesVersion());
+        assertEquals(RecommendationStatus.PENDING, fresh.getStatus());
+        assertEquals(RecommendationStatus.DISMISSED, previous.getStatus());
     }
 
     // ===== regenerate =====

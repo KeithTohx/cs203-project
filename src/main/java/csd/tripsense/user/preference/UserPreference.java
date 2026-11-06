@@ -3,7 +3,10 @@ package csd.tripsense.user.preference;
 import jakarta.persistence.*;
 
 import java.time.Instant;
+import java.util.HashSet;
+import java.util.Set;
 
+import csd.tripsense.activity.ActivityCategory;
 import csd.tripsense.user.User;
 
 
@@ -41,6 +44,13 @@ public class UserPreference {
     @Column(nullable = false)
     private boolean travellingWithElderly = false;
 
+    // kinds of activity to suggest when something is disrupted. empty = no preference
+    // MUSEUM_GALLERY, FOOD_DINING, SHOPPING and WELLNESS_SPA
+    @Convert(converter = ActivityCategorySetConverter.class)
+    @Column(name = "preferred_categories", nullable = false, length = 255,
+            columnDefinition = "VARCHAR(255) NOT NULL DEFAULT ''")
+    private Set<ActivityCategory> preferredCategories = new HashSet<>();
+
     @Column(nullable = false)
     private Instant updatedAt = Instant.now();
 
@@ -72,6 +82,9 @@ public class UserPreference {
 
     public boolean isTravellingWithElderly() { return travellingWithElderly; }
     public void setTravellingWithElderly(boolean v) { this.travellingWithElderly = v; }
+
+    public Set<ActivityCategory> getPreferredCategories() { return preferredCategories; }
+    public void setPreferredCategories(Set<ActivityCategory> c) { this.preferredCategories = c; }
 
     public Instant getUpdatedAt() { return updatedAt; }
 }

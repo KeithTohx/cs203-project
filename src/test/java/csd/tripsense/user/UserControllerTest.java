@@ -241,6 +241,8 @@ class UserControllerTest {
         verify(userService, never()).changePassword(any(), any(), any());
     }
 
+    // ---------- GET & PATCH /api/user/me/preferences ----------
+
     @Test
     void getPreferences_returnsTheLoggedInUsersPreferences() throws Exception {
         loginAs(alice);
@@ -267,7 +269,7 @@ class UserControllerTest {
                 .andExpect(jsonPath("$.riskTolerance").value("LOW"));
 
         verify(preferenceService).updatePreferences(7L,
-                new UpdatePreferenceRequest(RiskTolerance.LOW, null, null, null, null, null));
+                new UpdatePreferenceRequest(RiskTolerance.LOW, null, null, null, null, null, null));
     }
 
     @Test
