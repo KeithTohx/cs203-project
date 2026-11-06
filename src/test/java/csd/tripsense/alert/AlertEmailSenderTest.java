@@ -25,6 +25,8 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 
 import jakarta.mail.Address;
+import jakarta.mail.Multipart;
+import jakarta.mail.Part;
 import jakarta.mail.Session;
 import jakarta.mail.internet.MimeMessage;
 
@@ -73,6 +75,21 @@ class AlertEmailSenderTest {
     }
 
     @Test
+    @DisplayName("Should throw IllegalStateException when email is enabled but the sender address is blank")
+    void validate_ShouldThrowIllegalStateException_WhenFromAddressBlank() {
+        // Arrange
+        when(mailSenders.getIfAvailable()).thenReturn(mailSender);
+        AlertEmailSender emailSender = new AlertEmailSender(mailSenders, true, " ");
+
+        // Act
+        IllegalStateException exception = assertThrows(IllegalStateException.class, () -> emailSender.validate());
+
+        // Assert
+        String errorMessage = exception.getMessage();
+        assertTrue(errorMessage.contains("alerts.email.from"), "error message was: " + errorMessage);
+    }
+
+    @Test
     @DisplayName("Should turn on TLS and finite timeouts when the SMTP settings leave them out")
     void validate_ShouldSetTlsAndTimeouts_WhenSmtpDefaultsUsed() {
         // Arrange
@@ -86,10 +103,15 @@ class AlertEmailSenderTest {
 
         // Assert
         Properties properties = smtp.getJavaMailProperties();
+        assertEquals("true", properties.getProperty("mail.smtp.starttls.enable"));
         assertEquals("true", properties.getProperty("mail.smtp.starttls.required"));
         assertEquals("true", properties.getProperty("mail.smtp.auth"));
         assertEquals("5000", properties.getProperty("mail.smtp.connectiontimeout"));
         assertEquals("10000", properties.getProperty("mail.smtp.timeout"));
+        assertEquals("10000", properties.getProperty("mail.smtp.writetimeout"));
+        assertEquals("5000", properties.getProperty("mail.smtps.connectiontimeout"));
+        assertEquals("10000", properties.getProperty("mail.smtps.timeout"));
+        assertEquals("10000", properties.getProperty("mail.smtps.writetimeout"));
     }
 
     @Test
@@ -134,11 +156,30 @@ class AlertEmailSenderTest {
         String subject = message.getSubject();
         assertTrue(subject.contains("Japan trip"), "email subject was: " + subject);
 
-        String body = message.getContent().toString();
+        String body = plainTextBody(message);
         assertTrue(body.contains("Ski lifts are closed"), "email body was: " + body);
         assertTrue(body.contains("https://example.com/news"), "email body was: " + body);
         assertTrue(body.contains("automated assessment"), "email body was: " + body);
 
         assertEquals("<tripsense-alert-stable-key@tripsense.local>", message.getMessageID());
+    }
+
+    // reads the plain text part whether the email is a single part or multipart (plain text plus html),
+    // so this test keeps working once the html email lands
+    private String plainTextBody(Part part) throws Exception {
+        if (part.isMimeType("text/plain")) {
+            return (String) part.getContent();
+        }
+
+        Object content = part.getContent();
+        if (content instanceof Multipart multipart) {
+            for (int i = 0; i < multipart.getCount(); i++) {
+                String found = plainTextBody(multipart.getBodyPart(i));
+                if (!found.isEmpty()) {
+                    return found;
+                }
+            }
+        }
+        return "";
     }
 }
