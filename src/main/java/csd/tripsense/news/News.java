@@ -3,6 +3,7 @@ package csd.tripsense.news;
 import java.util.HashSet;
 import java.util.Set;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import java.time.LocalDateTime;
@@ -56,6 +57,8 @@ public class News {
     @Column(length = 2048, unique = true)
     private String url;
 
+    // gdelt batch times are UTC, so the Z tells browsers not to read it as their own local time
+    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss'Z'")
     private LocalDateTime publishedAt;
 
     // The countries this article is about. @JsonIgnore because NewsController returns News

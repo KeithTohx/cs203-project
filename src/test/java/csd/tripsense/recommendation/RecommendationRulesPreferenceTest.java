@@ -44,9 +44,9 @@ class RecommendationRulesPreferenceTest {
                 option(3, "Sapporo", FOOD_DINING, "restaurant"));
 
         List<ActivityOption> preferred = RecommendationRules.shortlist(
-                options, SKI_SNOW, "Sapporo, Japan", "", Set.of(FOOD_DINING));
+                options, SKI_SNOW, "Sapporo, Japan", "", Set.of(FOOD_DINING), Set.of());
         List<ActivityOption> plain = RecommendationRules.shortlist(
-                options, SKI_SNOW, "Sapporo, Japan", "", Set.of());
+                options, SKI_SNOW, "Sapporo, Japan", "", Set.of(), Set.of());
 
         assertEquals(List.of("restaurant", "museum", "mall"), names(preferred));
         assertEquals(List.of("museum", "mall", "restaurant"), names(plain));
@@ -60,7 +60,7 @@ class RecommendationRulesPreferenceTest {
                 option(3, "Sapporo", FOOD_DINING, "restaurant"));
 
         List<ActivityOption> result = RecommendationRules.shortlist(
-                options, SKI_SNOW, "Sapporo, Japan", "", Set.of(SHOPPING, FOOD_DINING));
+                options, SKI_SNOW, "Sapporo, Japan", "", Set.of(SHOPPING, FOOD_DINING), Set.of());
 
         assertEquals("museum", names(result).get(2));
     }
@@ -74,7 +74,7 @@ class RecommendationRulesPreferenceTest {
                 option(2, "Sapporo", SHOPPING, "mall"));
 
         List<ActivityOption> result = RecommendationRules.shortlist(
-                options, MUSEUM_GALLERY, "Sapporo, Japan", "", Set.of(SHOPPING));
+                options, MUSEUM_GALLERY, "Sapporo, Japan", "", Set.of(SHOPPING), Set.of());
 
         assertEquals("mall", result.get(0).getName());
     }
@@ -88,7 +88,7 @@ class RecommendationRulesPreferenceTest {
                 option(2, "Sapporo", SHOPPING, "sapporo mall"));
 
         List<ActivityOption> result = RecommendationRules.shortlist(
-                options, MUSEUM_GALLERY, "Niseko, Hokkaido, Japan", "", Set.of(SHOPPING));
+                options, MUSEUM_GALLERY, "Niseko, Hokkaido, Japan", "", Set.of(SHOPPING), Set.of());
 
         assertEquals("niseko museum", result.get(0).getName());
     }
@@ -104,7 +104,7 @@ class RecommendationRulesPreferenceTest {
 
         List<ActivityOption> result = RecommendationRules.shortlist(
                 options, MUSEUM_GALLERY, "Na Phra Lan Rd, Bangkok, Thailand",
-                "Flooding closes Bangkok tourist areas", Set.of(SHOPPING));
+                "Flooding closes Bangkok tourist areas", Set.of(SHOPPING), Set.of());
 
         assertEquals(List.of("ayutthaya museum", "samae dam mall"), names(result));
     }
@@ -117,7 +117,7 @@ class RecommendationRulesPreferenceTest {
                 option(2, "Sapporo", MUSEUM_GALLERY, "museum"));
 
         List<ActivityOption> result = RecommendationRules.shortlist(
-                options, MUSEUM_GALLERY, "Sapporo, Japan", "", Set.of(SKI_SNOW));
+                options, MUSEUM_GALLERY, "Sapporo, Japan", "", Set.of(SKI_SNOW), Set.of());
 
         assertEquals(List.of("museum"), names(result));
     }
@@ -130,7 +130,7 @@ class RecommendationRulesPreferenceTest {
 
         assertEquals(
                 names(RecommendationRules.shortlist(options, SKI_SNOW, "Sapporo, Japan", "")),
-                names(RecommendationRules.shortlist(options, SKI_SNOW, "Sapporo, Japan", "", Set.of(SHOPPING))));
+                names(RecommendationRules.shortlist(options, SKI_SNOW, "Sapporo, Japan", "", Set.of(SHOPPING), Set.of())));
     }
 
     @Test
@@ -142,7 +142,7 @@ class RecommendationRulesPreferenceTest {
 
         assertEquals(
                 names(RecommendationRules.shortlist(options, MUSEUM_GALLERY, "Niseko, Hokkaido, Japan", "")),
-                names(RecommendationRules.shortlist(options, MUSEUM_GALLERY, "Niseko, Hokkaido, Japan", "", Set.of())));
+                names(RecommendationRules.shortlist(options, MUSEUM_GALLERY, "Niseko, Hokkaido, Japan", "", Set.of(), Set.of())));
     }
 
     @Test
@@ -154,7 +154,7 @@ class RecommendationRulesPreferenceTest {
                 option(4, "Sapporo", SHOPPING, "d"));
 
         assertTrue(RecommendationRules.shortlist(
-                options, SKI_SNOW, "Sapporo, Japan", "", Set.of(SHOPPING)).size()
+                options, SKI_SNOW, "Sapporo, Japan", "", Set.of(SHOPPING), Set.of()).size()
                 <= RecommendationRules.MAX_CANDIDATES);
     }
 }

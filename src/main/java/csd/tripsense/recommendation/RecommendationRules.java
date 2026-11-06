@@ -69,12 +69,19 @@ public final class RecommendationRules {
      */
     public static List<ActivityOption> shortlist(List<ActivityOption> options, ActivityCategory category,
                                                 String address, String newsText) {
-        return shortlist(options, category, address, newsText, Set.of());
+        return shortlist(options, category, address, newsText, Set.of(), Set.of());
     }
     public static List<ActivityOption> shortlist(List<ActivityOption> options,
                                                  ActivityCategory category,
                                                  String address, String newsText,
-                                                 Set<ActivityCategory> preferred) {
+                                                 Set<Long> exclude) {
+        return shortlist(options, category, address, newsText, Set.of(), exclude);
+    }
+
+    public static List<ActivityOption> shortlist(List<ActivityOption> options,
+                                                 ActivityCategory category,
+                                                 String address, String newsText,
+                                                 Set<ActivityCategory> preferred, Set<Long> exclude) {
         Set<ActivityCategory> substitutes = substitutesFor(category);
         if (substitutes.isEmpty()) {
             return List.of();
@@ -95,6 +102,7 @@ public final class RecommendationRules {
                                       localAreaIsInTheNews(options, where, news), preferred);
 
         return options.stream()
+                .filter(option -> !exclude.contains(option.getId()))
                 .filter(option -> substitutes.contains(option.getCategory()))
                 // a keyword guard, not geography. "flooding closes bangkok" drops every
                 // bangkok option, but a quake headline naming only hokkaido keeps sapporo

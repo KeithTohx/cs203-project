@@ -1,7 +1,7 @@
-// Read-only summary. Each section links to its own edit page.
+// read-only summary, each section links to its own edit page
 import { api } from "../api.js";
 import { labelFor } from "../preference-options.js";
-import { escapeHtml, takeFlash } from "../util.js";
+import { escapeHtml } from "../util.js";
 
 // "With family, with children and elderly travellers", or just "On my own"
 const describeTravelGroup = preferences => {
@@ -37,24 +37,8 @@ async function loadPreferenceSummary(container, onAuthLost) {
     }
 }
 
-export function showAccount(root, user, onAuthLost) {
-        const flashMessage = takeFlash();
-        root.innerHTML = `<h1>Your account</h1>
-    ${flashMessage ? `<p class="ok" role="status">${escapeHtml(flashMessage)}</p>` : ""}
-    <section class="card">
-        <div class="row">
-            <h2>Details</h2>
-            <a class="btn" href="#/account/details">Edit</a>
-        </div>
-        <dl><dt>Username</dt><dd>${escapeHtml(user.username)}</dd><dt>Email</dt><dd>${escapeHtml(user.email)}</dd></dl>
-    </section>
-    <section class="card">
-        <div class="row">
-            <h2>Password</h2>
-            <a class="btn" href="#/account/password">Change</a>
-        </div>
-        <p class="meta">••••••••</p>
-    </section>
+// preferences only shape how the AI explains news about itineraries, and admins do not have any
+const createPreferenceCard = () => `
     <section class="card">
         <div class="row">
             <h2>Travel preferences</h2>
@@ -64,14 +48,44 @@ export function showAccount(root, user, onAuthLost) {
             <p class="meta">Loading…</p>
         </div>
     </section>
-    <section class="card danger-zone">
-        <div class="row">
-            <h2>Delete account</h2>
-            <a class="btn danger" href="#/account/delete">Delete</a>
-        </div>
-        <p class="meta">Permanently removes your account, itineraries and chat history.</p>
-    </section>
+`;
+
+export function showAccount(root, user, onAuthLost) {
+    const isAdmin = user.role === "ADMIN";
+    const deleteDescription = isAdmin
+        ? "Permanently removes your account."
+        : "Permanently removes your account, itineraries and chat history.";
+
+    root.innerHTML = `
+        <h1>Your account</h1>
+        <section class="card">
+            <div class="row">
+                <h2>Details</h2>
+                <a class="btn" href="#/account/details">Edit</a>
+            </div>
+            <dl>
+                <dt>Username</dt>
+                <dd>${escapeHtml(user.username)}</dd>
+                <dt>Email</dt>
+                <dd>${escapeHtml(user.email)}</dd>
+            </dl>
+        </section>
+        <section class="card">
+            <div class="row">
+                <h2>Password</h2>
+                <a class="btn" href="#/account/password">Change</a>
+            </div>
+            <p class="meta">••••••••</p>
+        </section>
+        ${isAdmin ? "" : createPreferenceCard()}
+        <section class="card danger-zone">
+            <div class="row">
+                <h2>Delete account</h2>
+                <a class="btn danger" href="#/account/delete">Delete</a>
+            </div>
+            <p class="meta">${deleteDescription}</p>
+        </section>
     `;
 
-    loadPreferenceSummary(root.querySelector("#preference-summary"), onAuthLost);
+    if (!isAdmin) loadPreferenceSummary(root.querySelector("#preference-summary"), onAuthLost);
 }

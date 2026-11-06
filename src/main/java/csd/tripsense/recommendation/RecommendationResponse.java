@@ -1,6 +1,7 @@
 package csd.tripsense.recommendation;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
 
 import csd.tripsense.activity.ActivityCategory;
 import csd.tripsense.impact.Impact;
@@ -14,6 +15,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
  */
 public record RecommendationResponse(
         Long id,
+        RecommendationStatus status,
+        LocalDateTime decidedAt,
         Severity severity,
         Action action,
         String advice,
@@ -45,6 +48,8 @@ public record RecommendationResponse(
 
         return new RecommendationResponse(
                 recommendation.getId(),
+                recommendation.getStatus(),
+                recommendation.getDecidedAt(),
                 recommendation.getSeverity(),
                 recommendation.getAction(),
                 recommendation.getAdvice(),

@@ -81,7 +81,7 @@ class RecommendationServiceImplTest {
         chatService = mock(ChatService.class);
         preferenceService = mock(PreferenceService.class);
         service = new RecommendationServiceImpl(recommendations, options, impactService,
-                itineraryService, chatService, preferenceService);
+                itineraryService, chatService, preferenceService, new csd.tripsense.itinerary.ItineraryAccess(mock(csd.tripsense.user.UserRepository.class)));
 
         // deep stubs so we can say "its user has id 1 and its country is Japan" without building a
         // Country object, which this test has no reason to know about
@@ -94,7 +94,7 @@ class RecommendationServiceImplTest {
         prefs = new UserPreference(mock(User.class));
         when(preferenceService.getPreferences(USER_ID)).thenReturn(prefs);
         when(options.findByCountry("Japan")).thenReturn(List.of(museum, mall, restaurant));
-        when(recommendations.findByImpactId(any())).thenReturn(Optional.empty());
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(any())).thenReturn(Optional.empty());
         // save hands back what it was given, like a real repository
         when(recommendations.save(any(Recommendation.class))).thenAnswer(inv -> inv.getArgument(0));
     }
@@ -172,6 +172,26 @@ class RecommendationServiceImplTest {
         return recommendation;
     }
 
+    @Test
+    void refreshingPreferencesPreservesTheAcceptedDecision() {
+        preferencesSavedAt(Instant.now());
+        Recommendation accepted = staleRecommendation();
+        accepted.setId(42L);
+        accepted.setStatus(RecommendationStatus.ACCEPTED);
+        LocalDateTime decidedAt = LocalDateTime.now().minusHours(1);
+        accepted.setDecidedAt(decidedAt);
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(accepted));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
+
+        Recommendation refreshed = generateOne();
+
+        assertThat(refreshed).isSameAs(accepted);
+        assertThat(refreshed.getStatus()).isEqualTo(RecommendationStatus.ACCEPTED);
+        assertThat(refreshed.getDecidedAt()).isEqualTo(decidedAt);
+        assertThat(refreshed.getPreferencesVersion()).isEqualTo(prefs.getUpdatedAt());
+    }
+
     // ----- caching and staleness -----
 
     @Test
@@ -180,7 +200,7 @@ class RecommendationServiceImplTest {
         preferencesSavedAt(version);
         Recommendation cached = savedRecommendationMadeAt(LocalDateTime.now());
         cached.setPreferencesVersion(version);   // written for exactly the preferences saved now
-        when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(cached));
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(cached));
         theImpactsAre(skiImpact(4L));
 
         List<Recommendation> result = service.generate(ITINERARY_ID);
@@ -200,7 +220,7 @@ class RecommendationServiceImplTest {
     void aRecommendationMadeBeforeThePreferencesChangedIsUpdatedInPlace() {
         preferencesSavedAt(Instant.now());
         Recommendation stale = staleRecommendation();
-        when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(stale));
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(stale));
         theImpactsAre(skiImpact(4L));
         theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
 
@@ -219,7 +239,7 @@ class RecommendationServiceImplTest {
     void aRefreshNeverDeletesTheOldRowSoThereIsNoMomentWithNoRecommendation() {
         preferencesSavedAt(Instant.now());
         Recommendation stale = staleRecommendation();
-        when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(stale));
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(stale));
         theImpactsAre(skiImpact(4L));
         theModelSays("MEDIUM", "MONITOR", null, "Keep watching.");
 
@@ -233,7 +253,7 @@ class RecommendationServiceImplTest {
     void aFailedSaveDuringARefreshPropagatesAndNeverTouchesTheOldRow() {
         preferencesSavedAt(Instant.now());
         Recommendation stale = staleRecommendation();
-        when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(stale));
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(stale));
         theImpactsAre(skiImpact(4L));
         theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
         doThrow(new RuntimeException("database is down")).when(recommendations).save(any(Recommendation.class));
@@ -249,7 +269,7 @@ class RecommendationServiceImplTest {
     void whenTheModelIsDownAStaleRowIsStillRefreshedWithTheFallback() {
         preferencesSavedAt(Instant.now());
         Recommendation stale = staleRecommendation();
-        when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(stale));
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(stale));
         theImpactsAre(skiImpact(4L));
         when(chatService.ask(anyString(), any())).thenThrow(new RuntimeException("ollama is not running"));
 
@@ -266,7 +286,7 @@ class RecommendationServiceImplTest {
         preferencesSavedAt(Instant.now());
         Recommendation stale = staleRecommendation();
         stale.setAdvice("the old advice");
-        when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(stale));
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(stale));
         theImpactsAre(skiImpact(4L));
         // the shortlist lookup blows up while the new answer is being worked out
         when(options.findByCountry("Japan")).thenThrow(new IllegalStateException("options table unreadable"));
@@ -306,7 +326,7 @@ class RecommendationServiceImplTest {
         // saved with "now" as its updatedAt, which must not make every older row look out of date
         preferencesSavedAt(Instant.now());
         Recommendation older = savedRecommendationMadeAt(LocalDateTime.now().minusDays(30));
-        when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(older));
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(older));
         theImpactsAre(skiImpact(4L));
 
         List<Recommendation> result = service.generate(ITINERARY_ID);
@@ -321,7 +341,7 @@ class RecommendationServiceImplTest {
         preferencesSavedAt(Instant.now());
         prefs.setFlexibilityLevel(FlexibilityLevel.FIXED_DATES);
         Recommendation older = savedRecommendationMadeAt(LocalDateTime.now().minusDays(30));
-        when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(older));
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(older));
         theImpactsAre(skiImpact(4L));
         theModelSays("MEDIUM", "MONITOR", null, "Keep watching.");
 
@@ -422,7 +442,7 @@ class RecommendationServiceImplTest {
         preferencesSavedAt(newVersion);
         Recommendation stale = staleRecommendation();
         stale.setPreferencesVersion(Instant.parse("2026-11-01T10:00:00Z"));
-        when(recommendations.findByImpactId(4L)).thenReturn(Optional.of(stale));
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(stale));
         theImpactsAre(skiImpact(4L));
         theModelSays("MEDIUM", "MONITOR", null, "Keep watching.");
 
@@ -440,7 +460,7 @@ class RecommendationServiceImplTest {
         theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
         Recommendation winner = savedRecommendationMadeAt(LocalDateTime.now());
         // first lookup finds nothing, then the other request's insert lands before ours
-        when(recommendations.findByImpactId(4L)).thenReturn(Optional.empty(), Optional.of(winner));
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.empty(), Optional.of(winner));
         doThrow(new DataIntegrityViolationException("duplicate impact_id"))
                 .when(recommendations).save(any(Recommendation.class));
 
@@ -454,7 +474,7 @@ class RecommendationServiceImplTest {
         theImpactsAre(skiImpact(4L));
         theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
         // the constraint fired but there is no row to fall back on, so something else is wrong
-        when(recommendations.findByImpactId(4L)).thenReturn(Optional.empty(), Optional.empty());
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.empty(), Optional.empty());
         doThrow(new DataIntegrityViolationException("duplicate impact_id"))
                 .when(recommendations).save(any(Recommendation.class));
 

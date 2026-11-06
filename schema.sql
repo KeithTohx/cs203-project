@@ -108,12 +108,13 @@ CREATE TABLE recommendation (
     suggested_option_id INTEGER,       -- null when there is nothing to swap to
     preferences_version TIMESTAMP,
     created_at TIMESTAMP,
+    status VARCHAR NOT NULL DEFAULT 'PENDING',
+    decided_at TIMESTAMP,
     FOREIGN KEY (impact_id) REFERENCES impact(id),
     FOREIGN KEY (suggested_option_id) REFERENCES activity_option(id)
 );
 
--- Unique index on impact_id specified in @Table annotation
-CREATE UNIQUE INDEX IF NOT EXISTS uk_recommendation_impact ON recommendation (impact_id);
+-- Multiple attempts per impact are retained for recommendation history.
 
 
 CREATE TABLE user_preference (

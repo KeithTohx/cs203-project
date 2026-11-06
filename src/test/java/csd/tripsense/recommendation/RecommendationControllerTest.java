@@ -280,12 +280,12 @@ class RecommendationControllerTest {
     @DisplayName("Should return recommendation when user is owner")
     void getByItinerary_owner_getsStoredRecommendations() {
         ownedBy(1L, ITINERARY_ID);
-        when(recommendationService.getByItinerary(ITINERARY_ID)).thenReturn(List.of());
+        when(recommendationService.getByItinerary(ITINERARY_ID, false, john)).thenReturn(List.of());
 
-        List<RecommendationResponse> result = controller.getByItinerary(ITINERARY_ID, john);
+        List<RecommendationResponse> result = controller.getByItinerary(ITINERARY_ID, false, john);
 
         assertThat(result).isEmpty();
-        verify(recommendationService).getByItinerary(ITINERARY_ID);
+        verify(recommendationService).getByItinerary(ITINERARY_ID, false, john);
     }
 
     /** 
@@ -298,7 +298,7 @@ class RecommendationControllerTest {
     void getByItinerary_otherUser_getsNotFound_andNothingIsRead() {
         ownedBy(1L, ITINERARY_ID);
 
-        assertThatThrownBy(() -> controller.getByItinerary(ITINERARY_ID, bob))
+        assertThatThrownBy(() -> controller.getByItinerary(ITINERARY_ID, false, bob))
                 .isInstanceOf(ItineraryNotFoundException.class);
 
         verifyNoInteractions(recommendationService);
@@ -310,7 +310,7 @@ class RecommendationControllerTest {
     void getByItinerary_admin_cannotReadAnotherUsersRecommendations() {
         ownedBy(1L, ITINERARY_ID);
 
-        assertThatThrownBy(() -> controller.getByItinerary(ITINERARY_ID, admin))
+        assertThatThrownBy(() -> controller.getByItinerary(ITINERARY_ID, false, admin))
                 .isInstanceOf(ItineraryNotFoundException.class);
 
         verifyNoInteractions(recommendationService);
@@ -326,7 +326,7 @@ class RecommendationControllerTest {
         when(itineraryService.getItineraryById(ITINERARY_ID))
                 .thenThrow(new ItineraryNotFoundException(ITINERARY_ID));
 
-        assertThatThrownBy(() -> controller.getByItinerary(ITINERARY_ID, john))
+        assertThatThrownBy(() -> controller.getByItinerary(ITINERARY_ID, false, john))
                 .isInstanceOf(ItineraryNotFoundException.class);
 
         verifyNoInteractions(recommendationService);
@@ -338,7 +338,7 @@ class RecommendationControllerTest {
     void getByItinerary_notLoggedIn_isRejectedWith401() {
         ownedBy(1L, ITINERARY_ID);
 
-        assertThatThrownBy(() -> controller.getByItinerary(ITINERARY_ID, null))
+        assertThatThrownBy(() -> controller.getByItinerary(ITINERARY_ID, false, null))
                 .isInstanceOfSatisfying(ResponseStatusException.class,
                         e -> assertThat(e.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED));
 
