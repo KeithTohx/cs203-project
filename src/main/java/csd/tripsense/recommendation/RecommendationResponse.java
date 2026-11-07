@@ -1,6 +1,11 @@
 package csd.tripsense.recommendation;
 
+import java.time.Instant;
+import java.time.LocalDateTime;
+
+import csd.tripsense.activity.ActivityCategory;
 import csd.tripsense.impact.Impact;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 /**
  * What the API returns for a recommendation.
@@ -10,6 +15,8 @@ import csd.tripsense.impact.Impact;
  */
 public record RecommendationResponse(
         Long id,
+        RecommendationStatus status,
+        LocalDateTime decidedAt,
         Severity severity,
         Action action,
         String advice,
@@ -22,8 +29,17 @@ public record RecommendationResponse(
         String newsTitle,
         Long optionId,
         String optionName,
+        ActivityCategory optionCategory,
         String optionArea,
-        String optionAddress) {
+        String optionAddress,
+        @Schema(description = "True when this advice was written for older preferences than the traveller "
+                + "has now, so it may no longer fit (eg it suggests rescheduling after they chose fixed "
+                + "dates). Call POST /api/recommendation/generate to redo it. Never true right after generate, "
+                + "unless the preferences were changed while it was running.")
+        boolean stale,
+        @Schema(description = "The version of the preferences (when they last changed) this advice was "
+                + "written for. Null on recommendations made before versions were kept.")
+        Instant preferencesVersion) {
 
     public static RecommendationResponse from(Recommendation recommendation) {
         Impact impact = recommendation.getImpact();
@@ -32,6 +48,8 @@ public record RecommendationResponse(
 
         return new RecommendationResponse(
                 recommendation.getId(),
+                recommendation.getStatus(),
+                recommendation.getDecidedAt(),
                 recommendation.getSeverity(),
                 recommendation.getAction(),
                 recommendation.getAdvice(),
@@ -44,7 +62,10 @@ public record RecommendationResponse(
                 impact == null || impact.getNews() == null ? null : impact.getNews().getTitle(),
                 option == null ? null : option.getId(),
                 option == null ? null : option.getName(),
+                option == null ? null : option.getCategory(),
                 option == null ? null : option.getArea(),
-                option == null ? null : option.getAddress());
+                option == null ? null : option.getAddress(),
+                recommendation.isStale(),
+                recommendation.getPreferencesVersion());
     }
 }

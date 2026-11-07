@@ -1,5 +1,6 @@
 package csd.tripsense.user.preference;
 
+import java.util.HashSet;
 import java.util.Optional;
 
 import org.springframework.dao.DataIntegrityViolationException;
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Service;
 import csd.tripsense.user.User;
 import csd.tripsense.user.UserNotFoundException;
 import csd.tripsense.user.UserRepository;
+import csd.tripsense.activity.ActivityCategory;
 
 @Service
 public class PreferenceServiceImpl implements PreferenceService {
@@ -41,6 +43,15 @@ public class PreferenceServiceImpl implements PreferenceService {
         if (r.travelGroup() != null)            prefs.setTravelGroup(r.travelGroup());
         if (r.travellingWithChildren() != null) prefs.setTravellingWithChildren(r.travellingWithChildren());
         if (r.travellingWithElderly() != null)  prefs.setTravellingWithElderly(r.travellingWithElderly());
+
+        if (r.preferredCategories() != null) {
+            if (r.preferredCategories().stream().anyMatch(c -> c == null || !c.isIndoor())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "preferred categories must be indoor ones: MUSEUM_GALLERY, FOOD_DINING, SHOPPING, WELLNESS_SPA");
+            }
+            // replace the whole set so hibernate notices the change to the converted column
+            prefs.setPreferredCategories(new HashSet<>(r.preferredCategories()));
+        }
 
         // Validate the final state so a partial update can't leave it contradictory.
         if (prefs.getTravelGroup() == TravelGroup.SOLO

@@ -7,8 +7,12 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface RecommendationRepository extends JpaRepository<Recommendation, Long> {
 
-    // one recommendation per impact, so this doubles as the "did we already do this" check
-    Optional<Recommendation> findByImpactId(Long impactId);
+    // regenerate means an impact can hold several attempts, so "did we already do this" is now
+    // the newest one rather than the only one
+    Optional<Recommendation> findFirstByImpactIdOrderByIdDesc(Long impactId);
+
+    // every attempt on one impact, so the traveller can see what they already turned down
+    List<Recommendation> findByImpactIdOrderByIdAsc(Long impactId);
 
     List<Recommendation> findByImpactItineraryId(Long itineraryId);
 

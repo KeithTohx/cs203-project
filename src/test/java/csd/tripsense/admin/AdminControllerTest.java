@@ -12,6 +12,7 @@ import org.springframework.http.MediaType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -29,6 +30,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -208,6 +210,25 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.totalElements").value(0));
 
         verify(adminService).reviewUserActions(eq(4L), eq("LOGIN"), anyInt(), anyInt());
+    }
+
+    @Test
+    void changeRole_returns200_endsTheirSessions_thenIsAudited() throws Exception {
+        when(adminService.getUser(4L)).thenReturn(new User("bob@example.com", "bob", "hash", "USER"));
+        when(adminService.changeRole(4L, Role.ADMIN, 3L)).thenReturn(new User("bob@example.com", "bob", "hash", "ADMIN"));
+
+        mockMvc.perform(post("/api/admin/users/4/role").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"role\":\"ADMIN\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.role").value("ADMIN"))
+                .andExpect(jsonPath("$.password").doesNotExist());
+
+        // their old session still holds the old role, so it has to end before anything is recorded
+        InOrder order = inOrder(adminService, sessionService, auditService);
+        order.verify(adminService).changeRole(4L, Role.ADMIN, 3L);
+        order.verify(sessionService).expireSessionsFor(4L);
+        order.verify(auditService).record(AuditService.ROLE_CHANGED, 3L, "admin@example.com", 4L,
+                "role changed from USER to ADMIN");
     }
 
     @Test

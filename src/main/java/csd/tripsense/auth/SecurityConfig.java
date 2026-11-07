@@ -3,7 +3,9 @@ package csd.tripsense.auth;
 import csd.tripsense.audit.AuditService;
 import csd.tripsense.user.User;
 import csd.tripsense.user.UserRepository;
+
 import jakarta.servlet.http.HttpServletResponse;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
@@ -14,7 +16,6 @@ import org.springframework.http.MediaType;
 import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.session.SessionRegistry;
@@ -48,7 +49,9 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
-    /** Remembers who is logged in where, so an admin action can end someone's sessions. */
+    /** 
+     * Remembers who is logged in where, so an admin action can end someone's sessions. 
+     */
     @Bean
     public SessionRegistry sessionRegistry() {
         return new SessionRegistryImpl();
@@ -85,6 +88,7 @@ public class SecurityConfig {
                 .requestMatchers("/error").permitAll()   // else error bodies (409, 400...) turn into 401
                 .requestMatchers("/", "/index.html", "/js/**", "/css/**", "/favicon.ico").permitAll()   // the frontend has to load before anyone logs in
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")   // USER -> 403, not logged in -> 401
+                .requestMatchers("/api/user/me/preferences/**").hasRole("USER")  // ADMIN -> 403, not logged in -> 401
                 .anyRequest().authenticated()
             )
 
@@ -145,5 +149,6 @@ public class SecurityConfig {
             .exceptionHandling(e -> e.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)));
 
         return http.build();
+
     }
 }

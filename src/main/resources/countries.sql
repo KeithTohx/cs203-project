@@ -2,222 +2,437 @@
 -- Every sovereign state with an ISO 3166-1 code, plus the territories in EXTRA,
 -- so a trip can be anywhere.
 -- Ids start at 7 because data.sql already seeds six countries that itineraries point at.
+-- fips_code is GDELT's country code, it is how ingested news is linked to a country.
 -- Country data from Wikidata, CC0.
 
-INSERT OR IGNORE INTO country (id, name) VALUES
-    (7, 'Andorra'),
-    (8, 'United Arab Emirates'),
-    (9, 'Afghanistan'),
-    (10, 'Antigua and Barbuda'),
-    (11, 'Albania'),
-    (12, 'Armenia'),
-    (13, 'Angola'),
-    (14, 'Argentina'),
-    (15, 'Austria'),
-    (16, 'Australia'),
-    (17, 'Aruba'),
-    (18, 'Azerbaijan'),
-    (19, 'Bosnia and Herzegovina'),
-    (20, 'Barbados'),
-    (21, 'Bangladesh'),
-    (22, 'Belgium'),
-    (23, 'Burkina Faso'),
-    (24, 'Bulgaria'),
-    (25, 'Bahrain'),
-    (26, 'Burundi'),
-    (27, 'Benin'),
-    (28, 'Brunei'),
-    (29, 'Bolivia'),
-    (30, 'Brazil'),
-    (31, 'The Bahamas'),
-    (32, 'Bhutan'),
-    (33, 'Botswana'),
-    (34, 'Belarus'),
-    (35, 'Belize'),
-    (36, 'Canada'),
-    (37, 'Democratic Republic of the Congo'),
-    (38, 'Central African Republic'),
-    (39, 'Republic of the Congo'),
-    (40, 'Switzerland'),
-    (41, 'Ivory Coast'),
-    (42, 'Cook Islands'),
-    (43, 'Chile'),
-    (44, 'Cameroon'),
-    (45, 'People''s Republic of China'),
-    (46, 'Colombia'),
-    (47, 'Costa Rica'),
-    (48, 'Cuba'),
-    (49, 'Cape Verde'),
-    (50, 'Curaçao'),
-    (51, 'Cyprus'),
-    (52, 'Czech Republic'),
-    (53, 'Germany'),
-    (54, 'Djibouti'),
-    (55, 'Denmark'),
-    (56, 'Dominica'),
-    (57, 'Dominican Republic'),
-    (58, 'Algeria'),
-    (59, 'Ecuador'),
-    (60, 'Estonia'),
-    (61, 'Egypt'),
-    (62, 'Eritrea'),
-    (63, 'Spain'),
-    (64, 'Ethiopia'),
-    (65, 'Finland'),
-    (66, 'Fiji'),
-    (67, 'Federated States of Micronesia'),
-    (68, 'France'),
-    (69, 'Gabon'),
-    (70, 'United Kingdom'),
-    (71, 'Grenada'),
-    (72, 'Georgia'),
-    (73, 'Ghana'),
-    (74, 'Greenland'),
-    (75, 'The Gambia'),
-    (76, 'Guinea'),
-    (77, 'Equatorial Guinea'),
-    (78, 'Greece'),
-    (79, 'Guatemala'),
-    (80, 'Guinea-Bissau'),
-    (81, 'Guyana'),
-    (82, 'Honduras'),
-    (83, 'Croatia'),
-    (84, 'Haiti'),
-    (85, 'Hungary'),
-    (86, 'Ireland'),
-    (87, 'Israel'),
-    (88, 'India'),
-    (89, 'Iraq'),
-    (90, 'Iran'),
-    (91, 'Iceland'),
-    (92, 'Italy'),
-    (93, 'Jamaica'),
-    (94, 'Jordan'),
-    (95, 'Kenya'),
-    (96, 'Kyrgyzstan'),
-    (97, 'Cambodia'),
-    (98, 'Kiribati'),
-    (99, 'Comoros'),
-    (100, 'Saint Kitts and Nevis'),
-    (101, 'North Korea'),
-    (102, 'Kuwait'),
-    (103, 'Kazakhstan'),
-    (104, 'Laos'),
-    (105, 'Lebanon'),
-    (106, 'Saint Lucia'),
-    (107, 'Liechtenstein'),
-    (108, 'Sri Lanka'),
-    (109, 'Liberia'),
-    (110, 'Lesotho'),
-    (111, 'Lithuania'),
-    (112, 'Luxembourg'),
-    (113, 'Latvia'),
-    (114, 'Libya'),
-    (115, 'Morocco'),
-    (116, 'Monaco'),
-    (117, 'Moldova'),
-    (118, 'Montenegro'),
-    (119, 'Madagascar'),
-    (120, 'Marshall Islands'),
-    (121, 'North Macedonia'),
-    (122, 'Mali'),
-    (123, 'Myanmar'),
-    (124, 'Mongolia'),
-    (125, 'Mauritania'),
-    (126, 'Malta'),
-    (127, 'Mauritius'),
-    (128, 'Maldives'),
-    (129, 'Malawi'),
-    (130, 'Mexico'),
-    (131, 'Malaysia'),
-    (132, 'Mozambique'),
-    (133, 'Namibia'),
-    (134, 'Niger'),
-    (135, 'Nigeria'),
-    (136, 'Nicaragua'),
-    (137, 'Kingdom of the Netherlands'),
-    (138, 'Norway'),
-    (139, 'Nepal'),
-    (140, 'Nauru'),
-    (141, 'Niue'),
-    (142, 'New Zealand'),
-    (143, 'Oman'),
-    (144, 'Panama'),
-    (145, 'Peru'),
-    (146, 'Papua New Guinea'),
-    (147, 'Philippines'),
-    (148, 'Pakistan'),
-    (149, 'Poland'),
-    (150, 'Palestine'),
-    (151, 'Portugal'),
-    (152, 'Palau'),
-    (153, 'Paraguay'),
-    (154, 'Qatar'),
-    (155, 'Romania'),
-    (156, 'Serbia'),
-    (157, 'Russia'),
-    (158, 'Rwanda'),
-    (159, 'Saudi Arabia'),
-    (160, 'Solomon Islands'),
-    (161, 'Seychelles'),
-    (162, 'Sudan'),
-    (163, 'Sweden'),
-    (164, 'Slovenia'),
-    (165, 'Slovakia'),
-    (166, 'Sierra Leone'),
-    (167, 'San Marino'),
-    (168, 'Senegal'),
-    (169, 'Somalia'),
-    (170, 'Suriname'),
-    (171, 'South Sudan'),
-    (172, 'São Tomé and Príncipe'),
-    (173, 'El Salvador'),
-    (174, 'Sint Maarten'),
-    (175, 'Syria'),
-    (176, 'Eswatini'),
-    (177, 'Chad'),
-    (178, 'Togo'),
-    (179, 'Tajikistan'),
-    (180, 'Timor-Leste'),
-    (181, 'Turkmenistan'),
-    (182, 'Tunisia'),
-    (183, 'Tonga'),
-    (184, 'Turkey'),
-    (185, 'Trinidad and Tobago'),
-    (186, 'Tuvalu'),
-    (187, 'Tanzania'),
-    (188, 'Ukraine'),
-    (189, 'Uganda'),
-    (190, 'United States'),
-    (191, 'Uruguay'),
-    (192, 'Uzbekistan'),
-    (193, 'Vatican City'),
-    (194, 'Saint Vincent and the Grenadines'),
-    (195, 'Venezuela'),
-    (196, 'Vanuatu'),
-    (197, 'Samoa'),
-    (198, 'Kosovo'),
-    (199, 'Yemen'),
-    (200, 'South Africa'),
-    (201, 'Zambia'),
-    (202, 'Zimbabwe'),
-    (203, 'Taiwan'),
-    (204, 'Hong Kong'),
-    (205, 'Macau'),
-    (206, 'Puerto Rico');
+INSERT OR IGNORE INTO country (id, name, fips_code) VALUES
+    (7, 'Andorra', 'AN'),
+    (8, 'United Arab Emirates', 'AE'),
+    (9, 'Afghanistan', 'AF'),
+    (10, 'Antigua and Barbuda', 'AC'),
+    (11, 'Albania', 'AL'),
+    (12, 'Armenia', 'AM'),
+    (13, 'Angola', 'AO'),
+    (14, 'Argentina', 'AR'),
+    (15, 'Austria', 'AU'),
+    (16, 'Australia', 'AS'),
+    (17, 'Aruba', 'AA'),
+    (18, 'Azerbaijan', 'AJ'),
+    (19, 'Bosnia and Herzegovina', 'BK'),
+    (20, 'Barbados', 'BB'),
+    (21, 'Bangladesh', 'BG'),
+    (22, 'Belgium', 'BE'),
+    (23, 'Burkina Faso', 'UV'),
+    (24, 'Bulgaria', 'BU'),
+    (25, 'Bahrain', 'BA'),
+    (26, 'Burundi', 'BY'),
+    (27, 'Benin', 'BN'),
+    (28, 'Brunei', 'BX'),
+    (29, 'Bolivia', 'BL'),
+    (30, 'Brazil', 'BR'),
+    (31, 'The Bahamas', 'BF'),
+    (32, 'Bhutan', 'BT'),
+    (33, 'Botswana', 'BC'),
+    (34, 'Belarus', 'BO'),
+    (35, 'Belize', 'BH'),
+    (36, 'Canada', 'CA'),
+    (37, 'Democratic Republic of the Congo', 'CG'),
+    (38, 'Central African Republic', 'CT'),
+    (39, 'Republic of the Congo', 'CF'),
+    (40, 'Switzerland', 'SZ'),
+    (41, 'Ivory Coast', 'IV'),
+    (42, 'Cook Islands', 'CW'),
+    (43, 'Chile', 'CI'),
+    (44, 'Cameroon', 'CM'),
+    (45, 'People''s Republic of China', 'CH'),
+    (46, 'Colombia', 'CO'),
+    (47, 'Costa Rica', 'CS'),
+    (48, 'Cuba', 'CU'),
+    (49, 'Cape Verde', 'CV'),
+    (50, 'Curaçao', 'UC'),
+    (51, 'Cyprus', 'CY'),
+    (52, 'Czech Republic', 'EZ'),
+    (53, 'Germany', 'GM'),
+    (54, 'Djibouti', 'DJ'),
+    (55, 'Denmark', 'DA'),
+    (56, 'Dominica', 'DO'),
+    (57, 'Dominican Republic', 'DR'),
+    (58, 'Algeria', 'AG'),
+    (59, 'Ecuador', 'EC'),
+    (60, 'Estonia', 'EN'),
+    (61, 'Egypt', 'EG'),
+    (62, 'Eritrea', 'ER'),
+    (63, 'Spain', 'SP'),
+    (64, 'Ethiopia', 'ET'),
+    (65, 'Finland', 'FI'),
+    (66, 'Fiji', 'FJ'),
+    (67, 'Federated States of Micronesia', 'FM'),
+    (68, 'France', 'FR'),
+    (69, 'Gabon', 'GB'),
+    (70, 'United Kingdom', 'UK'),
+    (71, 'Grenada', 'GJ'),
+    (72, 'Georgia', 'GG'),
+    (73, 'Ghana', 'GH'),
+    (74, 'The Gambia', 'GA'),
+    (75, 'Guinea', 'GV'),
+    (76, 'Equatorial Guinea', 'EK'),
+    (77, 'Greece', 'GR'),
+    (78, 'Guatemala', 'GT'),
+    (79, 'Guinea-Bissau', 'PU'),
+    (80, 'Guyana', 'GY'),
+    (81, 'Honduras', 'HO'),
+    (82, 'Croatia', 'HR'),
+    (83, 'Haiti', 'HA'),
+    (84, 'Hungary', 'HU'),
+    (85, 'Ireland', 'EI'),
+    (86, 'Israel', 'IS'),
+    (87, 'India', 'IN'),
+    (88, 'Iraq', 'IZ'),
+    (89, 'Iran', 'IR'),
+    (90, 'Iceland', 'IC'),
+    (91, 'Italy', 'IT'),
+    (92, 'Jamaica', 'JM'),
+    (93, 'Jordan', 'JO'),
+    (94, 'Kenya', 'KE'),
+    (95, 'Kyrgyzstan', 'KG'),
+    (96, 'Cambodia', 'CB'),
+    (97, 'Kiribati', 'KR'),
+    (98, 'Comoros', 'CN'),
+    (99, 'Saint Kitts and Nevis', 'SC'),
+    (100, 'North Korea', 'KN'),
+    (101, 'Kuwait', 'KU'),
+    (102, 'Kazakhstan', 'KZ'),
+    (103, 'Laos', 'LA'),
+    (104, 'Lebanon', 'LE'),
+    (105, 'Saint Lucia', 'ST'),
+    (106, 'Liechtenstein', 'LS'),
+    (107, 'Sri Lanka', 'CE'),
+    (108, 'Liberia', 'LI'),
+    (109, 'Lesotho', 'LT'),
+    (110, 'Lithuania', 'LH'),
+    (111, 'Luxembourg', 'LU'),
+    (112, 'Latvia', 'LG'),
+    (113, 'Libya', 'LY'),
+    (114, 'Morocco', 'MO'),
+    (115, 'Monaco', 'MN'),
+    (116, 'Moldova', 'MD'),
+    (117, 'Montenegro', 'MJ'),
+    (118, 'Madagascar', 'MA'),
+    (119, 'Marshall Islands', 'RM'),
+    (120, 'North Macedonia', 'MK'),
+    (121, 'Mali', 'ML'),
+    (122, 'Myanmar', 'BM'),
+    (123, 'Mongolia', 'MG'),
+    (124, 'Mauritania', 'MR'),
+    (125, 'Malta', 'MT'),
+    (126, 'Mauritius', 'MP'),
+    (127, 'Maldives', 'MV'),
+    (128, 'Malawi', 'MI'),
+    (129, 'Mexico', 'MX'),
+    (130, 'Malaysia', 'MY'),
+    (131, 'Mozambique', 'MZ'),
+    (132, 'Namibia', 'WA'),
+    (133, 'Niger', 'NG'),
+    (134, 'Nigeria', 'NI'),
+    (135, 'Nicaragua', 'NU'),
+    (136, 'Kingdom of the Netherlands', NULL),
+    (137, 'Norway', 'NO'),
+    (138, 'Nepal', 'NP'),
+    (139, 'Nauru', 'NR'),
+    (140, 'Niue', 'NE'),
+    (141, 'New Zealand', 'NZ'),
+    (142, 'Oman', 'MU'),
+    (143, 'Panama', 'PM'),
+    (144, 'Peru', 'PE'),
+    (145, 'Papua New Guinea', 'PP'),
+    (146, 'Philippines', 'RP'),
+    (147, 'Pakistan', 'PK'),
+    (148, 'Poland', 'PL'),
+    (149, 'Palestine', NULL),
+    (150, 'Portugal', 'PO'),
+    (151, 'Palau', 'PS'),
+    (152, 'Paraguay', 'PA'),
+    (153, 'Qatar', 'QA'),
+    (154, 'Romania', 'RO'),
+    (155, 'Serbia', 'RI'),
+    (156, 'Russia', 'RS'),
+    (157, 'Rwanda', 'RW'),
+    (158, 'Saudi Arabia', 'SA'),
+    (159, 'Solomon Islands', 'BP'),
+    (160, 'Seychelles', 'SE'),
+    (161, 'Sudan', 'SU'),
+    (162, 'Sweden', 'SW'),
+    (163, 'Slovenia', 'SI'),
+    (164, 'Slovakia', 'LO'),
+    (165, 'Sierra Leone', 'SL'),
+    (166, 'San Marino', 'SM'),
+    (167, 'Senegal', 'SG'),
+    (168, 'Somalia', 'SO'),
+    (169, 'Suriname', 'NS'),
+    (170, 'South Sudan', 'OD'),
+    (171, 'São Tomé and Príncipe', 'TP'),
+    (172, 'El Salvador', 'ES'),
+    (173, 'Sint Maarten', 'NN'),
+    (174, 'Syria', 'SY'),
+    (175, 'Eswatini', 'WZ'),
+    (176, 'Chad', 'CD'),
+    (177, 'Togo', 'TO'),
+    (178, 'Tajikistan', 'TI'),
+    (179, 'Timor-Leste', 'TT'),
+    (180, 'Turkmenistan', 'TX'),
+    (181, 'Tunisia', 'TS'),
+    (182, 'Tonga', 'TN'),
+    (183, 'Turkey', 'TU'),
+    (184, 'Trinidad and Tobago', 'TD'),
+    (185, 'Tuvalu', 'TV'),
+    (186, 'Tanzania', 'TZ'),
+    (187, 'Ukraine', 'UP'),
+    (188, 'Uganda', 'UG'),
+    (189, 'United States', 'US'),
+    (190, 'Uruguay', 'UY'),
+    (191, 'Uzbekistan', 'UZ'),
+    (192, 'Vatican City', 'VT'),
+    (193, 'Saint Vincent and the Grenadines', 'VC'),
+    (194, 'Venezuela', 'VE'),
+    (195, 'Vanuatu', 'NH'),
+    (196, 'Samoa', 'WS'),
+    (197, 'Kosovo', 'KV'),
+    (198, 'Yemen', 'YM'),
+    (199, 'South Africa', 'SF'),
+    (200, 'Zambia', 'ZA'),
+    (201, 'Zimbabwe', 'ZI'),
+    (202, 'Taiwan', 'TW'),
+    (203, 'Hong Kong', 'HK'),
+    (204, 'Macau', 'MC'),
+    (205, 'Puerto Rico', 'RQ'),
+    (206, 'Greenland', 'GL');
 
-INSERT OR IGNORE INTO country (id, name) VALUES
-    (207, 'Gibraltar'),
-    (208, 'Faroe Islands'),
-    (209, 'Isle of Man'),
-    (210, 'Jersey'),
-    (211, 'Guernsey'),
-    (212, 'Guam'),
-    (213, 'French Polynesia'),
-    (214, 'New Caledonia'),
-    (215, 'Curacao'),
-    (216, 'Bermuda'),
-    (217, 'Cayman Islands'),
-    (218, 'Reunion'),
-    (219, 'Martinique'),
-    (220, 'Guadeloupe');
+INSERT OR IGNORE INTO country (id, name, fips_code) VALUES
+    (207, 'Gibraltar', 'GI'),
+    (208, 'Faroe Islands', 'FO'),
+    (209, 'Isle of Man', 'IM'),
+    (210, 'Jersey', 'JE'),
+    (211, 'Guernsey', 'GK'),
+    (212, 'Guam', 'GQ'),
+    (213, 'French Polynesia', 'FP'),
+    (214, 'New Caledonia', 'NC'),
+    (215, 'Curacao', 'UC'),
+    (216, 'Bermuda', 'BD'),
+    (217, 'Cayman Islands', 'CJ'),
+    (218, 'Reunion', 'RE'),
+    (219, 'Martinique', 'MB'),
+    (220, 'Guadeloupe', 'GP');
+
+-- rows that already existed without a code (safe to re-run)
+UPDATE country SET fips_code = 'AN' WHERE name = 'Andorra' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'AE' WHERE name = 'United Arab Emirates' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'AF' WHERE name = 'Afghanistan' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'AC' WHERE name = 'Antigua and Barbuda' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'AL' WHERE name = 'Albania' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'AM' WHERE name = 'Armenia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'AO' WHERE name = 'Angola' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'AR' WHERE name = 'Argentina' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'AU' WHERE name = 'Austria' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'AS' WHERE name = 'Australia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'AA' WHERE name = 'Aruba' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'AJ' WHERE name = 'Azerbaijan' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BK' WHERE name = 'Bosnia and Herzegovina' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BB' WHERE name = 'Barbados' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BG' WHERE name = 'Bangladesh' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BE' WHERE name = 'Belgium' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'UV' WHERE name = 'Burkina Faso' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BU' WHERE name = 'Bulgaria' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BA' WHERE name = 'Bahrain' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BY' WHERE name = 'Burundi' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BN' WHERE name = 'Benin' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BX' WHERE name = 'Brunei' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BL' WHERE name = 'Bolivia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BR' WHERE name = 'Brazil' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BF' WHERE name = 'The Bahamas' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BT' WHERE name = 'Bhutan' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BC' WHERE name = 'Botswana' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BO' WHERE name = 'Belarus' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BH' WHERE name = 'Belize' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'CA' WHERE name = 'Canada' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'CG' WHERE name = 'Democratic Republic of the Congo' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'CT' WHERE name = 'Central African Republic' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'CF' WHERE name = 'Republic of the Congo' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'SZ' WHERE name = 'Switzerland' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'IV' WHERE name = 'Ivory Coast' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'CW' WHERE name = 'Cook Islands' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'CI' WHERE name = 'Chile' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'CM' WHERE name = 'Cameroon' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'CH' WHERE name = 'People''s Republic of China' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'CO' WHERE name = 'Colombia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'CS' WHERE name = 'Costa Rica' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'CU' WHERE name = 'Cuba' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'CV' WHERE name = 'Cape Verde' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'UC' WHERE name = 'Curaçao' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'CY' WHERE name = 'Cyprus' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'EZ' WHERE name = 'Czech Republic' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'GM' WHERE name = 'Germany' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'DJ' WHERE name = 'Djibouti' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'DA' WHERE name = 'Denmark' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'DO' WHERE name = 'Dominica' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'DR' WHERE name = 'Dominican Republic' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'AG' WHERE name = 'Algeria' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'EC' WHERE name = 'Ecuador' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'EN' WHERE name = 'Estonia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'EG' WHERE name = 'Egypt' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'ER' WHERE name = 'Eritrea' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'SP' WHERE name = 'Spain' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'ET' WHERE name = 'Ethiopia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'FI' WHERE name = 'Finland' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'FJ' WHERE name = 'Fiji' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'FM' WHERE name = 'Federated States of Micronesia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'FR' WHERE name = 'France' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'GB' WHERE name = 'Gabon' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'UK' WHERE name = 'United Kingdom' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'GJ' WHERE name = 'Grenada' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'GG' WHERE name = 'Georgia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'GH' WHERE name = 'Ghana' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'GA' WHERE name = 'The Gambia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'GV' WHERE name = 'Guinea' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'EK' WHERE name = 'Equatorial Guinea' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'GR' WHERE name = 'Greece' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'GT' WHERE name = 'Guatemala' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'PU' WHERE name = 'Guinea-Bissau' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'GY' WHERE name = 'Guyana' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'HO' WHERE name = 'Honduras' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'HR' WHERE name = 'Croatia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'HA' WHERE name = 'Haiti' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'HU' WHERE name = 'Hungary' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'EI' WHERE name = 'Ireland' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'IS' WHERE name = 'Israel' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'IN' WHERE name = 'India' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'IZ' WHERE name = 'Iraq' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'IR' WHERE name = 'Iran' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'IC' WHERE name = 'Iceland' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'IT' WHERE name = 'Italy' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'JM' WHERE name = 'Jamaica' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'JO' WHERE name = 'Jordan' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'KE' WHERE name = 'Kenya' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'KG' WHERE name = 'Kyrgyzstan' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'CB' WHERE name = 'Cambodia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'KR' WHERE name = 'Kiribati' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'CN' WHERE name = 'Comoros' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'SC' WHERE name = 'Saint Kitts and Nevis' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'KN' WHERE name = 'North Korea' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'KU' WHERE name = 'Kuwait' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'KZ' WHERE name = 'Kazakhstan' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'LA' WHERE name = 'Laos' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'LE' WHERE name = 'Lebanon' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'ST' WHERE name = 'Saint Lucia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'LS' WHERE name = 'Liechtenstein' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'CE' WHERE name = 'Sri Lanka' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'LI' WHERE name = 'Liberia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'LT' WHERE name = 'Lesotho' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'LH' WHERE name = 'Lithuania' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'LU' WHERE name = 'Luxembourg' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'LG' WHERE name = 'Latvia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'LY' WHERE name = 'Libya' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'MO' WHERE name = 'Morocco' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'MN' WHERE name = 'Monaco' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'MD' WHERE name = 'Moldova' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'MJ' WHERE name = 'Montenegro' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'MA' WHERE name = 'Madagascar' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'RM' WHERE name = 'Marshall Islands' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'MK' WHERE name = 'North Macedonia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'ML' WHERE name = 'Mali' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BM' WHERE name = 'Myanmar' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'MG' WHERE name = 'Mongolia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'MR' WHERE name = 'Mauritania' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'MT' WHERE name = 'Malta' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'MP' WHERE name = 'Mauritius' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'MV' WHERE name = 'Maldives' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'MI' WHERE name = 'Malawi' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'MX' WHERE name = 'Mexico' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'MY' WHERE name = 'Malaysia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'MZ' WHERE name = 'Mozambique' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'WA' WHERE name = 'Namibia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'NG' WHERE name = 'Niger' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'NI' WHERE name = 'Nigeria' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'NU' WHERE name = 'Nicaragua' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'NO' WHERE name = 'Norway' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'NP' WHERE name = 'Nepal' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'NR' WHERE name = 'Nauru' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'NE' WHERE name = 'Niue' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'NZ' WHERE name = 'New Zealand' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'MU' WHERE name = 'Oman' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'PM' WHERE name = 'Panama' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'PE' WHERE name = 'Peru' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'PP' WHERE name = 'Papua New Guinea' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'RP' WHERE name = 'Philippines' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'PK' WHERE name = 'Pakistan' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'PL' WHERE name = 'Poland' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'PO' WHERE name = 'Portugal' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'PS' WHERE name = 'Palau' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'PA' WHERE name = 'Paraguay' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'QA' WHERE name = 'Qatar' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'RO' WHERE name = 'Romania' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'RI' WHERE name = 'Serbia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'RS' WHERE name = 'Russia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'RW' WHERE name = 'Rwanda' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'SA' WHERE name = 'Saudi Arabia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BP' WHERE name = 'Solomon Islands' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'SE' WHERE name = 'Seychelles' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'SU' WHERE name = 'Sudan' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'SW' WHERE name = 'Sweden' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'SI' WHERE name = 'Slovenia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'LO' WHERE name = 'Slovakia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'SL' WHERE name = 'Sierra Leone' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'SM' WHERE name = 'San Marino' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'SG' WHERE name = 'Senegal' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'SO' WHERE name = 'Somalia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'NS' WHERE name = 'Suriname' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'OD' WHERE name = 'South Sudan' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'TP' WHERE name = 'São Tomé and Príncipe' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'ES' WHERE name = 'El Salvador' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'NN' WHERE name = 'Sint Maarten' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'SY' WHERE name = 'Syria' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'WZ' WHERE name = 'Eswatini' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'CD' WHERE name = 'Chad' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'TO' WHERE name = 'Togo' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'TI' WHERE name = 'Tajikistan' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'TT' WHERE name = 'Timor-Leste' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'TX' WHERE name = 'Turkmenistan' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'TS' WHERE name = 'Tunisia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'TN' WHERE name = 'Tonga' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'TU' WHERE name = 'Turkey' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'TD' WHERE name = 'Trinidad and Tobago' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'TV' WHERE name = 'Tuvalu' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'TZ' WHERE name = 'Tanzania' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'UP' WHERE name = 'Ukraine' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'UG' WHERE name = 'Uganda' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'US' WHERE name = 'United States' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'UY' WHERE name = 'Uruguay' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'UZ' WHERE name = 'Uzbekistan' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'VT' WHERE name = 'Vatican City' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'VC' WHERE name = 'Saint Vincent and the Grenadines' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'VE' WHERE name = 'Venezuela' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'NH' WHERE name = 'Vanuatu' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'WS' WHERE name = 'Samoa' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'KV' WHERE name = 'Kosovo' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'YM' WHERE name = 'Yemen' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'SF' WHERE name = 'South Africa' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'ZA' WHERE name = 'Zambia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'ZI' WHERE name = 'Zimbabwe' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'TW' WHERE name = 'Taiwan' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'HK' WHERE name = 'Hong Kong' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'MC' WHERE name = 'Macau' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'RQ' WHERE name = 'Puerto Rico' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'GL' WHERE name = 'Greenland' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'GI' WHERE name = 'Gibraltar' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'FO' WHERE name = 'Faroe Islands' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'IM' WHERE name = 'Isle of Man' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'JE' WHERE name = 'Jersey' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'GK' WHERE name = 'Guernsey' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'GQ' WHERE name = 'Guam' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'FP' WHERE name = 'French Polynesia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'NC' WHERE name = 'New Caledonia' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'UC' WHERE name = 'Curacao' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'BD' WHERE name = 'Bermuda' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'CJ' WHERE name = 'Cayman Islands' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'RE' WHERE name = 'Reunion' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'MB' WHERE name = 'Martinique' AND fips_code IS NULL;
+UPDATE country SET fips_code = 'GP' WHERE name = 'Guadeloupe' AND fips_code IS NULL;
