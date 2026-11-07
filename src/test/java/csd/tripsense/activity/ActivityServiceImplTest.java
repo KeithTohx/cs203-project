@@ -182,7 +182,29 @@ class ActivityServiceImplTest {
 
         activityService.updateActivity(10L, new Activity());
 
-        verifyNoInteractions(events);   // edits are not re-evaluated, only creation is
+        verifyNoInteractions(events);
+       // edits are not re-evaluated, only creation is
+    }
+    // ===== DELETE =====
+
+    @Test
+    @DisplayName("Should delete the activity when it exists")
+    void deleteActivity_ShouldDelete_WhenActivityExists() {
+        when(activityRepository.existsById(10L)).thenReturn(true);
+
+        activityService.deleteActivity(10L);
+
+        verify(activityRepository, times(1)).deleteById(10L);
+    }
+
+    @Test
+    @DisplayName("Should throw ActivityNotFoundException and delete nothing when the activity does not exist")
+    void deleteActivity_ShouldThrowAndDeleteNothing_WhenActivityDoesNotExist() {
+        when(activityRepository.existsById(999L)).thenReturn(false);
+
+        assertThrows(ActivityNotFoundException.class, () -> activityService.deleteActivity(999L));
+
+        verify(activityRepository, never()).deleteById(anyLong());
     }
 
     // ===== PENDING FOR NEWS =====
