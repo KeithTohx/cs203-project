@@ -39,6 +39,9 @@ class AutomaticAlertIntegrationTest {
     @DynamicPropertySource static void databaseProperties(DynamicPropertyRegistry r) {
         r.add("spring.datasource.url", () -> "jdbc:sqlite:" + DATABASE + "?foreign_keys=on");
     }
+    @Autowired private EvaluationProgress progress;
+    @Autowired private EvaluationBatchRepository batches;
+    @Autowired private csd.tripsense.alert.AlertEmailGroupRepository emailGroups;
     @Autowired UserRepository users;
     @Autowired CountryRepository countries;
     @Autowired NewsRepository news;
@@ -93,7 +96,7 @@ class AutomaticAlertIntegrationTest {
         return activityService.addActivity(a);
     }
     private NewItemEvaluationListener worker(int budget) {
-        return new NewItemEvaluationListener(queue, tasks, trips, activities, news, impacts, evaluator, true, budget);
+        return new NewItemEvaluationListener(queue, tasks, trips, activities, news, impacts, evaluator, progress, true, budget);
     }
     private void readyAll() {
         for (var task : tasks.findAll()) queue.progress(task.getTaskKey(), task.getCursor(), Instant.EPOCH);
@@ -244,7 +247,7 @@ class AutomaticAlertIntegrationTest {
     @Test void initialGroupingWindowIncludesActivitiesAddedImmediatelyAfterTheTrip() {
         Itinerary trip = newTrip(); listener.processPending();
         var first = alerts.list(owner.getId(), false, null, 20).content().getFirst();
-        var grouping = new AlertEmailStore(alertRows, 120, 30, 30);
+        var grouping = new AlertEmailStore(alertRows, emailGroups, batches, 120, 30, 30);
         var tx = new TransactionTemplate(transactions);
         var waiting = tx.execute(s -> grouping.claim(first.id(), first.createdAt().plusSeconds(1)));
         assertThat(waiting).isEmpty();

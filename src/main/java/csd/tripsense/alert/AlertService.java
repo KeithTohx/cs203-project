@@ -70,14 +70,20 @@ public class AlertService {
     /** Called after assessment commit; a notification failure cannot roll back an impact. */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void createForImpact(Long impactId) {
-        if (impactId == null || alerts.existsByImpactId(impactId)) return;
-        Impact impact = impacts.findById(impactId).orElse(null);
+        if (impactId == null) return;
+        createInTransaction(impacts.findById(impactId).orElse(null));
+    }
+
+    @Transactional
+    public boolean createInTransaction(Impact impact) {
         if (impact == null || !Boolean.TRUE.equals(impact.getAlertEligible()) || !Boolean.TRUE.equals(impact.getImpacted())
                 || Boolean.TRUE.equals(impact.getRejected()) || impact.getItinerary() == null
                 || impact.getItinerary().getUser() == null || !impact.getItinerary().getUser().isEnabled()
-                || impact.getNews() == null || impact.getReason() == null || impact.getReason().isBlank()) return;
+                || impact.getNews() == null || impact.getReason() == null || impact.getReason().isBlank()
+                || alerts.existsByImpactId(impact.getId())) return false;
         Alert alert = alerts.saveAndFlush(new Alert(impact));
         events.publishEvent(new AlertCreatedEvent(impact.getItinerary().getUser().getId(), AlertResponse.from(alert)));
+        return true;
     }
 
     private void requireActiveAccount(Long userId) {

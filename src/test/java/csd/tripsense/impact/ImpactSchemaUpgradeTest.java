@@ -28,6 +28,15 @@ class ImpactSchemaUpgradeTest {
                         """);
                 sql.execute("insert into impact(id,news_id,user_id,impacted,reason) values(41,1,1,1,'Historical assessment')");
                 sql.execute("insert into impact(id,news_id,user_id,impacted,reason) values(42,1,1,1,'Another historical row')");
+                sql.execute("""
+                        create table alert (alert_id integer primary key, impact_id bigint not null unique,
+                        created_at timestamp not null, read_at timestamp, email_status varchar(255) not null
+                        check (email_status in ('PENDING','SENDING','SENT','FAILED')), email_attempts bigint not null,
+                        email_next_attempt_at timestamp not null, email_sent_at timestamp,
+                        email_delivery_key varchar(255) not null)
+                        """);
+                sql.execute("insert into alert(alert_id,impact_id,created_at,email_status,email_attempts,"
+                        + "email_next_attempt_at,email_delivery_key) values(7,41,0,'PENDING',0,0,'legacy-key')");
             }
             return path;
         } catch (Exception e) { throw new IllegalStateException(e); }
@@ -36,6 +45,21 @@ class ImpactSchemaUpgradeTest {
         r.add("spring.datasource.url", () -> "jdbc:sqlite:" + DATABASE);
     }
     @Autowired JdbcTemplate sql;
+    @Autowired csd.tripsense.alert.AlertRepository alerts;
+    @Autowired org.springframework.transaction.PlatformTransactionManager transactions;
+
+    @Test void suppressionWorksWithTheOriginalSqliteStatusConstraint() {
+        new org.springframework.transaction.support.TransactionTemplate(transactions).executeWithoutResult(status ->
+                alerts.suppressEmail(7L, 0, java.util.List.of(csd.tripsense.alert.EmailStatus.PENDING)));
+        var alert = alerts.findById(7L).orElseThrow();
+        assertThat(alert.getEmailStatus()).isEqualTo(csd.tripsense.alert.EmailStatus.SUPPRESSED);
+        assertThat(alert.getEmailSentAt()).isNull();
+        assertThat(sql.queryForObject("select email_status from alert where alert_id=7", String.class))
+                .isEqualTo("PENDING"); // compatible storage; the terminal marker excludes this from retry queries
+        assertThat(sql.queryForObject("select sql from sqlite_master where name='alert'", String.class))
+                .doesNotContain("SUPPRESSED");
+    }
+
 
     @Test void updatePreservesLegacyRowsAndEnforcesNewAssessmentKeys() {
         assertThat(sql.queryForObject("select count(*) from impact", Integer.class)).isEqualTo(2);

@@ -3,6 +3,7 @@ package csd.tripsense.impact;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.slf4j.Logger;
@@ -34,20 +35,21 @@ public class ImpactEvaluationJob {
     private final ActivityService activityService;
     private final NewsService newsService;
     private final ImpactService impactService;
+    private final EvaluationProgress progress;
     private final boolean enabled;
     private final int lookbackDays;
     private final int maxPerRun;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     public ImpactEvaluationJob(ItineraryService itineraryService, ActivityService activityService,
-                               NewsService newsService, ImpactService impactService,
+                               NewsService newsService, ImpactService impactService, EvaluationProgress progress,
                                @Value("${impact.eval.enabled:true}") boolean enabled,
                                @Value("${impact.eval.news-lookback-days:3}") int lookbackDays,
                                @Value("${impact.eval.max-per-run:200}") int maxPerRun) {
         this.itineraryService = itineraryService;
         this.activityService = activityService;
         this.newsService = newsService;
-        this.impactService = impactService;
+        this.impactService = impactService; this.progress = progress;
         this.enabled = enabled;
         this.lookbackDays = lookbackDays;
         this.maxPerRun = maxPerRun;
@@ -87,28 +89,45 @@ public class ImpactEvaluationJob {
         for (Long countryId : countryIds) {
             for (News news : newsService.getNewsByCountrySince(countryId, since)) {
 
-                for (Itinerary itinerary : itineraryService.getItinerariesPendingForNews(news.getId(), countryId, now)) {
-                    if (judged >= maxPerRun) { done(judged, skipped, "cap reached"); return; }
-                    try {
-                        impactService.evaluateItineraryForNews(itinerary, news);
-                        judged++;
-                        failures = 0;
-                    } catch (Exception e) {
-                        skipped++;
-                        if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }
+                var tripTargets = itineraryService.getItinerariesPendingForNews(news.getId(), countryId, now);
+                var activityTargets = activityService.getActivitiesPendingForNews(news.getId(), countryId, now);
+                var batches = new HashMap<Long, String>();
+                for (Itinerary trip : tripTargets) batches.computeIfAbsent(trip.getId(), id -> progress.begin(id, news.getId()));
+                for (Activity activity : activityTargets) batches.computeIfAbsent(activity.getItinerary().getId(),
+                        id -> progress.begin(id, news.getId()));
+                var expected = new HashMap<Long, Integer>();
+                var completed = new HashMap<Long, Integer>();
+                tripTargets.forEach(t -> expected.merge(t.getId(), 1, Integer::sum));
+                activityTargets.forEach(a -> expected.merge(a.getItinerary().getId(), 1, Integer::sum));
+                try {
+                    for (Itinerary itinerary : tripTargets) {
+                        if (judged >= maxPerRun) { done(judged, skipped, "cap reached"); return; }
+                        try {
+                            impactService.evaluateItineraryForNews(itinerary, news);
+                            completed.merge(itinerary.getId(), 1, Integer::sum);
+                            judged++;
+                            failures = 0;
+                        } catch (Exception e) {
+                            skipped++;
+                            if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }
+                        }
                     }
-                }
 
-                for (Activity activity : activityService.getActivitiesPendingForNews(news.getId(), countryId, now)) {
-                    if (judged >= maxPerRun) { done(judged, skipped, "cap reached"); return; }
-                    try {
-                        impactService.evaluateActivityForNews(activity, news);
-                        judged++;
-                        failures = 0;
-                    } catch (Exception e) {
-                        skipped++;
-                        if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }
+                    for (Activity activity : activityTargets) {
+                        if (judged >= maxPerRun) { done(judged, skipped, "cap reached"); return; }
+                        try {
+                            impactService.evaluateActivityForNews(activity, news);
+                            completed.merge(activity.getItinerary().getId(), 1, Integer::sum);
+                            judged++;
+                            failures = 0;
+                        } catch (Exception e) {
+                            skipped++;
+                            if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }
+                        }
                     }
+                } finally {
+                    batches.forEach((tripId, batch) -> progress.finish(batch,
+                            completed.getOrDefault(tripId, 0) < expected.get(tripId)));
                 }
             }
         }

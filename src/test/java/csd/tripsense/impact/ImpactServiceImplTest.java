@@ -35,6 +35,8 @@ class ImpactServiceImplTest {
     @Mock private NewsService newsService;
     @Mock private org.springframework.context.ApplicationEventPublisher events;
 
+    @Mock private EvaluationProgress progress;
+
     @InjectMocks
     private ImpactServiceImpl impactService;
 

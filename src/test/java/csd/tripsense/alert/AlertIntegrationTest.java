@@ -98,6 +98,9 @@ class AlertIntegrationTest {
             }
             """;
 
+    @Autowired private csd.tripsense.impact.EvaluationProgress progress;
+    @Autowired private csd.tripsense.impact.EvaluationBatchRepository batches;
+    @Autowired private AlertEmailGroupRepository emailGroups;
     @Autowired
     private MockMvc mockMvc;
 
@@ -870,10 +873,12 @@ class AlertIntegrationTest {
     @Test void itineraryAndActivitiesAreClaimedTogetherOnlyAfterAssessmentCompletes() {
         Activity activity = new Activity(); activity.setItinerary(skiTrip); activity.setCountry(skiTrip.getCountry());
         activity.setName("Mount Batur trek"); activity = activityRepository.saveAndFlush(activity);
+        String batch = progress.begin(skiTrip.getId(), earthquake.getId());
         evaluate();
         Long tripAlert = alertService.list(traveller.getId(), false, null, 20).content().getFirst().id();
         assertThat(emailStore.claim(tripAlert, java.time.Instant.now().plusSeconds(1))).isEmpty();
         impactService.evaluateActivityForNews(activity, earthquake);
+        progress.finish(batch, false);
         Long activityAlert = alertService.list(traveller.getId(), false, null, 20).content().getFirst().id();
         var now = java.time.Instant.now().plusSeconds(31);
         var delivery = emailStore.claim(activityAlert, now).orElseThrow();
@@ -907,10 +912,47 @@ class AlertIntegrationTest {
                 .allSatisfy(a -> assertThat(a.emailStatus()).isEqualTo(EmailStatus.SENT));
     }
 
+    @Test void retryIdentitySurvivesRejectionOfTheOriginalLeader() {
+        Activity activity = new Activity(); activity.setItinerary(skiTrip); activity.setCountry(skiTrip.getCountry());
+        activity.setName("Trek"); activity = activityRepository.saveAndFlush(activity);
+        Impact overall = evaluate(); impactService.evaluateActivityForNews(activity, earthquake);
+        var firstId = alertService.list(traveller.getId(), false, null, 20).content().getFirst().id();
+        var now = java.time.Instant.now().plusSeconds(1);
+        var first = emailStore.claim(firstId, now).orElseThrow();
+        emailStore.failed(first, now);
+        impactService.setRejected(overall.getId(), true);
+
+        var retry = emailStore.claim(firstId, now.plusSeconds(61)).orElseThrow();
+
+        assertThat(retry.key()).isEqualTo(first.key());
+        assertThat(retry.relatedAlerts()).hasSize(1);
+        assertThat(retry.alert().activityId()).isEqualTo(activity.getId());
+        assertThat(emailGroups.findById(AlertEmailGroup.key(skiTrip.getId(), earthquake.getId())))
+                .hasValueSatisfying(g -> assertThat(g.getDeliveryKey()).isEqualTo(first.key()));
+    }
+
+    @Test void unassessedActivityWithoutScheduledWorkDoesNotDelayEmail() {
+        Activity missing = new Activity(); missing.setItinerary(skiTrip); missing.setCountry(skiTrip.getCountry());
+        missing.setName("No evaluation scheduled"); activityRepository.saveAndFlush(missing);
+        evaluate();
+        var alert = alertService.list(traveller.getId(), false, null, 20).content().getFirst();
+        var delivery = emailStore.claim(alert.id(), alert.createdAt().plusSeconds(1)).orElseThrow();
+        assertThat(delivery.partialAssessment()).isFalse();
+    }
+
+    @Test void completedPartialEvaluationSendsAvailableResultsWithoutWaitingForMissingVerdicts() {
+        String batch = progress.begin(skiTrip.getId(), earthquake.getId());
+        evaluate(); progress.finish(batch, true);
+        var alert = alertService.list(traveller.getId(), false, null, 20).content().getFirst();
+        var delivery = emailStore.claim(alert.id(), alert.createdAt().plusSeconds(1)).orElseThrow();
+        assertThat(delivery.partialAssessment()).isTrue();
+    }
+
     @Test void incompleteGroupIsDeferredAndSendsAvailableImpactsAtTheDeadline() {
         Activity activity = new Activity(); activity.setItinerary(skiTrip); activity.setCountry(skiTrip.getCountry());
         activity.setName("Not yet assessed"); activity = activityRepository.saveAndFlush(activity);
         evaluate();
+        progress.begin(skiTrip.getId(), earthquake.getId());
         AlertResponse alert = alertService.list(traveller.getId(), false, null, 20).content().getFirst();
         var now = alert.createdAt().plusSeconds(1);
         assertThat(emailStore.claim(alert.id(), now)).isEmpty();
@@ -971,6 +1013,7 @@ class AlertIntegrationTest {
             other.setName("Waiting trip " + i); other = itineraryRepository.saveAndFlush(other);
             Activity missing = new Activity(); missing.setItinerary(other); missing.setCountry(skiTrip.getCountry());
             missing.setName("Missing assessment"); activityRepository.saveAndFlush(missing);
+            progress.begin(other.getId(), earthquake.getId());
             blocked.add(pendingAt(other, java.time.Instant.EPOCH, now).getId());
         }
         Alert healthy = pendingAt(skiTrip, java.time.Instant.EPOCH.plusMillis(1), now);
@@ -998,6 +1041,14 @@ class AlertIntegrationTest {
         impactService.evaluateActivityForNews(activity, earthquake);
         Long added = alertService.list(traveller.getId(), false, null, 20).content().getFirst().id();
         assertThat(emailStore.claim(added, now.plusSeconds(1000))).isEmpty();
+        var suppressed = alertRepository.findById(added).orElseThrow();
+        assertThat(suppressed.getEmailStatus()).isEqualTo(EmailStatus.SUPPRESSED);
+        assertThat(suppressed.getEmailSentAt()).isNull();
+        assertThat(suppressed.getEmailAttempts()).isZero();
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content().getFirst().emailStatus())
+                .isEqualTo(EmailStatus.SUPPRESSED);
+        assertThat(alertRepository.findEmailReady(AlertEmailStore.RETRYABLE, now.plusSeconds(2000),
+                org.springframework.data.domain.PageRequest.of(0, 1000))).doesNotContain(added);
         assertThat(alertService.list(traveller.getId(), false, null, 20).content()).hasSize(2);
     }
 
@@ -1172,7 +1223,7 @@ class AlertIntegrationTest {
     }
 
     private DemoDisruptionService demo(boolean enabled) {
-        return new DemoDisruptionService(impactRepository, alertRepository, recommendations, itineraryRepository, userRepository, events,
+        return new DemoDisruptionService(impactRepository, alertRepository, recommendations, itineraryRepository, userRepository, alertService, emailGroups, batches,
                 enabled, traveller.getId(), skiTrip.getId(), earthquake.getId());
     }
 

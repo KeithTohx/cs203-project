@@ -1,5 +1,6 @@
 package csd.tripsense.alert;
 
+import csd.tripsense.impact.EvaluationBatchRepository;
 import csd.tripsense.impact.Impact;
 import csd.tripsense.impact.ImpactRepository;
 import csd.tripsense.itinerary.ItineraryRepository;
@@ -7,7 +8,6 @@ import csd.tripsense.recommendation.RecommendationRepository;
 import csd.tripsense.user.UserRepository;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,7 +21,9 @@ public class DemoDisruptionService {
     private final RecommendationRepository recommendations;
     private final ItineraryRepository itineraries;
     private final UserRepository users;
-    private final ApplicationEventPublisher events;
+    private final AlertService alertService;
+    private final AlertEmailGroupRepository emailGroups;
+    private final EvaluationBatchRepository evaluations;
     private final boolean enabled;
     private final long userId;
     private final long itineraryId;
@@ -29,12 +31,14 @@ public class DemoDisruptionService {
 
     public DemoDisruptionService(ImpactRepository impacts, AlertRepository alerts,
             RecommendationRepository recommendations, ItineraryRepository itineraries, UserRepository users,
-            ApplicationEventPublisher events, @Value("${alerts.demo.enabled:false}") boolean enabled,
+            AlertService alertService, AlertEmailGroupRepository emailGroups,
+            EvaluationBatchRepository evaluations, @Value("${alerts.demo.enabled:false}") boolean enabled,
             @Value("${alerts.demo.user-id:0}") long userId,
             @Value("${alerts.demo.itinerary-id:0}") long itineraryId,
             @Value("${alerts.demo.news-id:0}") long newsId) {
         this.impacts = impacts; this.alerts = alerts; this.recommendations = recommendations;
-        this.itineraries = itineraries; this.users = users; this.events = events;
+        this.itineraries = itineraries; this.users = users; this.alertService = alertService;
+        this.emailGroups = emailGroups; this.evaluations = evaluations;
         this.enabled = enabled; this.userId = userId; this.itineraryId = itineraryId; this.newsId = newsId;
     }
 
@@ -50,6 +54,7 @@ public class DemoDisruptionService {
         // Delete notifications, not their source assessments. Their text is reused without an AI call.
         alerts.deleteAll(existing);
         alerts.flush();
+        emailGroups.deleteById(AlertEmailGroup.key(itineraryId, newsId));
         var associated = recommendations.findByImpactItineraryId(itineraryId).stream()
                 .filter(r -> r.getImpact().getNews().getId().equals(newsId)).toList();
         recommendations.deleteAll(associated);
@@ -77,11 +82,11 @@ public class DemoDisruptionService {
         }
         impacts.saveAllAndFlush(fixture);
         // Create the complete group atomically so email cannot run before all impacts are restored.
+        int created = 0;
         for (Impact impact : fixture) {
-            Alert alert = alerts.saveAndFlush(new Alert(impact));
-            events.publishEvent(new AlertCreatedEvent(userId, AlertResponse.from(alert)));
+            if (alertService.createInTransaction(impact)) created++;
         }
-        return new Result(itineraryId, newsId, fixture.size(), fixture.size(), "TRIGGERED");
+        return new Result(itineraryId, newsId, fixture.size(), created, "TRIGGERED");
     }
 
     private List<Impact> requireFixture(Long callerId) {
@@ -104,7 +109,7 @@ public class DemoDisruptionService {
         if (positive.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "No saved disruption to replay");
         }
-        if (alerts.countIncompleteEmailGroups(itineraryId, newsId, java.time.LocalDateTime.now()) != 0) {
+        if (evaluations.countRunning(itineraryId, newsId, java.time.Instant.now()) != 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Wait for all demo assessments and alerts to finish");
         }
         return positive;

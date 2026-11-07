@@ -32,6 +32,9 @@ public class Alert {
     @Column(nullable = false)
     // BIGINT avoids a SQLite/Hibernate identity-DDL bug triggered by an earlier INTEGER counter column.
     private long emailAttempts;
+    // Nullable for existing databases. A separate terminal marker remains compatible with
+    // older SQLite email_status CHECK constraints, which do not contain SUPPRESSED.
+    private Boolean emailSuppressed;
     @Column(nullable = false)
     private Instant emailNextAttemptAt = Instant.now();
     private Instant emailSentAt;
@@ -44,7 +47,7 @@ public class Alert {
     public Impact getImpact() { return impact; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getReadAt() { return readAt; }
-    public EmailStatus getEmailStatus() { return emailStatus; }
+    public EmailStatus getEmailStatus() { return Boolean.TRUE.equals(emailSuppressed) ? EmailStatus.SUPPRESSED : emailStatus; }
     public int getEmailAttempts() { return Math.toIntExact(emailAttempts); }
     public Instant getEmailNextAttemptAt() { return emailNextAttemptAt; }
     public Instant getEmailSentAt() { return emailSentAt; }

@@ -116,8 +116,8 @@ class AlertEmailSenderTest {
         var captor = ArgumentCaptor.forClass(MimeMessage.class);
         verify(mail).send(captor.capture());
         MimeMessage message = captor.getValue(); message.saveChanges();
-        assertThat(body(message, "text/plain")).contains("Some assessments are still pending", "impacts assessed so far");
-        assertThat(body(message, "text/html")).contains("Some assessments are still pending", "impacts assessed so far");
+        assertThat(body(message, "text/plain")).contains("Some activities have not been assessed", "available assessments");
+        assertThat(body(message, "text/html")).contains("Some activities have not been assessed", "available assessments");
     }
 
     @Test void enabledEmailRequiresHostAndSender() {

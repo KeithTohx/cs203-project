@@ -30,17 +30,18 @@ public class ImpactServiceImpl implements ImpactService {
     private ActivityService activityService;
     private NewsService newsService;
     private final ApplicationEventPublisher events;
+    private final EvaluationProgress progress;
     private static final Logger log = LoggerFactory.getLogger(ImpactServiceImpl.class);
 
     public ImpactServiceImpl(ImpactRepository impacts, ChatService chatService,
                              ItineraryService itineraryService, ActivityService activityService,
-                             NewsService newsService, ApplicationEventPublisher events){
+                             NewsService newsService, ApplicationEventPublisher events, EvaluationProgress progress){
         this.impacts = impacts;
         this.chatService = chatService;
         this.itineraryService = itineraryService;
         this.activityService = activityService;
         this.newsService = newsService;
-        this.events = events;
+        this.events = events; this.progress = progress;
     }
 
     // the shape we ask the model to answer in
@@ -89,6 +90,20 @@ public class ImpactServiceImpl implements ImpactService {
 
     @Override
     public EvaluateResponse evaluate(Long itineraryId, Long newsId) {
+        // Validate before recording work, then close the lifecycle even when assessment fails.
+        itineraryService.getItineraryById(itineraryId);
+        newsService.getNewsById(newsId);
+        String batch = progress.begin(itineraryId, newsId);
+        boolean partial = true;
+        try {
+            EvaluateResponse result = evaluateGroup(itineraryId, newsId);
+            partial = result.itinerary().reason().startsWith("Could not evaluate:")
+                    || result.activities().stream().anyMatch(a -> a.reason().startsWith("Could not evaluate:"));
+            return result;
+        } finally { progress.finish(batch, partial); }
+    }
+
+    private EvaluateResponse evaluateGroup(Long itineraryId, Long newsId) {
         // these throw their own not found exceptions, which spring turns into a 404
         Itinerary itinerary = itineraryService.getItineraryById(itineraryId);
         News news = newsService.getNewsById(newsId);

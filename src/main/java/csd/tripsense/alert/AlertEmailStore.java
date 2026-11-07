@@ -1,12 +1,11 @@
 package csd.tripsense.alert;
 
 import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import csd.tripsense.impact.EvaluationBatchRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
@@ -19,15 +18,18 @@ public class AlertEmailStore {
     static final int MAX_ATTEMPTS = 3;
     static final List<EmailStatus> RETRYABLE = List.of(EmailStatus.PENDING, EmailStatus.SENDING);
     private final AlertRepository alerts;
+    private final AlertEmailGroupRepository emailGroups;
+    private final EvaluationBatchRepository evaluations;
     private final long maxGroupWaitSeconds;
     private final long groupRecheckSeconds;
     private final long initialGroupWaitSeconds;
 
-    public AlertEmailStore(AlertRepository alerts,
+    public AlertEmailStore(AlertRepository alerts, AlertEmailGroupRepository emailGroups,
+            EvaluationBatchRepository evaluations,
             @Value("${alerts.email.max-group-wait-seconds:120}") long maxGroupWaitSeconds,
             @Value("${alerts.email.group-recheck-seconds:30}") long groupRecheckSeconds,
             @Value("${alerts.email.initial-group-wait-seconds:30}") long initialGroupWaitSeconds) {
-        this.alerts = alerts;
+        this.alerts = alerts; this.emailGroups = emailGroups; this.evaluations = evaluations;
         this.maxGroupWaitSeconds = Math.max(0, maxGroupWaitSeconds);
         this.groupRecheckSeconds = Math.max(1, groupRecheckSeconds);
         this.initialGroupWaitSeconds = Math.min(this.maxGroupWaitSeconds, Math.max(0, initialGroupWaitSeconds));
@@ -60,8 +62,7 @@ public class AlertEmailStore {
         if (sent.isPresent()) {
             for (Alert member : group) {
                 if (RETRYABLE.contains(member.getEmailStatus())) {
-                    alerts.finishEmail(member.getId(), member.getEmailAttempts(), RETRYABLE,
-                            EmailStatus.SENT, sent.get().getEmailSentAt(), now);
+                    alerts.suppressEmail(member.getId(), member.getEmailAttempts(), RETRYABLE);
                 }
             }
             return Optional.empty();
@@ -80,15 +81,16 @@ public class AlertEmailStore {
                     EmailStatus.FAILED, null, now);
             return Optional.empty();
         }
-        boolean incomplete = alerts.countIncompleteEmailGroups(impact.getItinerary().getId(), impact.getNews().getId(),
-                LocalDateTime.ofInstant(now, ZoneId.systemDefault())) != 0;
-        Instant deadline = group.stream().map(Alert::getCreatedAt).min(Comparator.naturalOrder())
-                .orElse(now).plusSeconds(maxGroupWaitSeconds);
-        Instant settleUntil = deadline.minusSeconds(maxGroupWaitSeconds).plusSeconds(initialGroupWaitSeconds);
+        Instant firstCreatedAt = group.stream().map(Alert::getCreatedAt).min(Comparator.naturalOrder()).orElse(now);
+        Instant deadline = firstCreatedAt.plusSeconds(maxGroupWaitSeconds);
+        Instant settleUntil = firstCreatedAt.plusSeconds(initialGroupWaitSeconds);
         if (group.stream().allMatch(a -> a.getEmailAttempts() == 0) && now.isBefore(settleUntil)) {
             deferPending(group, settleUntil);
             return Optional.empty();
         }
+        Long tripId = impact.getItinerary().getId();
+        Long newsId = impact.getNews().getId();
+        boolean incomplete = evaluations.countRunning(tripId, newsId, now) != 0;
         if (incomplete && now.isBefore(deadline)) {
             Instant recheck = now.plusSeconds(groupRecheckSeconds);
             deferPending(group, recheck.isBefore(deadline) ? recheck : deadline);
@@ -109,9 +111,16 @@ public class AlertEmailStore {
             claims.add(new ClaimedAlert(member.getId(), attempt));
         }
         Alert leader = members.getFirst();
-        return Optional.of(new Delivery(leader.getId(), claims.getFirst().attempt(), leader.getEmailDeliveryKey(),
+        // Anchor the first attempt to the full group, including rejected members. Persist the
+        // key before SMTP so a retry never derives its identity from the current visible leader.
+        String deliveryKey = emailGroups.findById(AlertEmailGroup.key(tripId, newsId))
+                .orElseGet(() -> emailGroups.saveAndFlush(new AlertEmailGroup(tripId, newsId,
+                        group.getFirst().getEmailDeliveryKey()))).getDeliveryKey();
+        boolean partial = incomplete || evaluations.findFirstByItineraryIdAndNewsIdOrderByStartedAtDesc(tripId, newsId)
+                .map(b -> b.isPartial() || b.getFinishedAt() == null).orElse(false);
+        return Optional.of(new Delivery(leader.getId(), claims.getFirst().attempt(), deliveryKey,
                 recipient.getEmail(), AlertResponse.from(leader),
-                members.stream().map(AlertResponse::from).toList(), List.copyOf(claims), incomplete));
+                members.stream().map(AlertResponse::from).toList(), List.copyOf(claims), partial));
     }
 
     private void deferPending(List<Alert> group, Instant next) {

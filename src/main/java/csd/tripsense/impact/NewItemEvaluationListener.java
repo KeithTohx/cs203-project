@@ -30,6 +30,7 @@ public class NewItemEvaluationListener {
     private final NewsRepository news;
     private final ImpactRepository impacts;
     private final ImpactService evaluator;
+    private final EvaluationProgress progress;
     private final boolean enabled;
     private final int maxCalls;
     private final AtomicBoolean running = new AtomicBoolean();
@@ -40,11 +41,11 @@ public class NewItemEvaluationListener {
 
     public NewItemEvaluationListener(ImpactEvaluationQueue queue, PendingImpactEvaluationRepository tasks,
             ItineraryRepository trips, ActivityRepository activities, NewsRepository news,
-            ImpactRepository impacts, ImpactService evaluator,
+            ImpactRepository impacts, ImpactService evaluator, EvaluationProgress progress,
             @Value("${impact.eval.new-itinerary.enabled:true}") boolean enabled,
             @Value("${impact.eval.new-itinerary.max-calls:200}") int maxCalls) {
         this.queue = queue; this.tasks = tasks; this.trips = trips; this.activities = activities;
-        this.news = news; this.impacts = impacts; this.evaluator = evaluator;
+        this.news = news; this.impacts = impacts; this.evaluator = evaluator; this.progress = progress;
         this.enabled = enabled; this.maxCalls = Math.max(1, maxCalls);
     }
 
@@ -96,17 +97,22 @@ public class NewItemEvaluationListener {
                 for (; cursor < articles.size(); cursor++) {
                     var article = news.findById(articles.get(cursor)).orElse(null);
                     if (article != null) {
-                        // A new activity may arrive after fresh news; ensure its parent's verdict exists too.
-                        if (impacts.findFirstByNewsIdAndItineraryIdAndActivityIsNull(article.getId(), trip.getId())
-                                .filter(i -> i.getReason() != null).isEmpty()) {
-                            budget.take(); evaluator.evaluateItineraryForNews(trip, article);
-                        }
-                        for (Activity target : targets) {
-                            if (impacts.findFirstByNewsIdAndActivityId(article.getId(), target.getId())
+                        String batch = progress.begin(trip.getId(), article.getId());
+                        boolean partial = true;
+                        try {
+                            // A new activity may arrive after fresh news; ensure its parent's verdict exists too.
+                            if (impacts.findFirstByNewsIdAndItineraryIdAndActivityIsNull(article.getId(), trip.getId())
                                     .filter(i -> i.getReason() != null).isEmpty()) {
-                                budget.take(); evaluator.evaluateActivityForNews(target, article);
+                                budget.take(); evaluator.evaluateItineraryForNews(trip, article);
                             }
-                        }
+                            for (Activity target : targets) {
+                                if (impacts.findFirstByNewsIdAndActivityId(article.getId(), target.getId())
+                                        .filter(i -> i.getReason() != null).isEmpty()) {
+                                    budget.take(); evaluator.evaluateActivityForNews(target, article);
+                                }
+                            }
+                            partial = false;
+                        } finally { progress.finish(batch, partial); }
                     }
                     queue.progress(task.getTaskKey(), cursor + 1, Instant.now());
                 }

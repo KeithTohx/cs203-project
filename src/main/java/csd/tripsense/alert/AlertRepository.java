@@ -12,23 +12,17 @@ import org.springframework.data.repository.query.Param;
 public interface AlertRepository extends JpaRepository<Alert, Long> {
     boolean existsByImpactId(Long impactId);
 
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {
+            "impact", "impact.user", "impact.itinerary", "impact.itinerary.user", "impact.itinerary.country",
+            "impact.activity", "impact.activity.country", "impact.activity.itinerary",
+            "impact.activity.itinerary.country", "impact.activity.itinerary.user", "impact.news"})
     @Query("select a from Alert a where a.impact.itinerary.id = :tripId and a.impact.news.id = :newsId order by a.id")
     java.util.List<Alert> findEmailGroup(@Param("tripId") Long tripId, @Param("newsId") Long newsId);
 
-    @Query("""
-            select count(i) from Itinerary i where i.id = :tripId and (
-              not exists (select p.id from Impact p where p.itinerary.id = i.id and p.news.id = :newsId
-                and p.activity is null and p.reason is not null)
-              or exists (select act.id from Activity act where act.itinerary.id = i.id
-                and act.country.id = i.country.id and (act.dateEnd is null or act.dateEnd >= :now)
-                and not exists (select p.id from Impact p where p.activity.id = act.id and p.news.id = :newsId
-                  and p.reason is not null))
-              or exists (select p.id from Impact p where p.itinerary.id = i.id and p.news.id = :newsId
-                and p.alertEligible = true and p.impacted = true and (p.rejected = false or p.rejected is null)
-                and not exists (select a.id from Alert a where a.impact.id = p.id)))
-            """)
-    long countIncompleteEmailGroups(@Param("tripId") Long tripId, @Param("newsId") Long newsId,
-                                    @Param("now") java.time.LocalDateTime now);
+    @Modifying
+    @Query("update Alert a set a.emailSuppressed = true, a.emailSentAt = null "
+            + "where a.id = :id and a.emailAttempts = :attempts and a.emailStatus in :states")
+    int suppressEmail(Long id, int attempts, java.util.List<EmailStatus> states);
 
     // Suppress notifications the traveller rejected, including notifications created before rejection.
     String VISIBLE = "a.impact.itinerary.user.id = :userId and a.impact.impacted = true "
@@ -58,7 +52,7 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
     Optional<Alert> findOwned(@Param("id") Long id, @Param("userId") Long userId);
 
     @Query("""
-            select a.id from Alert a where a.emailStatus in :states and a.emailNextAttemptAt <= :now
+            select a.id from Alert a where a.emailStatus in :states and (a.emailSuppressed = false or a.emailSuppressed is null) and a.emailNextAttemptAt <= :now
               and a.impact.impacted = true and (a.impact.rejected = false or a.impact.rejected is null)
               and (a.impact.itinerary.user.enabled = true or a.impact.itinerary.user.enabled is null)
             order by a.emailNextAttemptAt, a.id
@@ -80,6 +74,7 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
             update Alert a set a.emailStatus = :sending, a.emailAttempts = a.emailAttempts + 1,
                                a.emailNextAttemptAt = :leaseUntil
             where a.id = :id and a.emailAttempts = :attempts and a.emailStatus in :states
+              and (a.emailSuppressed = false or a.emailSuppressed is null)
               and a.emailNextAttemptAt <= :now
             """)
     int claimEmail(@Param("id") Long id, @Param("attempts") int attempts,
@@ -91,6 +86,7 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
     @Query("""
             update Alert a set a.emailStatus = :state, a.emailSentAt = :sentAt, a.emailNextAttemptAt = :next
             where a.id = :id and a.emailAttempts = :attempts and a.emailStatus in :states
+              and (a.emailSuppressed = false or a.emailSuppressed is null)
             """)
     int finishEmail(@Param("id") Long id, @Param("attempts") int attempts,
                     @Param("states") java.util.List<EmailStatus> states, @Param("state") EmailStatus state,
