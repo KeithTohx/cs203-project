@@ -38,12 +38,29 @@ class ImpactEvaluationJobTest {
     @Mock private ActivityService activityService;
     @Mock private NewsService newsService;
     @Mock private ImpactService impactService;
+    @Mock private EvaluationProgress progress;
+
+    @org.junit.jupiter.api.BeforeEach
+    void progressIdentity() {
+        lenient().when(progress.begin(anyLong(), anyLong(), anyBoolean(), anyList())).thenAnswer(i -> i.getArgument(0) + ":" + i.getArgument(1));
+    }
+
+    @Test void capClosesSelectedGroupAsPartialInsteadOfLeavingItRunning() {
+        News n = news(10L);
+        givenCountryWithNews(n);
+        givenPendingItineraries(n, itinerary(1L), itinerary(2L));
+
+        job(true, 1).run();
+
+        verify(progress).finish("1:10", false);
+        verify(progress).finish("2:10", true);
+    }
 
     // ---------------------------------------------------------------- helpers
 
     private ImpactEvaluationJob job(boolean enabled, int maxPerRun) {
         return new ImpactEvaluationJob(itineraryService, activityService, newsService,
-                impactService, enabled, 3, maxPerRun);
+                impactService, progress, enabled, 3, maxPerRun);
     }
 
     private static News news(long id) {
@@ -62,6 +79,7 @@ class ImpactEvaluationJobTest {
     private static Activity activity(long id) {
         Activity a = new Activity();
         a.setId(id);
+        a.setItinerary(itinerary(1L));
         return a;
     }
 
@@ -209,7 +227,7 @@ class ImpactEvaluationJobTest {
         job(true, 200).run();
 
         verify(impactService, times(3)).evaluateItineraryForNews(any(Itinerary.class), any(News.class));
-        verifyNoInteractions(activityService);   // never got as far as the activities
+        verify(impactService, never()).evaluateActivityForNews(any(), any()); // selected, but never evaluated
     }
 
     @Test

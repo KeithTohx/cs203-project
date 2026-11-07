@@ -18,7 +18,7 @@ import java.nio.file.*;
 import static org.assertj.core.api.Assertions.*;
 
 @SpringBootTest(properties = {
-        "gdelt.ingest.enabled=false", "impact.eval.enabled=false", "spring.sql.init.mode=never",
+        "gdelt.ingest.enabled=false", "impact.eval.enabled=false", "impact.eval.new-itinerary.enabled=false", "spring.sql.init.mode=never",
         "spring.jpa.hibernate.ddl-auto=create-drop", "spring.datasource.hikari.maximum-pool-size=1"
 })
 class AccountSecurityIntegrationTest {

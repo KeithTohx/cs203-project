@@ -13,6 +13,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import csd.tripsense.country.Country;
@@ -30,6 +31,8 @@ class ItineraryServiceImplTest {
 
     @Mock
     private ItineraryRepository itineraryRepository;
+
+    @Mock private ApplicationEventPublisher events;
 
     @InjectMocks
     private ItineraryServiceImpl itineraryService;
@@ -312,5 +315,46 @@ class ItineraryServiceImplTest {
         // Act + Assert
         assertThrows(ItineraryNotFoundException.class, () -> itineraryService.deleteItinerary(99L));
         verify(itineraryRepository, never()).deleteById(anyLong());
+    }
+
+
+    @Test
+    @DisplayName("Should publish a created event carrying the saved itinerary's id")
+    void addItinerary_ShouldPublishCreatedEvent_WithTheSavedId() {
+        // Arrange
+        Itinerary saved = new Itinerary();
+        saved.setId(5L);
+        when(itineraryRepository.save(any(Itinerary.class))).thenReturn(saved);
+
+        // Act
+        Itinerary result = itineraryService.addItinerary(new Itinerary());
+
+        // Assert
+        assertSame(saved, result);
+        // the id the database assigned, not the null the request came in with
+        verify(events, times(1)).publishEvent(new ItineraryCreatedEvent(5L));
+    }
+
+    @Test
+    @DisplayName("Should publish nothing when the itinerary could not be saved")
+    void addItinerary_ShouldNotPublish_WhenSaveFails() {
+        when(itineraryRepository.save(any(Itinerary.class))).thenThrow(new RuntimeException("db down"));
+
+        assertThrows(RuntimeException.class, () -> itineraryService.addItinerary(new Itinerary()));
+
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("Should not publish a created event when an itinerary is updated")
+    void updateItinerary_ShouldNotPublish() {
+        Itinerary existing = new Itinerary();
+        existing.setId(5L);
+        when(itineraryRepository.findById(5L)).thenReturn(Optional.of(existing));
+        when(itineraryRepository.save(any(Itinerary.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        itineraryService.updateItinerary(5L, new Itinerary());
+
+        verifyNoInteractions(events);   // edits are not re-evaluated, only creation is
     }
 }

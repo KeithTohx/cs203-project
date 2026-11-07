@@ -14,6 +14,8 @@ public interface ImpactRepository extends JpaRepository<Impact, Long> {
 
     List<Impact> findByItineraryId(Long itineraryId);
 
+    List<Impact> findByItineraryIdAndNewsId(Long itineraryId, Long newsId);
+
     List<Impact> findByActivityId(Long activityId);
 
     // the itinerary-level verdict (no activity) for one news article, if there is one

@@ -9,6 +9,9 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import csd.tripsense.alert.AlertEmailStore.Delivery;
+import static org.assertj.core.api.Assertions.assertThat;
+
 import java.time.Instant;
 import java.util.Properties;
 
@@ -154,9 +157,11 @@ class AlertEmailSenderTest {
         assertEquals(1, recipients.length);
         assertEquals("traveller@example.com", recipients[0].toString());
         String subject = message.getSubject();
-        assertTrue(subject.contains("Japan trip"), "email subject was: " + subject);
+        assertEquals("TripSense | Itinerary alert: Japan trip", subject);
+        assertThat(body(message, "text/html")).contains("Itinerary alert", "What happened",
+                "How this may affect you", "Read source article");
 
-        String body = plainTextBody(message);
+        String body = body(message, "text/plain");
         assertTrue(body.contains("Ski lifts are closed"), "email body was: " + body);
         assertTrue(body.contains("https://example.com/news"), "email body was: " + body);
         assertTrue(body.contains("automated assessment"), "email body was: " + body);
@@ -164,20 +169,69 @@ class AlertEmailSenderTest {
         assertEquals("<tripsense-alert-stable-key@tripsense.local>", message.getMessageID());
     }
 
-    // reads the plain text part whether the email is a single part or multipart (plain text plus html),
-    // so this test keeps working once the html email lands
-    private String plainTextBody(Part part) throws Exception {
-        if (part.isMimeType("text/plain")) {
-            return (String) part.getContent();
-        }
+    @Test void activityEmailHasDistinctScopeAndEscapesUntrustedContent() throws Exception {
+        JavaMailSender mail = mailSender;
+        when(mailSenders.getObject()).thenReturn(mailSender);
+        when(mail.createMimeMessage()).thenReturn(new MimeMessage(Session.getInstance(new Properties())));
+        var alert = new AlertResponse(31L, 53L, 9L, "Bali", 17L, "Trek <sunrise>\r\nBcc: test",
+                4L, "Closure <script>alert(1)</script>", "Source & news", "javascript:alert(1)",
+                "Access <restricted>", Instant.now(), null, EmailStatus.PENDING, null);
+        new AlertEmailSender(mailSenders, true, "alerts@example.com")
+                .send(new Delivery(31L, 1, "activity-key", "traveller@example.com", alert));
+        var captor = ArgumentCaptor.forClass(MimeMessage.class);
+        verify(mail).send(captor.capture());
+        MimeMessage message = captor.getValue(); message.saveChanges();
+        assertThat(message.getSubject()).startsWith("TripSense | Activity alert: Trek").endsWith(" | Bali")
+                .doesNotContain("\r", "\n");
+        assertThat(message.getHeader("Bcc")).isNull();
+        assertThat(body(message, "text/plain")).contains("ACTIVITY ALERT", "one activity", "Itinerary: Bali", "Alert reference: 31");
+        assertThat(body(message, "text/html")).contains("Activity alert", "&lt;sunrise&gt;", "&lt;script&gt;", "Source &amp; news")
+                .doesNotContain("<script>", "javascript:", "Read source article", "itinerary overall");
+    }
 
-        Object content = part.getContent();
-        if (content instanceof Multipart multipart) {
+    @Test void groupedEmailContainsOverallAndActivityImpactsInOneMessage() throws Exception {
+        JavaMailSender mail = mailSender;
+        when(mailSenders.getObject()).thenReturn(mailSender);
+        when(mail.createMimeMessage()).thenReturn(new MimeMessage(Session.getInstance(new Properties())));
+        AlertResponse overall = delivery.alert();
+        var activity = new AlertResponse(2L, 5L, 3L, "Japan trip", 8L, "Niseko skiing", 4L,
+                "Resort closure", "Test source", "https://example.com/news", "Activity cancelled",
+                Instant.now(), null, EmailStatus.PENDING, null);
+        var grouped = new Delivery(1L, 1, "stable-key", "traveller@example.com", overall,
+                java.util.List.of(overall, activity), java.util.List.of(
+                        new AlertEmailStore.ClaimedAlert(1L, 1), new AlertEmailStore.ClaimedAlert(2L, 1)));
+        new AlertEmailSender(mailSenders, true, "alerts@example.com").send(grouped);
+        var captor = ArgumentCaptor.forClass(MimeMessage.class);
+        verify(mail, times(1)).send(captor.capture());
+        MimeMessage message = captor.getValue(); message.saveChanges();
+        assertThat(message.getSubject()).isEqualTo("TripSense | Disruption summary: Japan trip");
+        assertThat(body(message, "text/plain")).contains("Overall itinerary", "Activity: Niseko skiing",
+                "Ski lifts are closed", "Activity cancelled");
+        assertThat(body(message, "text/html")).contains("Overall itinerary", "Activity: Niseko skiing",
+                "Ski lifts are closed", "Activity cancelled").doesNotContain("arrive separately");
+    }
+
+    @Test void partialSummaryExplainsThatSomeActivitiesWereNotAssessed() throws Exception {
+        JavaMailSender mail = mailSender;
+        when(mailSenders.getObject()).thenReturn(mailSender);
+        when(mail.createMimeMessage()).thenReturn(new MimeMessage(Session.getInstance(new Properties())));
+        Delivery original = delivery;
+        Delivery partial = new Delivery(original.alertId(), original.attempt(), original.key(), original.recipient(),
+                original.alert(), original.relatedAlerts(), original.claims(), true);
+        new AlertEmailSender(mailSenders, true, "alerts@example.com").send(partial);
+        var captor = ArgumentCaptor.forClass(MimeMessage.class);
+        verify(mail).send(captor.capture());
+        MimeMessage message = captor.getValue(); message.saveChanges();
+        assertThat(body(message, "text/plain")).contains("Some activities have not been assessed", "available assessments");
+        assertThat(body(message, "text/html")).contains("Some activities have not been assessed", "available assessments");
+    }
+
+    private String body(Part part, String mimeType) throws Exception {
+        if (part.isMimeType(mimeType)) return (String) part.getContent();
+        if (part.getContent() instanceof Multipart multipart) {
             for (int i = 0; i < multipart.getCount(); i++) {
-                String found = plainTextBody(multipart.getBodyPart(i));
-                if (!found.isEmpty()) {
-                    return found;
-                }
+                String result = body(multipart.getBodyPart(i), mimeType);
+                if (!result.isEmpty()) return result;
             }
         }
         return "";

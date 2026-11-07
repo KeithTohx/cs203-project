@@ -26,7 +26,7 @@ public class AlertEvaluationListener {
     }
 
     // Recovers a missed event after a restart or a temporary database failure. No AI calls are repeated.
-    @Scheduled(fixedDelayString = "${alerts.reconcile.interval-ms:15000}",
+    @Scheduled(scheduler = "alertTaskScheduler", fixedDelayString = "${alerts.reconcile.interval-ms:15000}",
                initialDelayString = "${alerts.reconcile.initial-delay-ms:15000}")
     public void reconcile() {
         for (Long id : impacts.findAwaitingAlerts(PageRequest.of(0, 100))) create(id);

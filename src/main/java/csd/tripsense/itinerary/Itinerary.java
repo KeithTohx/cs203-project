@@ -39,6 +39,17 @@ public class Itinerary {
     @Column(name = "date_end")
     private LocalDateTime dateEnd;
 
+    // These relationships only clean up alert-delivery metadata when a trip is deleted.
+    @OneToMany(mappedBy="itinerary",cascade=CascadeType.REMOVE)
+    @JsonIgnore
+    private List<csd.tripsense.alert.AlertEmailGroup> alertEmailGroups;
+    @OneToMany(mappedBy="itinerary",cascade=CascadeType.REMOVE)
+    @JsonIgnore
+    private List<csd.tripsense.impact.EvaluationBatch> alertEvaluationBatches;
+    @OneToMany(mappedBy="itinerary",cascade=CascadeType.REMOVE)
+    @JsonIgnore
+    private List<csd.tripsense.impact.EvaluationTarget> alertEvaluationTargets;
+
     // the foreign keys live on activity and impact (mappedBy), these just let jpa find them.
     // deleting an itinerary deletes its activities and impacts too, instead of leaving rows
     // that point at an itinerary that no longer exists

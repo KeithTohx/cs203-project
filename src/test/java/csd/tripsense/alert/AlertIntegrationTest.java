@@ -1,5 +1,8 @@
 package csd.tripsense.alert;
 
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -29,6 +32,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
@@ -67,6 +72,8 @@ import csd.tripsense.user.UserRepository;
 @SpringBootTest(properties = {
         "gdelt.ingest.enabled=false",
         "impact.eval.enabled=false",
+        "impact.eval.new-itinerary.enabled=false",
+        "alerts.email.initial-group-wait-seconds=0",
         "spring.sql.init.mode=never",
         "spring.jpa.hibernate.ddl-auto=create-drop",
         "spring.datasource.hikari.maximum-pool-size=1",
@@ -91,6 +98,11 @@ class AlertIntegrationTest {
             }
             """;
 
+    @Autowired private csd.tripsense.impact.EvaluationProgress progress;
+    @Autowired private csd.tripsense.impact.EvaluationTargetRepository targets;
+    @Autowired private AlertMetadataMaintenance metadata;
+    @Autowired private csd.tripsense.impact.EvaluationBatchRepository batches;
+    @Autowired private AlertEmailGroupRepository emailGroups;
     @Autowired
     private MockMvc mockMvc;
 
@@ -135,6 +147,10 @@ class AlertIntegrationTest {
 
     @MockitoBean
     private ChatService ai;
+
+    @Autowired private csd.tripsense.recommendation.RecommendationRepository recommendations;
+    @Autowired private ApplicationEventPublisher events;
+    @Autowired private org.springframework.security.web.FilterChainProxy security;
 
     private User traveller;
     private Itinerary skiTrip;
@@ -771,4 +787,531 @@ class AlertIntegrationTest {
         // Assert
         assertEquals(EmailStatus.SENDING, alertRepository.findById(alertId).orElseThrow().getEmailStatus());
     }
+
+
+    @Test void positiveAssessmentCreatesOneDurableAlertAndRepeatedEvaluationDoesNotDuplicateIt() {
+        Impact impact = evaluate();
+        impactService.evaluateItineraryForNews(skiTrip, earthquake);
+        assertThat(alertRepository.existsByImpactId(impact.getId())).isTrue();
+        var page = alertService.list(traveller.getId(), false, null, 20);
+        assertThat(page.content()).hasSize(1);
+        assertThat(page.content().getFirst().reason()).isEqualTo("Resort closed");
+        assertThat(page.unreadCount()).isEqualTo(1);
+        verify(ai, times(1)).ask(anyString(), any(Class.class));
+    }
+
+    @Test void unaffectedAssessmentDoesNotCreateAnAlert() {
+        verdict(false); Impact impact = impactService.evaluateItineraryForNews(skiTrip, earthquake);
+        assertThat(alertRepository.existsByImpactId(impact.getId())).isFalse();
+    }
+
+    @Test void rejectedImpactIsHiddenFromHistoryAndUnreadCount() {
+        Impact impact = evaluate(); impactService.setRejected(impact.getId(), true);
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content()).isEmpty();
+        assertThat(alertService.list(traveller.getId(), false, null, 20).unreadCount()).isZero();
+    }
+
+    @Test void rollbackDoesNotSendOrStoreAnAlert() {
+        verdict(true);
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            impactService.evaluateItineraryForNews(skiTrip, earthquake);
+            assertThat(alertService.list(traveller.getId(), false, null, 20).content()).isEmpty();
+            status.setRollbackOnly();
+        });
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content()).isEmpty();
+    }
+
+    @Test void missedEventIsRecoveredWithoutAnotherAiCall() {
+        Impact impact = new Impact(); impact.setUser(traveller); impact.setItinerary(skiTrip); impact.setNews(earthquake);
+        impact.setImpacted(true); impact.setAlertEligible(true); impact.setReason("Closure confirmed"); impact = impactRepository.saveAndFlush(impact);
+        assertThat(alertRepository.existsByImpactId(impact.getId())).isFalse();
+        recovery.reconcile(); recovery.reconcile();
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content()).hasSize(1);
+        verifyNoInteractions(ai);
+    }
+
+    @Test void deletingAnImpactRemovesItsAlertWithForeignKeysEnabled() {
+        Impact impact = evaluate(); impactService.deleteImpact(impact.getId());
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content()).isEmpty();
+    }
+
+    @Test void httpHistoryRequiresLoginAndReadRequiresOwnershipAndCsrf() throws Exception {
+        evaluate(); Long id = alertService.list(traveller.getId(), false, null, 20).content().getFirst().id();
+        mockMvc.perform(get("/api/alerts")).andExpect(status().isUnauthorized());
+        var ownSession = login(traveller);
+        mockMvc.perform(get("/api/alerts").session(ownSession))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].id").value(id));
+        User admin = userRepository.saveAndFlush(new User(UUID.randomUUID() + "@example.com", "admin" + id, "long-enough-hash", "ADMIN"));
+        var otherSession = login(admin);
+        mockMvc.perform(get("/api/alerts").session(otherSession)).andExpect(jsonPath("$.content").isEmpty());
+        mockMvc.perform(patch("/api/alerts/" + id).contentType(MediaType.APPLICATION_JSON).content(READ_TRUE).session(otherSession)
+                        .with(csrf()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(patch("/api/alerts/" + id).contentType(MediaType.APPLICATION_JSON).content(READ_TRUE).session(ownSession)).andExpect(status().isForbidden());
+        mockMvc.perform(patch("/api/alerts/" + id).contentType(MediaType.APPLICATION_JSON).content(READ_TRUE).session(ownSession)
+                        .with(csrf()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.readAt").isNotEmpty());
+        var readAt = alertService.markRead(id, traveller.getId()).readAt();
+        assertThat(alertService.markRead(id, traveller.getId()).readAt()).isEqualTo(readAt);
+        assertThat(alertService.list(traveller.getId(), true, null, 20).unreadCount()).isZero();
+    }
+
+    @Test void pendingEmailIsClaimedOnceAndRetriesAreBounded() {
+        evaluate(); Long id = alertService.list(traveller.getId(), false, null, 20).content().getFirst().id();
+        var now = java.time.Instant.now().plusSeconds(1);
+        var first = emailStore.claim(id, now).orElseThrow();
+        assertThat(emailStore.claim(id, now)).isEmpty();
+        emailStore.failed(first, now);
+        assertThat(emailStore.claim(id, now.plusSeconds(59))).isEmpty();
+        var second = emailStore.claim(id, now.plusSeconds(61)).orElseThrow();
+        emailStore.failed(second, now.plusSeconds(61));
+        var third = emailStore.claim(id, now.plusSeconds(182)).orElseThrow();
+        emailStore.failed(third, now.plusSeconds(182));
+        assertThat(alertRepository.findById(id).orElseThrow().getEmailStatus()).isEqualTo(EmailStatus.FAILED);
+        assertThat(emailStore.claim(id, now.plusSeconds(1000))).isEmpty();
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content()).hasSize(1);
+    }
+
+    @Test void itineraryAndActivitiesAreClaimedTogetherOnlyAfterAssessmentCompletes() {
+        Activity activity = new Activity(); activity.setItinerary(skiTrip); activity.setCountry(skiTrip.getCountry());
+        activity.setName("Mount Batur trek"); activity = activityRepository.saveAndFlush(activity);
+        String batch = progress.begin(skiTrip.getId(), earthquake.getId());
+        evaluate();
+        Long tripAlert = alertService.list(traveller.getId(), false, null, 20).content().getFirst().id();
+        assertThat(emailStore.claim(tripAlert, java.time.Instant.now().plusSeconds(1))).isEmpty();
+        impactService.evaluateActivityForNews(activity, earthquake);
+        progress.finish(batch, false);
+        Long activityAlert = alertService.list(traveller.getId(), false, null, 20).content().getFirst().id();
+        var now = java.time.Instant.now().plusSeconds(31);
+        var delivery = emailStore.claim(activityAlert, now).orElseThrow();
+        assertThat(delivery.relatedAlerts()).hasSize(2);
+        assertThat(delivery.relatedAlerts()).extracting(AlertResponse::activityName).containsExactly(null, "Mount Batur trek");
+        assertThat(emailStore.claim(tripAlert, now)).isEmpty();
+        assertThat(emailStore.claim(activityAlert, now)).isEmpty();
+        emailStore.sent(delivery, now);
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content()).hasSize(2)
+                .allSatisfy(a -> assertThat(a.emailStatus()).isEqualTo(EmailStatus.SENT));
+        assertThat(emailStore.claim(tripAlert, now.plusSeconds(1000))).isEmpty();
+    }
+
+    @Test void groupedRetryPreservesMessageIdentityAndCompletesAllMembers() {
+        Activity activity = new Activity(); activity.setItinerary(skiTrip); activity.setCountry(skiTrip.getCountry());
+        activity.setName("Trek"); activity = activityRepository.saveAndFlush(activity);
+        evaluate(); impactService.evaluateActivityForNews(activity, earthquake);
+        Long id = alertService.list(traveller.getId(), false, null, 20).content().getFirst().id();
+        var now = java.time.Instant.now().plusSeconds(1);
+        var first = emailStore.claim(id, now).orElseThrow();
+        emailStore.failed(first, now);
+        assertThat(emailStore.claim(id, now.plusSeconds(59))).isEmpty();
+        var retry = emailStore.claim(id, now.plusSeconds(61)).orElseThrow();
+        assertThat(retry.key()).isEqualTo(first.key());
+        assertThat(retry.claims()).hasSize(2).allSatisfy(c -> assertThat(c.attempt()).isEqualTo(2));
+        emailStore.sent(first, now.plusSeconds(62));
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content())
+                .allSatisfy(a -> assertThat(a.emailStatus()).isEqualTo(EmailStatus.SENDING));
+        emailStore.sent(retry, now.plusSeconds(63));
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content())
+                .allSatisfy(a -> assertThat(a.emailStatus()).isEqualTo(EmailStatus.SENT));
+    }
+
+    @Test void retryIdentitySurvivesRejectionOfTheOriginalLeader() {
+        Activity activity = new Activity(); activity.setItinerary(skiTrip); activity.setCountry(skiTrip.getCountry());
+        activity.setName("Trek"); activity = activityRepository.saveAndFlush(activity);
+        Impact overall = evaluate(); impactService.evaluateActivityForNews(activity, earthquake);
+        var firstId = alertService.list(traveller.getId(), false, null, 20).content().getFirst().id();
+        var now = java.time.Instant.now().plusSeconds(1);
+        var first = emailStore.claim(firstId, now).orElseThrow();
+        emailStore.failed(first, now);
+        impactService.setRejected(overall.getId(), true);
+
+        var retry = emailStore.claim(firstId, now.plusSeconds(61)).orElseThrow();
+
+        assertThat(retry.key()).isEqualTo(first.key());
+        assertThat(retry.relatedAlerts()).hasSize(1);
+        assertThat(retry.alert().activityId()).isEqualTo(activity.getId());
+        assertThat(emailGroups.findById(AlertEmailGroup.key(skiTrip.getId(), earthquake.getId())))
+                .hasValueSatisfying(g -> assertThat(g.getDeliveryKey()).isEqualTo(first.key()));
+    }
+
+    @Test void unassessedActivityWithoutScheduledWorkDoesNotDelayEmail() {
+        Activity missing = new Activity(); missing.setItinerary(skiTrip); missing.setCountry(skiTrip.getCountry());
+        missing.setName("No evaluation scheduled"); activityRepository.saveAndFlush(missing);
+        evaluate();
+        var alert = alertService.list(traveller.getId(), false, null, 20).content().getFirst();
+        var delivery = emailStore.claim(alert.id(), alert.createdAt().plusSeconds(1)).orElseThrow();
+        assertThat(delivery.partialAssessment()).isFalse();
+    }
+
+    @Test void completedPartialEvaluationSendsAvailableResultsWithoutWaitingForMissingVerdicts() {
+        String batch = progress.begin(skiTrip.getId(), earthquake.getId());
+        evaluate(); progress.finish(batch, true);
+        var alert = alertService.list(traveller.getId(), false, null, 20).content().getFirst();
+        var delivery = emailStore.claim(alert.id(), alert.createdAt().plusSeconds(1)).orElseThrow();
+        assertThat(delivery.partialAssessment()).isTrue();
+    }
+
+    @Test void incompleteGroupIsDeferredAndSendsAvailableImpactsAtTheDeadline() {
+        Activity activity = new Activity(); activity.setItinerary(skiTrip); activity.setCountry(skiTrip.getCountry());
+        activity.setName("Not yet assessed"); activity = activityRepository.saveAndFlush(activity);
+        evaluate();
+        progress.begin(skiTrip.getId(), earthquake.getId());
+        AlertResponse alert = alertService.list(traveller.getId(), false, null, 20).content().getFirst();
+        var now = alert.createdAt().plusSeconds(1);
+        assertThat(emailStore.claim(alert.id(), now)).isEmpty();
+        Alert waiting = alertRepository.findById(alert.id()).orElseThrow();
+        assertThat(waiting.getEmailNextAttemptAt()).isEqualTo(now.plusSeconds(30));
+        assertThat(waiting.getEmailAttempts()).isZero();
+        assertThat(emailStore.claim(alert.id(), now.plusSeconds(29))).isEmpty();
+        // Checking near the deadline must not push it back another whole recheck interval.
+        assertThat(emailStore.claim(alert.id(), alert.createdAt().plusSeconds(119))).isEmpty();
+        assertThat(alertRepository.findById(alert.id()).orElseThrow().getEmailNextAttemptAt())
+                .isEqualTo(alert.createdAt().plusSeconds(120));
+        var partial = emailStore.claim(alert.id(), alert.createdAt().plusSeconds(120)).orElseThrow();
+        assertThat(partial.partialAssessment()).isTrue();
+        assertThat(partial.relatedAlerts()).hasSize(1);
+        emailStore.sent(partial, alert.createdAt().plusSeconds(121));
+        verdict(true); impactService.evaluateActivityForNews(activity, earthquake);
+        var late = alertService.list(traveller.getId(), false, null, 20).content().getFirst();
+        assertThat(emailStore.claim(late.id(), alert.createdAt().plusSeconds(122))).isEmpty();
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content()).hasSize(2);
+    }
+
+    @Test void lateAlertInAFailedGroupBecomesFailedEvenWhenOtherAssessmentsAreMissing() {
+        evaluate();
+        var firstAlert = alertService.list(traveller.getId(), false, null, 20).content().getFirst();
+        var now = firstAlert.createdAt().plusSeconds(1);
+        var first = emailStore.claim(firstAlert.id(), now).orElseThrow(); emailStore.failed(first, now);
+        var second = emailStore.claim(firstAlert.id(), now.plusSeconds(61)).orElseThrow();
+        emailStore.failed(second, now.plusSeconds(61));
+        var third = emailStore.claim(firstAlert.id(), now.plusSeconds(182)).orElseThrow();
+        emailStore.failed(third, now.plusSeconds(182));
+        Activity lateActivity = new Activity(); lateActivity.setItinerary(skiTrip); lateActivity.setCountry(skiTrip.getCountry());
+        lateActivity.setName("Late activity"); lateActivity = activityRepository.saveAndFlush(lateActivity);
+        Activity missing = new Activity(); missing.setItinerary(skiTrip); missing.setCountry(skiTrip.getCountry());
+        missing.setName("Still unassessed"); activityRepository.saveAndFlush(missing);
+        impactService.evaluateActivityForNews(lateActivity, earthquake);
+        var late = alertService.list(traveller.getId(), false, null, 20).content().getFirst();
+        assertThat(emailStore.claim(late.id(), now.plusSeconds(183))).isEmpty();
+        assertThat(alertRepository.findById(late.id()).orElseThrow().getEmailStatus()).isEqualTo(EmailStatus.FAILED);
+        assertThat(alertRepository.findEmailReady(AlertEmailStore.RETRYABLE, now.plusSeconds(1000),
+                org.springframework.data.domain.PageRequest.of(0, 1000)))
+                .doesNotContain(late.id(), firstAlert.id());
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content()).hasSize(2);
+    }
+
+    @Test void fiftyIncompleteGroupsDoNotStarveANewerEmailRetry() {
+        var now = java.time.Instant.now();
+        // Other tests keep their own fixtures in this isolated SQLite database. Park their jobs
+        // so the first fifty candidates below are exactly this scenario's blocked groups.
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            for (Alert existing : alertRepository.findAll()) {
+                alertRepository.finishEmail(existing.getId(), existing.getEmailAttempts(), AlertEmailStore.RETRYABLE,
+                        existing.getEmailStatus(), existing.getEmailSentAt(), now.plusSeconds(3600));
+            }
+        });
+        java.util.List<Long> blocked = new java.util.ArrayList<>();
+        for (int i = 0; i < 50; i++) {
+            Itinerary other = new Itinerary(); other.setUser(traveller); other.setCountry(skiTrip.getCountry());
+            other.setName("Waiting trip " + i); other = itineraryRepository.saveAndFlush(other);
+            Activity missing = new Activity(); missing.setItinerary(other); missing.setCountry(skiTrip.getCountry());
+            missing.setName("Missing assessment"); activityRepository.saveAndFlush(missing);
+            progress.begin(other.getId(), earthquake.getId());
+            blocked.add(pendingAt(other, java.time.Instant.EPOCH, now).getId());
+        }
+        Alert healthy = pendingAt(skiTrip, java.time.Instant.EPOCH.plusMillis(1), now);
+        var page = org.springframework.data.domain.PageRequest.of(0, 50);
+        var first = alertRepository.findEmailReady(AlertEmailStore.RETRYABLE, now.plusSeconds(1), page);
+        assertThat(first).containsExactlyElementsOf(blocked);
+        for (Long id : first) assertThat(emailStore.claim(id, now.plusSeconds(1))).isEmpty();
+        var next = alertRepository.findEmailReady(AlertEmailStore.RETRYABLE, now.plusSeconds(1), page);
+        assertThat(next).contains(healthy.getId()).doesNotContainAnyElementsOf(blocked);
+        var delivery = emailStore.claim(healthy.getId(), now.plusSeconds(1)).orElseThrow();
+        // A failed first send must still receive a retry while all fifty old groups remain incomplete.
+        emailStore.failed(delivery, now.plusSeconds(1));
+        for (Long id : blocked) assertThat(emailStore.claim(id, now.plusSeconds(61))).isEmpty();
+        assertThat(alertRepository.findEmailReady(AlertEmailStore.RETRYABLE, now.plusSeconds(61), page)).contains(healthy.getId());
+        assertThat(emailStore.claim(healthy.getId(), now.plusSeconds(61))).isPresent();
+    }
+
+    @Test void lateActivityForAlreadyNotifiedNewsDoesNotSendAnotherEmail() {
+        evaluate();
+        Long id = alertService.list(traveller.getId(), false, null, 20).content().getFirst().id();
+        var now = java.time.Instant.now().plusSeconds(1);
+        emailStore.sent(emailStore.claim(id, now).orElseThrow(), now);
+        Activity activity = new Activity(); activity.setItinerary(skiTrip); activity.setCountry(skiTrip.getCountry());
+        activity.setName("Added later"); activity = activityRepository.saveAndFlush(activity);
+        impactService.evaluateActivityForNews(activity, earthquake);
+        Long added = alertService.list(traveller.getId(), false, null, 20).content().getFirst().id();
+        assertThat(emailStore.claim(added, now.plusSeconds(1000))).isEmpty();
+        var suppressed = alertRepository.findById(added).orElseThrow();
+        assertThat(suppressed.getEmailStatus()).isEqualTo(EmailStatus.SUPPRESSED);
+        assertThat(suppressed.getEmailSentAt()).isNull();
+        assertThat(suppressed.getEmailAttempts()).isZero();
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content().getFirst().emailStatus())
+                .isEqualTo(EmailStatus.SUPPRESSED);
+        assertThat(alertRepository.findEmailReady(AlertEmailStore.RETRYABLE, now.plusSeconds(2000),
+                org.springframework.data.domain.PageRequest.of(0, 1000))).doesNotContain(added);
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content()).hasSize(2);
+    }
+
+    @Test void activityOnlyDisruptionStillGetsAnEmailAndOtherNewsIsSeparate() {
+        Activity activity = new Activity(); activity.setItinerary(skiTrip); activity.setCountry(skiTrip.getCountry());
+        activity.setName("Trek"); activity = activityRepository.saveAndFlush(activity);
+        verdict(false); impactService.evaluateItineraryForNews(skiTrip, earthquake);
+        verdict(true); impactService.evaluateActivityForNews(activity, earthquake);
+        Long id = alertService.list(traveller.getId(), false, null, 20).content().getFirst().id();
+        var now = java.time.Instant.now().plusSeconds(1);
+        var delivery = emailStore.claim(id, now).orElseThrow();
+        assertThat(delivery.relatedAlerts()).hasSize(1);
+        assertThat(delivery.alert().activityId()).isEqualTo(activity.getId());
+        emailStore.sent(delivery, now);
+        News other = new News(); other.setTitle("Another event"); other.setUrl("https://example.com/" + UUID.randomUUID());
+        other = newsRepository.saveAndFlush(other);
+        impactService.evaluateItineraryForNews(skiTrip, other);
+        impactService.evaluateActivityForNews(activity, other);
+        Long newAlert = alertService.list(traveller.getId(), false, null, 20).content().getFirst().id();
+        assertThat(emailStore.claim(newAlert, java.time.Instant.now().plusSeconds(1))).isPresent();
+    }
+
+    @Test void acceptedEmailIsNotSentAgainAndRejectedImpactsAreNotEmailed() {
+        Impact impact = evaluate(); Long id = alertService.list(traveller.getId(), false, null, 20).content().getFirst().id();
+        var now = java.time.Instant.now().plusSeconds(1);
+        impactService.setRejected(impact.getId(), true);
+        assertThat(emailStore.claim(id, now)).isEmpty();
+        impactService.setRejected(impact.getId(), false);
+        var claim = emailStore.claim(id, now).orElseThrow(); emailStore.sent(claim, now);
+        assertThat(emailStore.claim(id, now.plusSeconds(1000))).isEmpty();
+        var saved = alertRepository.findById(id).orElseThrow();
+        assertThat(saved.getEmailStatus()).isEqualTo(EmailStatus.SENT);
+        assertThat(saved.getEmailSentAt()).isNotNull();
+    }
+
+    @Test void expiredEmailLeaseCanBeRecoveredAfterAWorkerRestart() {
+        evaluate(); Long id = alertService.list(traveller.getId(), false, null, 20).content().getFirst().id();
+        var now = java.time.Instant.now().plusSeconds(1);
+        var first = emailStore.claim(id, now).orElseThrow();
+        assertThat(emailStore.claim(id, now.plusSeconds(119))).isEmpty();
+        var recovered = emailStore.claim(id, now.plusSeconds(121)).orElseThrow();
+        assertThat(recovered.attempt()).isEqualTo(2);
+        assertThat(recovered.key()).isEqualTo(first.key());
+        emailStore.sent(first, now.plusSeconds(122)); // an obsolete worker cannot overwrite a newer attempt
+        assertThat(alertRepository.findById(id).orElseThrow().getEmailStatus()).isEqualTo(EmailStatus.SENDING);
+        emailStore.sent(recovered, now.plusSeconds(123));
+    }
+
+    @Test void activityAssessmentCreatesAnAlertWithTheAffectedActivity() {
+        Activity activity = new Activity(); activity.setItinerary(skiTrip); activity.setCountry(skiTrip.getCountry());
+        activity.setName("Ski at Niseko"); activity = activityRepository.saveAndFlush(activity);
+        verdict(true); impactService.evaluateActivityForNews(activity, earthquake);
+        var alert = alertService.list(traveller.getId(), false, null, 20).content().getFirst();
+        assertThat(alert.activityId()).isEqualTo(activity.getId());
+        assertThat(alert.activityName()).isEqualTo("Ski at Niseko");
+    }
+
+    @Test void recoveryDoesNotNotifyForHistoricalAssessmentsFromBeforeTheFeature() {
+        Impact impact = new Impact(); impact.setUser(traveller); impact.setItinerary(skiTrip); impact.setNews(earthquake);
+        impact.setImpacted(true); impact.setReason("Old assessment"); impactRepository.saveAndFlush(impact);
+        recovery.reconcile();
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content()).isEmpty();
+    }
+
+    @Test void demoResetRemovesTheDisruptionAndTriggerRestoresItWithoutCallingAi() {
+        Activity activity = new Activity(); activity.setItinerary(skiTrip); activity.setCountry(skiTrip.getCountry());
+        activity.setName("Demo trek"); activity = activityRepository.saveAndFlush(activity);
+        Impact overall = evaluate(); impactService.evaluateActivityForNews(activity, earthquake);
+        var recommendation = new csd.tripsense.recommendation.Recommendation();
+        recommendation.setImpact(overall);
+        recommendation.setStatus(csd.tripsense.recommendation.RecommendationStatus.PENDING);
+        recommendation.setSeverity(csd.tripsense.recommendation.Severity.MEDIUM);
+        recommendation.setAction(csd.tripsense.recommendation.Action.MONITOR);
+        recommendation.setAdvice("Demo advice"); recommendations.saveAndFlush(recommendation);
+        var originalKeys = alertRepository.findEmailGroup(skiTrip.getId(), earthquake.getId()).stream()
+                .map(Alert::getEmailDeliveryKey).toList();
+        var service = demo(true);
+        var tx = new TransactionTemplate(transactionManager);
+        var reset = tx.execute(s -> service.reset(traveller.getId()));
+        assertThat(reset.state()).isEqualTo("READY");
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content()).isEmpty();
+        assertThat(recommendations.findByImpactItineraryId(skiTrip.getId())).hasSize(1);
+        assertThat(impactRepository.findByItineraryIdAndNewsId(skiTrip.getId(), earthquake.getId()))
+                .hasSize(2).allSatisfy(i -> {
+                    assertThat(i.getImpacted()).isFalse();
+                    assertThat(i.getReason()).isEqualTo("Resort closed");
+                });
+        recovery.reconcile();
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content()).isEmpty();
+        clearInvocations(ai);
+        var triggered = tx.execute(s -> service.trigger(traveller.getId()));
+        assertThat(triggered.alerts()).isEqualTo(2);
+        var fresh = alertService.list(traveller.getId(), false, null, 20).content();
+        assertThat(fresh).hasSize(2).allSatisfy(a -> {
+            assertThat(a.readAt()).isNull();
+            assertThat(a.emailStatus()).isEqualTo(EmailStatus.PENDING);
+        });
+        assertThat(alertRepository.findEmailGroup(skiTrip.getId(), earthquake.getId()))
+                .allSatisfy(a -> assertThat(a.getEmailDeliveryKey()).isNotIn(originalKeys));
+        verifyNoInteractions(ai);
+        var delivery = emailStore.claim(fresh.getFirst().id(), java.time.Instant.now().plusSeconds(1)).orElseThrow();
+        assertThat(delivery.relatedAlerts()).hasSize(2);
+        emailStore.sent(delivery, java.time.Instant.now());
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content())
+                .allSatisfy(a -> assertThat(a.emailStatus()).isEqualTo(EmailStatus.SENT));
+        assertThatThrownBy(() -> tx.execute(s -> service.trigger(traveller.getId())))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+    }
+
+    @Test void completedUnrelatedScopeDoesNotHideAnUnresolvedAlertAssessment() {
+        Activity activity=new Activity(); activity.setName("Not assessed"); activity.setItinerary(skiTrip);
+        activity.setCountry(skiTrip.getCountry()); activity=activityRepository.saveAndFlush(activity);
+        evaluate();
+        String failed=progress.begin(skiTrip.getId(),earthquake.getId(),false,java.util.List.of(activity.getId()));
+        progress.finish(failed,true);
+        String unrelated=progress.begin(skiTrip.getId(),earthquake.getId(),false,java.util.List.of());
+        progress.finish(unrelated,false);
+        var alert=alertService.list(traveller.getId(),false,null,20).content().getFirst();
+        assertThat(emailStore.claim(alert.id(),alert.createdAt().plusSeconds(1)).orElseThrow().partialAssessment()).isTrue();
+    }
+
+    @Test void resolvingTheMissingAssessmentClearsThePartialEmailNotice() {
+        Activity activity=new Activity(); activity.setName("Later assessed"); activity.setItinerary(skiTrip);
+        activity.setCountry(skiTrip.getCountry()); activity=activityRepository.saveAndFlush(activity);
+        evaluate();
+        String failed=progress.begin(skiTrip.getId(),earthquake.getId(),false,java.util.List.of(activity.getId()));
+        progress.finish(failed,true);
+        impactService.evaluateActivityForNews(activity,earthquake);
+        progress.resolved(skiTrip.getId(),earthquake.getId(),activity.getId());
+        var alert=alertService.list(traveller.getId(),false,null,20).content().getFirst();
+        assertThat(emailStore.claim(alert.id(),java.time.Instant.now().plusSeconds(1)).orElseThrow().partialAssessment()).isFalse();
+    }
+
+    @Test void deletingATripRemovesItsAlertOwnedMetadata() {
+        evaluate();
+        String batch=progress.begin(skiTrip.getId(),earthquake.getId(),true,java.util.List.of());
+        progress.resolved(skiTrip.getId(),earthquake.getId(),null); progress.finish(batch,false);
+        var alert=alertService.list(traveller.getId(),false,null,20).content().getFirst();
+        var delivery=emailStore.claim(alert.id(),java.time.Instant.now().plusSeconds(1)).orElseThrow();
+        emailStore.sent(delivery,java.time.Instant.now());
+        assertThat(emailGroups.findById(AlertEmailGroup.key(skiTrip.getId(),earthquake.getId()))).isPresent();
+        itineraryRepository.deleteById(skiTrip.getId());
+        assertThat(emailGroups.findById(AlertEmailGroup.key(skiTrip.getId(),earthquake.getId()))).isEmpty();
+        assertThat(batches.findById(batch)).isEmpty();
+        assertThat(targets.countByItineraryId(skiTrip.getId())).isZero();
+    }
+
+    @Test void oldCompletedAlertTrackingIsPrunedWithoutDeletingDeliveryIdentity() {
+        evaluate();
+        var alert=alertService.list(traveller.getId(),false,null,20).content().getFirst();
+        var delivery=emailStore.claim(alert.id(),java.time.Instant.now().plusSeconds(1)).orElseThrow();
+        emailStore.sent(delivery,java.time.Instant.now());
+        String old=progress.begin(skiTrip.getId(),earthquake.getId(),false,java.util.List.of());
+        var record=batches.findById(old).orElseThrow();
+        org.springframework.test.util.ReflectionTestUtils.setField(record,"leaseUntil",java.time.Instant.now().minusSeconds(40L*86400));
+        batches.saveAndFlush(record);
+        metadata.clean();
+        assertThat(batches.findById(old)).isEmpty();
+        assertThat(emailGroups.findById(AlertEmailGroup.key(skiTrip.getId(),earthquake.getId()))).isPresent();
+    }
+
+    @Test void demoResetRefusesToEraseRejectedImpactDecisions() {
+        Impact impact=evaluate(); impactService.setRejected(impact.getId(),true);
+        assertThatThrownBy(() -> new TransactionTemplate(transactionManager).execute(s -> demo(true).reset(traveller.getId())))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class).hasMessageContaining("decisions");
+        assertThat(impactRepository.findById(impact.getId()).orElseThrow().getRejected()).isTrue();
+        assertThat(alertRepository.findEmailGroup(skiTrip.getId(),earthquake.getId())).hasSize(1);
+    }
+
+    @Test void demoResetPreservesAcceptedRecommendationHistory() {
+        Impact impact=evaluate();
+        var recommendation=new csd.tripsense.recommendation.Recommendation(); recommendation.setImpact(impact);
+        recommendation.setStatus(csd.tripsense.recommendation.RecommendationStatus.ACCEPTED);
+        recommendation.setSeverity(csd.tripsense.recommendation.Severity.MEDIUM);
+        recommendation.setAction(csd.tripsense.recommendation.Action.MONITOR); recommendation.setAdvice("Accepted advice");
+        recommendation=recommendations.saveAndFlush(recommendation);
+        assertThatThrownBy(() -> new TransactionTemplate(transactionManager).execute(s -> demo(true).reset(traveller.getId())))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class).hasMessageContaining("disposable fixture");
+        assertThat(recommendations.findById(recommendation.getId()).orElseThrow().getStatus())
+                .isEqualTo(csd.tripsense.recommendation.RecommendationStatus.ACCEPTED);
+        assertThat(impactRepository.findById(impact.getId()).orElseThrow().getImpacted()).isTrue();
+    }
+
+    @Test void demoRequiresExplicitDisposableFixtureOptIn() {
+        evaluate();
+        var service=new DemoDisruptionService(impactRepository,alertRepository,recommendations,itineraryRepository,
+                userRepository,alertService,emailGroups,batches,true,false,traveller.getId(),skiTrip.getId(),earthquake.getId());
+        assertThatThrownBy(() -> service.reset(traveller.getId()))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class).hasMessageContaining("404");
+    }
+
+    @Test void demoRequiresExplicitEnablementAndTheConfiguredOwner() {
+        evaluate();
+        assertThatThrownBy(() -> demo(false).reset(traveller.getId()))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        assertThatThrownBy(() -> demo(true).reset(traveller.getId() + 1))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        assertThatThrownBy(() -> demo(true).trigger(null))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        for (String role : java.util.List.of("USER", "ADMIN")) {
+            User other = userRepository.saveAndFlush(new User(UUID.randomUUID() + "@example.com",
+                    "other" + UUID.randomUUID().toString().substring(0, 8), "long-enough-hash", role));
+            assertThatThrownBy(() -> demo(true).reset(other.getId()))
+                    .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                    .hasMessageContaining("404");
+            assertThatThrownBy(() -> demo(true).trigger(other.getId()))
+                    .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                    .hasMessageContaining("404");
+        }
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content()).hasSize(1);
+    }
+
+    @Test void demoCannotResetWhileItsEmailIsBeingSent() {
+        evaluate();
+        Long id = alertService.list(traveller.getId(), false, null, 20).content().getFirst().id();
+        emailStore.claim(id, java.time.Instant.now().plusSeconds(1)).orElseThrow();
+        assertThatThrownBy(() -> new TransactionTemplate(transactionManager).execute(s -> demo(true).reset(traveller.getId())))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("delivery");
+        assertThat(alertService.list(traveller.getId(), false, null, 20).content()).hasSize(1);
+    }
+
+    @Test void demoEndpointsAreAbsentByDefault() throws Exception {
+        var session = login(traveller);
+        mockMvc.perform(post("/api/alerts/demo/reset").session(session).with(csrf())).andExpect(status().isNotFound());
+    }
+
+    @Test void enabledDemoRoutesRequireSessionAndCsrfAndPassTheAuthenticatedOwner() throws Exception {
+        DemoDisruptionService service = mock(DemoDisruptionService.class);
+        var routes = MockMvcBuilders.standaloneSetup(new DemoDisruptionController(service))
+                .setCustomArgumentResolvers(new org.springframework.security.web.method.annotation.AuthenticationPrincipalArgumentResolver())
+                .apply(org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity(security)).build();
+        routes.perform(post("/api/alerts/demo/trigger").with(csrf())).andExpect(status().isUnauthorized());
+        var session = login(traveller);
+        routes.perform(post("/api/alerts/demo/reset").session(session)).andExpect(status().isForbidden());
+        verifyNoInteractions(service);
+        when(service.reset(traveller.getId())).thenReturn(new DemoDisruptionService.Result(skiTrip.getId(), earthquake.getId(), 1, 0, "READY"));
+        when(service.trigger(traveller.getId())).thenReturn(new DemoDisruptionService.Result(skiTrip.getId(), earthquake.getId(), 1, 1, "TRIGGERED"));
+        routes.perform(post("/api/alerts/demo/reset").session(session).with(csrf())).andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("READY"));
+        routes.perform(post("/api/alerts/demo/trigger").session(session).with(csrf())).andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("TRIGGERED"));
+        verify(service).reset(traveller.getId()); verify(service).trigger(traveller.getId());
+    }
+
+    private Alert pendingAt(Itinerary itinerary, java.time.Instant readyAt, java.time.Instant createdAt) {
+        Impact impact = new Impact(); impact.setUser(traveller); impact.setItinerary(itinerary); impact.setNews(earthquake);
+        impact.setImpacted(true); impact.setAlertEligible(true); impact.setReason("Saved impact");
+        impact = impactRepository.saveAndFlush(impact);
+        Alert alert = new Alert(impact);
+        org.springframework.test.util.ReflectionTestUtils.setField(alert, "createdAt", createdAt);
+        org.springframework.test.util.ReflectionTestUtils.setField(alert, "emailNextAttemptAt", readyAt);
+        return alertRepository.saveAndFlush(alert);
+    }
+
+    private DemoDisruptionService demo(boolean enabled) {
+        return new DemoDisruptionService(impactRepository, alertRepository, recommendations, itineraryRepository, userRepository, alertService, emailGroups, batches,
+                enabled, true, traveller.getId(), skiTrip.getId(), earthquake.getId());
+    }
+
+    private void verdict(boolean affected) { givenAiVerdict(affected); }
+
+    private Impact evaluate() { return assessTripAsImpacted(skiTrip); }
 }

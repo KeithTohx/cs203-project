@@ -35,6 +35,8 @@ class ImpactServiceImplTest {
     @Mock private NewsService newsService;
     @Mock private org.springframework.context.ApplicationEventPublisher events;
 
+    @Mock private EvaluationProgress progress;
+
     @InjectMocks
     private ImpactServiceImpl impactService;
 
@@ -84,6 +86,29 @@ class ImpactServiceImplTest {
         stored.setImpacted(true);
         stored.setReason(reason);
         return stored;
+    }
+
+    @Test void sqliteUniqueCollisionReturnsTheOtherWorkersAssessment() {
+        Impact winner = storedImpact("Already assessed"); winner.setId(99L);
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.empty(), Optional.of(winner));
+        givenModelAnswers(true, "Affected");
+        var sql = new java.sql.SQLException("UNIQUE constraint failed: impact.assessment_key", null, 2067);
+        when(impactRepository.save(any(Impact.class))).thenThrow(
+                new org.springframework.orm.jpa.JpaSystemException(new RuntimeException(sql)));
+        assertSame(winner, impactService.evaluateItineraryForNews(itinerary, news));
+        verifyNoInteractions(events);
+    }
+
+    @Test void alertProgressDoesNotCrashWhenAnAssessmentReasonIsNull() {
+        when(itineraryService.getItineraryById(1L)).thenReturn(itinerary);
+        when(newsService.getNewsById(5L)).thenReturn(news);
+        when(activityService.getActivitiesByItinerary(1L)).thenReturn(List.of());
+        givenModelAnswers(true,null); givenSaveEchoes();
+        var result=impactService.evaluate(1L,5L);
+        assertNotNull(result);
+        assertNull(result.itinerary().reason());
+        verify(progress).finish(null,true);
     }
 
     // ===== evaluateItineraryForNews =====

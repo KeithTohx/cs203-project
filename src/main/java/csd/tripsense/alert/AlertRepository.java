@@ -12,6 +12,18 @@ import org.springframework.data.repository.query.Param;
 public interface AlertRepository extends JpaRepository<Alert, Long> {
     boolean existsByImpactId(Long impactId);
 
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {
+            "impact", "impact.user", "impact.itinerary", "impact.itinerary.user", "impact.itinerary.country",
+            "impact.activity", "impact.activity.country", "impact.activity.itinerary",
+            "impact.activity.itinerary.country", "impact.activity.itinerary.user", "impact.news"})
+    @Query("select a from Alert a where a.impact.itinerary.id = :tripId and a.impact.news.id = :newsId order by a.id")
+    java.util.List<Alert> findEmailGroup(@Param("tripId") Long tripId, @Param("newsId") Long newsId);
+
+    @Modifying
+    @Query("update Alert a set a.emailSuppressed = true, a.emailSentAt = null "
+            + "where a.id = :id and a.emailAttempts = :attempts and a.emailStatus in :states")
+    int suppressEmail(Long id, int attempts, java.util.List<EmailStatus> states);
+
     // Suppress notifications the traveller rejected, including notifications created before rejection.
     String VISIBLE = "a.impact.itinerary.user.id = :userId and a.impact.impacted = true "
             + "and (a.impact.rejected = false or a.impact.rejected is null)";
@@ -40,19 +52,29 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
     Optional<Alert> findOwned(@Param("id") Long id, @Param("userId") Long userId);
 
     @Query("""
-            select a.id from Alert a where a.emailStatus in :states and a.emailNextAttemptAt <= :now
+            select a.id from Alert a where a.emailStatus in :states and (a.emailSuppressed = false or a.emailSuppressed is null) and a.emailNextAttemptAt <= :now
               and a.impact.impacted = true and (a.impact.rejected = false or a.impact.rejected is null)
               and (a.impact.itinerary.user.enabled = true or a.impact.itinerary.user.enabled is null)
-            order by a.id
+            order by a.emailNextAttemptAt, a.id
             """)
     java.util.List<Long> findEmailReady(@Param("states") java.util.List<EmailStatus> states,
                                        @Param("now") java.time.Instant now, Pageable page);
 
     @org.springframework.data.jpa.repository.Modifying
     @Query("""
+            update Alert a set a.emailNextAttemptAt = :next
+            where a.id = :id and a.emailStatus = :pending and a.emailAttempts = :attempts
+              and a.emailNextAttemptAt < :next
+            """)
+    int deferEmail(@Param("id") Long id, @Param("attempts") int attempts,
+                   @Param("pending") EmailStatus pending, @Param("next") java.time.Instant next);
+
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("""
             update Alert a set a.emailStatus = :sending, a.emailAttempts = a.emailAttempts + 1,
                                a.emailNextAttemptAt = :leaseUntil
             where a.id = :id and a.emailAttempts = :attempts and a.emailStatus in :states
+              and (a.emailSuppressed = false or a.emailSuppressed is null)
               and a.emailNextAttemptAt <= :now
             """)
     int claimEmail(@Param("id") Long id, @Param("attempts") int attempts,
@@ -64,6 +86,7 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
     @Query("""
             update Alert a set a.emailStatus = :state, a.emailSentAt = :sentAt, a.emailNextAttemptAt = :next
             where a.id = :id and a.emailAttempts = :attempts and a.emailStatus in :states
+              and (a.emailSuppressed = false or a.emailSuppressed is null)
             """)
     int finishEmail(@Param("id") Long id, @Param("attempts") int attempts,
                     @Param("states") java.util.List<EmailStatus> states, @Param("state") EmailStatus state,

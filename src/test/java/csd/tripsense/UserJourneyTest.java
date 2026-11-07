@@ -56,6 +56,7 @@ import io.restassured.specification.RequestSpecification;
     "spring.sql.init.mode=never",
     "gdelt.ingest.enabled=false",
     "impact.eval.enabled=false",
+    "impact.eval.new-itinerary.enabled=false",
     "logging.level.org.springframework.security=WARN"
 })
 @DisplayName("User Journey Real Server Integration Test")

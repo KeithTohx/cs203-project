@@ -18,7 +18,8 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "impact")
+@Table(name = "impact", indexes = @jakarta.persistence.Index(
+        name = "uk_impact_assessment_key", columnList = "assessment_key", unique = true))
 @Getter
 @Setter
 @AllArgsConstructor
@@ -27,6 +28,10 @@ public class Impact {
     private @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     Long id;
+
+    // Nullable for historical rows; all newly assessed rows have a stable unique key.
+    @Column(name = "assessment_key", length = 120)
+    private String assessmentKey;
 
     @ManyToOne
     @JoinColumn(name = "user_id", nullable = false)
