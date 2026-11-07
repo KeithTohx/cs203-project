@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
 
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryService;
@@ -12,11 +13,14 @@ import csd.tripsense.itinerary.ItineraryService;
 public class ActivityServiceImpl implements ActivityService {
     private ActivityRepository activities;
     private ItineraryService itineraryService;
+    private ApplicationEventPublisher events;
 
-    public ActivityServiceImpl(ActivityRepository activities, ItineraryService itineraryService) {
-        this.activities = activities;
-        this.itineraryService = itineraryService;
-    }
+    public ActivityServiceImpl(ActivityRepository activities, ItineraryService itineraryService,
+                              ApplicationEventPublisher events) {
+       this.activities = activities;
+       this.itineraryService = itineraryService;
+       this.events = events;
+   }
 
     @Override
     public List<Activity> getAllActivities() {
@@ -40,11 +44,12 @@ public class ActivityServiceImpl implements ActivityService {
 
     @Override
     public Activity addActivity(Activity activity) {
-        // the body may only carry {"itinerary":{"id":..}}, so load the real itinerary
         Itinerary itinerary = itineraryService.getItineraryById(activity.getItinerary().getId());
         activity.setItinerary(itinerary);
         activity.setCountry(itinerary.getCountry());
-        return activities.save(activity);
+        Activity saved = activities.save(activity);
+        events.publishEvent(new ActivityCreatedEvent(saved.getId()));
+        return saved;
     }
 
     @Override
