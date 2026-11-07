@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Optional;
 
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
+import csd.tripsense.alert.ImpactEvaluatedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,16 +25,18 @@ public class ImpactServiceImpl implements ImpactService {
     private ItineraryService itineraryService;
     private ActivityService activityService;
     private NewsService newsService;
+    private final ApplicationEventPublisher events;
     private static final Logger log = LoggerFactory.getLogger(ImpactServiceImpl.class);
 
     public ImpactServiceImpl(ImpactRepository impacts, ChatService chatService,
                              ItineraryService itineraryService, ActivityService activityService,
-                             NewsService newsService){
+                             NewsService newsService, ApplicationEventPublisher events){
         this.impacts = impacts;
         this.chatService = chatService;
         this.itineraryService = itineraryService;
         this.activityService = activityService;
         this.newsService = newsService;
+        this.events = events;
     }
 
     // the shape we ask the model to answer in
@@ -212,10 +216,12 @@ public class ImpactServiceImpl implements ImpactService {
         impact.setActivity(activity);
         impact.setImpacted(verdict.impacted());
         impact.setReason(verdict.reason());
+        impact.setAlertEligible(verdict.impacted() && !Boolean.TRUE.equals(impact.getRejected()));
         Impact saved = impacts.save(impact);
         log.info("Impact saved: id={} news={} itinerary={} activity={} impacted={} reason={}",
                 saved.getId(), news.getId(), itinerary.getId(),
                 activity == null ? null : activity.getId(), verdict.impacted(), verdict.reason());
+        events.publishEvent(new ImpactEvaluatedEvent(saved.getId()));
         return saved;
     }
 

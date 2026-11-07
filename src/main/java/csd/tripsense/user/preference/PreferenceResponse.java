@@ -1,6 +1,9 @@
 package csd.tripsense.user.preference;
 
 import java.time.Instant;
+import java.util.Set;
+
+import csd.tripsense.activity.ActivityCategory;
 
 public record PreferenceResponse(
         RiskTolerance riskTolerance,
@@ -9,13 +12,14 @@ public record PreferenceResponse(
         TravelGroup travelGroup,
         boolean travellingWithChildren,
         boolean travellingWithElderly,
+        Set<ActivityCategory> preferredCategories,
         Instant updatedAt
 ) {
     public static PreferenceResponse from(UserPreference p) {
         return new PreferenceResponse(
                 p.getRiskTolerance(), p.getFlexibilityLevel(), p.getExplanationDetail(), 
                 p.getTravelGroup(), p.isTravellingWithChildren(), p.isTravellingWithElderly(),
-                p.getUpdatedAt());
+                Set.copyOf(p.getPreferredCategories()), p.getUpdatedAt());
     }
 
     /**

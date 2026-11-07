@@ -2,6 +2,7 @@
 // The backend's PUT replaces the whole record, so related records (user, country, itinerary) are sent back as {id}.
 import { api } from "../api.js";
 import { confirmTwice, escapeHtml, flash, formPage, showError, sortByStart } from "../util.js";
+import { icon } from "../icons.js";
 
 const ITINERARIES_LINK = "#/itineraries";
 const showLoading = root => { root.innerHTML = `<div class="msg">Loading…</div>`; };
@@ -83,8 +84,15 @@ export async function showEditItinerary(root, user, onAuthLost, itineraryId, sta
     // Set once the itinerary exists, so retrying after a failed activity save doesn't create it twice.
     let savedId = isNew ? null : Number(itinerary.id);
 
-    const countryOptions = (countries ?? []).map(country =>
-        `<option value="${Number(country.id)}"${country.id === itinerary.countryId ? " selected" : ""}>${escapeHtml(country.name)}</option>`).join("");
+    // the country field is a search box over a datalist, so typing narrows the list down.
+    // names are matched ignoring case, then turned back into the id the backend wants
+    const countryList = countries ?? [];
+    const countryIdsByName = new Map(countryList.map(country => [country.name.toLowerCase(), Number(country.id)]));
+    const currentCountry = countryList.find(country => country.id === itinerary.countryId);
+    const countryOptions = countryList
+        .map(country => `<option value="${escapeHtml(country.name)}"></option>`)
+        .join("");
+    const countryIdFor = name => countryIdsByName.get(name.trim().toLowerCase());
     const sortedActivities = sortByStart(activities ?? []);
     let nextKey = sortedActivities.length;
     const deletedIds = new Set();
@@ -98,8 +106,14 @@ export async function showEditItinerary(root, user, onAuthLost, itineraryId, sta
             placeholder="Name your trip" maxlength="100" required>
         <div class="itinerary-meta">
             <label class="sr-only" for="country">Country</label>
-            <select id="country" name="country" class="inline-edit" required>${isNew ? `<option value="" selected disabled>Choose a country</option>` : ""}${countryOptions}</select>
+            ${icon("mapPin")}
+            <input id="country" name="country" class="inline-edit country" list="country-options"
+                value="${escapeHtml(currentCountry?.name)}" placeholder="Search for a country" autocomplete="off" required>
+            <datalist id="country-options">
+                ${countryOptions}
+            </datalist>
             <span class="inline-range">
+                ${icon("calendar")}
                 <label class="sr-only" for="dateStart">Start date</label>
                 <input id="dateStart" name="dateStart" type="date" class="inline-edit" value="${toDateInput(itinerary.dateStart)}" required>
                 <span aria-hidden="true">to</span>
@@ -110,8 +124,10 @@ export async function showEditItinerary(root, user, onAuthLost, itineraryId, sta
         <h2 class="form-section">Activities</h2>
         <ol class="activity-editor timeline">${sortedActivities.map(createActivityRow).join("")}</ol>
         <p class="meta" id="no-activities">No activities planned yet.</p>
-        <button type="button" class="ghost small add" id="add-activity">+ Add activity</button>`,
+        <button type="button" class="ghost small add" id="add-activity">${icon("plus")}Add activity</button>`,
         onSubmit: async inputs => {
+            const countryId = countryIdFor(inputs.country.value);
+            if (countryId == null) throw new Error("Pick a country from the list.");
             checkEndNotBeforeStart(inputs.dateStart.value, inputs.dateEnd.value);
             const rows = activityRows().map(row => {
                 const value = name => row.querySelector(`[data-field="${name}"]`).value;
@@ -130,7 +146,7 @@ export async function showEditItinerary(root, user, onAuthLost, itineraryId, sta
 
             const itineraryData = {
                 user: { id: itinerary.userId },
-                country: { id: Number(inputs.country.value) },
+                country: { id: countryId },
                 name: inputs.name.value.trim(),
                 dateStart: inputs.dateStart.value + "T00:00:00",
                 dateEnd: inputs.dateEnd.value + "T00:00:00",
@@ -262,6 +278,20 @@ export async function showEditItinerary(root, user, onAuthLost, itineraryId, sta
         emptyMessage.hidden = activityRows().length > 0;
         applyAllowedRange();
     };
+    // flag a name that is not in the list straight away, rather than only on save
+    const countryInput = form.elements.country;
+    countryInput.addEventListener("input", () => {
+        const typed = countryInput.value.trim();
+        const isKnown = !typed || countryIdFor(typed) != null;
+        countryInput.setCustomValidity(isKnown ? "" : "Pick a country from the list.");
+    });
+    countryInput.addEventListener("change", () => {
+        // tidy the casing to match the list, eg "japan" -> "Japan"
+        const id = countryIdFor(countryInput.value);
+        const match = countryList.find(country => Number(country.id) === id);
+        if (match) countryInput.value = match.name;
+    });
+
     form.elements.dateStart.addEventListener("change", applyAllowedRange);
     form.elements.dateEnd.addEventListener("change", applyAllowedRange);
 

@@ -1,3 +1,11 @@
 package csd.tripsense.user.preference;
 
-public enum RiskTolerance { LOW, MEDIUM, HIGH }
+/**
+ * RiskTolerance:
+ * Refers to the risk attitude of the traveller.
+ */
+public enum RiskTolerance { 
+    LOW, 
+    MEDIUM, 
+    HIGH 
+}

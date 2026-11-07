@@ -12,7 +12,10 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.List;
 import java.util.Objects;
 
-/** Ownership checks for personal trip data, including accounts with the ADMIN role. */
+/** 
+ * Ownership checks for personal trip data.
+ * Only the owner themselves has access; admins get no special access.
+ */
 @Component
 public class ItineraryAccess {
 
@@ -37,8 +40,10 @@ public class ItineraryAccess {
         return itinerary;
     }
 
-    // An impact belongs to whoever owns its itinerary; orphan impacts are inaccessible.
-    // anyone else gets "not found" (404), the same as for itineraries
+    /**
+     * An impact belongs to whoever owns its itinerary; orphan impacts are inaccessible.
+     * Anyone else gets "not found" (404), the same as for itineraries
+     */
     public Impact requireAccess(Impact impact, CurrentUser me) {
         requireLoggedIn(me);
 
@@ -50,7 +55,7 @@ public class ItineraryAccess {
         return impact;
     }
 
-    /** Keeps only the itineraries the caller may access (only their own, including admins). */
+    /** Keeps only the itineraries the caller owns. */
     public List<Itinerary> visibleTo(List<Itinerary> itineraries, CurrentUser me) {
         requireLoggedIn(me);
         return itineraries.stream().filter(i -> canAccess(i, me)).toList();
@@ -81,4 +86,5 @@ public class ItineraryAccess {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Not logged in");
         }
     }
+    
 }

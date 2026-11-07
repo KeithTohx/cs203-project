@@ -2,6 +2,8 @@ package csd.tripsense.impact;
 
 import java.time.LocalDateTime;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
+
 import csd.tripsense.news.News;
 
 /**
@@ -23,6 +25,8 @@ public record ImpactResponse(
         String newsSource,
         String newsUrl,
         String newsDescription,
+        // stored in UTC, so the Z tells browsers not to read it as their own local time
+        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss'Z'")
         LocalDateTime newsPublishedAt,
         Long itineraryId,
         String itineraryName,

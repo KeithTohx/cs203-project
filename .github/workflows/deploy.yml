@@ -29,10 +29,17 @@ jobs:
             ./mvnw -B -q package -DskipTests
             sudo systemctl restart tripsense
             # poll rather than a fixed wait, startup has already grown 9s -> 14s
-            for i in $(seq 1 12); do
+            for i in $(seq 1 36); do
               sleep 5
-              if curl -fsS -o /dev/null http://localhost/v3/api-docs; then exit 0; fi
+              if curl --connect-timeout 2 --max-time 5 -fsS \
+                -o /dev/null http://127.0.0.1:80/v3/api-docs; then
+                echo "TripSense is ready"
+                exit 0
+              fi
             done
-            echo "app did not come back up"
-            journalctl -u tripsense -n 30 --no-pager
+
+            echo "App did not become ready"
+            systemctl status tripsense --no-pager --full || true
+            ss -ltn | grep -E ':(80|8080)[[:space:]]' || true
+            journalctl -u tripsense -n 200 --no-pager || true
             exit 1
