@@ -1,458 +1,710 @@
 package csd.tripsense.recommendation;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
+import java.lang.reflect.Constructor;
+import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
+import org.mockito.stubbing.Answer;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityCategory;
 import csd.tripsense.chat.ChatService;
-import csd.tripsense.country.Country;
 import csd.tripsense.impact.Impact;
 import csd.tripsense.impact.ImpactService;
 import csd.tripsense.itinerary.Itinerary;
-import csd.tripsense.itinerary.ItineraryNotFoundException;
 import csd.tripsense.itinerary.ItineraryService;
 import csd.tripsense.news.News;
 import csd.tripsense.user.User;
+import csd.tripsense.user.preference.FlexibilityLevel;
+import csd.tripsense.user.preference.PreferenceService;
+import csd.tripsense.user.preference.UserPreference;
 
-// unit tests for RecommendationServiceImpl
-// the model is always mocked, so these check what the service does with its answer:
-// reuse what is stored, keep only places we offered, and still answer when the model fails
-@ExtendWith(MockitoExtension.class)
-@DisplayName("RecommendationService Unit Tests")
+/**
+ * The whole generate flow, with the model, the database and the other services mocked.
+ * RecommendationRules is the real one, so the shortlist the model is offered is the real shortlist.
+ *
+ * The setup is a ski day at Niseko hit by snow, and three indoor options in Sapporo. Sapporo is
+ * not named in the activity's address, so the rules cannot work out a distance and every option
+ * ties. That makes the order simple to reason about: by id (museum, mall, restaurant), and with a
+ * preferred kind, that kind jumps to the front.
+ */
 class RecommendationServiceImplTest {
 
-    @Mock private RecommendationRepository recommendations;
-    @Mock private ActivityOptionRepository options;
-    @Mock private ImpactService impactService;
-    @Mock private ItineraryService itineraryService;
-    @Mock private ChatService chatService;
+    private static final Long USER_ID = 1L;
+    private static final Long ITINERARY_ID = 10L;
 
-    @InjectMocks
-    private RecommendationServiceImpl recommendationService;
+    private RecommendationRepository recommendations;
+    private ActivityOptionRepository options;
+    private ImpactService impactService;
+    private ItineraryService itineraryService;
+    private ChatService chatService;
+    private PreferenceService preferenceService;
+    private RecommendationServiceImpl service;
 
-    private Itinerary itinerary;
-    private Activity skiDay;
-    private News earthquake;
-    private Impact skiImpact;
+    private UserPreference prefs;
 
-    // both in sapporo, so the rules rank them by id and the museum comes first
-    private final ActivityOption museum = new ActivityOption(501L, "Japan", "Sapporo",
-            ActivityCategory.MUSEUM_GALLERY, "Sapporo Art Museum", "Chuo-ku, Sapporo", 43.06, 141.35);
-    private final ActivityOption ramenAlley = new ActivityOption(502L, "Japan", "Sapporo",
-            ActivityCategory.FOOD_DINING, "Ramen Alley", "Susukino, Sapporo", 43.06, 141.35);
-    // another ski field is never offered for a ski day, but the rules need it to place niseko
-    private final ActivityOption rusutsu = new ActivityOption(503L, "Japan", "Niseko",
-            ActivityCategory.SKI_SNOW, "Rusutsu Resort", "Niseko", 42.80, 140.68);
+    private final ActivityOption museum = new ActivityOption(1L, "Japan", "Sapporo",
+            ActivityCategory.MUSEUM_GALLERY, "Sapporo Art Museum", "Sapporo, Japan", 43.0618, 141.3545);
+    private final ActivityOption mall = new ActivityOption(2L, "Japan", "Sapporo",
+            ActivityCategory.SHOPPING, "Sapporo Mall", "Sapporo, Japan", 43.0618, 141.3545);
+    private final ActivityOption restaurant = new ActivityOption(3L, "Japan", "Sapporo",
+            ActivityCategory.FOOD_DINING, "Sapporo Ramen House", "Sapporo, Japan", 43.0618, 141.3545);
 
     @BeforeEach
     void setUp() {
-        User traveller = new User("traveller@example.com", "traveller", "hash", "USER");
-        ReflectionTestUtils.setField(traveller, "id", 7L);
+        recommendations = mock(RecommendationRepository.class);
+        options = mock(ActivityOptionRepository.class);
+        impactService = mock(ImpactService.class);
+        itineraryService = mock(ItineraryService.class);
+        chatService = mock(ChatService.class);
+        preferenceService = mock(PreferenceService.class);
+        service = new RecommendationServiceImpl(recommendations, options, impactService,
+                itineraryService, chatService, preferenceService, new csd.tripsense.itinerary.ItineraryAccess(mock(csd.tripsense.user.UserRepository.class)));
 
-        Country japan = new Country();
-        japan.setName("Japan");
+        // deep stubs so we can say "its user has id 1 and its country is Japan" without building a
+        // Country object, which this test has no reason to know about
+        Itinerary itinerary = mock(Itinerary.class, RETURNS_DEEP_STUBS);
+        when(itinerary.getUser().getId()).thenReturn(USER_ID);
+        when(itinerary.getCountry().getName()).thenReturn("Japan");
+        when(itineraryService.getItineraryById(ITINERARY_ID)).thenReturn(itinerary);
 
-        itinerary = new Itinerary();
-        itinerary.setId(1L);
-        itinerary.setName("Japan Ski Trip");
-        itinerary.setUser(traveller);
-        itinerary.setCountry(japan);
-
-        skiDay = new Activity();
-        skiDay.setId(10L);
-        skiDay.setName("Ski at Niseko");
-        skiDay.setAddress("Niseko, Hokkaido, Japan");
-        skiDay.setCategory(ActivityCategory.SKI_SNOW);
-        skiDay.setItinerary(itinerary);
-
-        earthquake = new News();
-        earthquake.setId(5L);
-        earthquake.setTitle("Earthquake near Hokkaido");
-        earthquake.setDescription("Ski resorts are suspending lifts.");
-
-        skiImpact = impactOn(100L, skiDay, "Lifts may stay shut");
+        // a traveller with the entity defaults, and no saved recommendations to reuse
+        prefs = new UserPreference(mock(User.class));
+        when(preferenceService.getPreferences(USER_ID)).thenReturn(prefs);
+        when(options.findByCountry("Japan")).thenReturn(List.of(museum, mall, restaurant));
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(any())).thenReturn(Optional.empty());
+        // save hands back what it was given, like a real repository
+        when(recommendations.save(any(Recommendation.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
-    // ---------------------------------------------------------------- helpers
+    // ----- helpers -----
 
-    private Impact impactOn(Long id, Activity activity, String reason) {
-        Impact impact = new Impact();
-        impact.setId(id);
-        impact.setItinerary(itinerary);
-        impact.setActivity(activity);
-        impact.setNews(earthquake);
-        impact.setImpacted(true);
-        impact.setReason(reason);
+    // a cancelled ski day. its address names no option's area, see the class comment
+    private Impact skiImpact(long impactId) {
+        Activity activity = mock(Activity.class);
+        when(activity.getName()).thenReturn("Ski at Niseko");
+        when(activity.getCategory()).thenReturn(ActivityCategory.SKI_SNOW);
+        when(activity.getAddress()).thenReturn("Niseko, Hokkaido, Japan");
+
+        News news = mock(News.class);
+        when(news.getTitle()).thenReturn("Heavy snow closes ski resorts");
+        when(news.getDescription()).thenReturn("Lifts are suspended across the region.");
+
+        Impact impact = mock(Impact.class);
+        when(impact.getId()).thenReturn(impactId);
+        when(impact.getActivity()).thenReturn(activity);
+        when(impact.getNews()).thenReturn(news);
+        when(impact.getReason()).thenReturn("The resort is closed.");
         return impact;
     }
 
-    private void givenImpacts(Impact... impacts) {
-        when(itineraryService.getItineraryById(1L)).thenReturn(itinerary);
-        when(impactService.findImpacted(7L, 1L)).thenReturn(List.of(impacts));
+    private void theImpactsAre(Impact... impacts) {
+        when(impactService.findImpacted(USER_ID, ITINERARY_ID)).thenReturn(List.of(impacts));
     }
 
-    private void givenNothingStored() {
-        when(recommendations.findFirstByImpactIdOrderByIdDesc(anyLong())).thenReturn(Optional.empty());
-    }
-
-    private void givenJapanOptions() {
-        when(options.findByCountry("Japan")).thenReturn(List.of(museum, ramenAlley, rusutsu));
-    }
-
-    private void givenSaveEchoes() {
-        when(recommendations.save(any(Recommendation.class))).thenAnswer(invocation -> invocation.getArgument(0));
-    }
-
-    // the answer type is a private record, so it is built by reflection from whatever type is asked for
-    private void givenModelAnswers(String severity, String action, Long optionId, String advice) {
-        when(chatService.ask(anyString(), any(Class.class))).thenAnswer(invocation -> {
+    /**
+     * What the model answers. Suggestion is a private record, so it is built through reflection
+     * from the class the service passes in. Making it package private would let this be a plain
+     * "new Suggestion(...)".
+     */
+    private Answer<Object> modelSays(String severity, String action, Long optionId, String advice) {
+        return invocation -> {
             Class<?> type = invocation.getArgument(1);
-            var constructor = type.getDeclaredConstructor(String.class, String.class, Long.class, String.class);
+            Constructor<?> constructor = type.getDeclaredConstructors()[0];
             constructor.setAccessible(true);
             return constructor.newInstance(severity, action, optionId, advice);
-        });
+        };
     }
 
-    private Recommendation stored(Impact impact, Severity severity) {
-        Recommendation recommendation = new Recommendation();
-        recommendation.setImpact(impact);
-        recommendation.setSeverity(severity);
-        recommendation.setAction(Action.MONITOR);
-        recommendation.setAdvice("Already worked out");
+    private void theModelSays(String severity, String action, Long optionId, String advice) {
+        when(chatService.ask(anyString(), any())).thenAnswer(modelSays(severity, action, optionId, advice));
+    }
+
+    // generate for one impact and hand back the one recommendation
+    private Recommendation generateOne() {
+        List<Recommendation> result = service.generate(ITINERARY_ID);
+        assertThat(result).hasSize(1);
+        return result.get(0);
+    }
+
+    // a saved preferences row, last changed at this moment (the unsaved default has no id)
+    private void preferencesSavedAt(Instant updatedAt) {
+        ReflectionTestUtils.setField(prefs, "id", 1L);
+        ReflectionTestUtils.setField(prefs, "updatedAt", updatedAt);
+    }
+
+    // a recommendation written for preferences from long before "now", so it is stale against
+    // preferences saved now. it is stale because of its version, not because of when it was made,
+    // which is the rule the service uses
+    private Recommendation staleRecommendation() {
+        Recommendation recommendation = savedRecommendationMadeAt(LocalDateTime.now().minusHours(2));
+        recommendation.setPreferencesVersion(Instant.now().minusSeconds(7200));
         return recommendation;
     }
 
-    // ===== GENERATE: REUSING WHAT IS STORED =====
+    private Recommendation savedRecommendationMadeAt(LocalDateTime createdAt) {
+        Recommendation recommendation = new Recommendation();
+        recommendation.setSeverity(Severity.MEDIUM);
+        recommendation.setAction(Action.MONITOR);
+        recommendation.setCreatedAt(createdAt);
+        return recommendation;
+    }
 
     @Test
-    @DisplayName("Should reuse the stored recommendation without asking the model")
-    void generate_ShouldReuseStored_WhenImpactAlreadyHasOne() {
-        // Arrange
-        givenImpacts(skiImpact);
-        Recommendation existing = stored(skiImpact, Severity.HIGH);
-        when(recommendations.findFirstByImpactIdOrderByIdDesc(100L)).thenReturn(Optional.of(existing));
+    void refreshingPreferencesPreservesTheAcceptedDecision() {
+        preferencesSavedAt(Instant.now());
+        Recommendation accepted = staleRecommendation();
+        accepted.setId(42L);
+        accepted.setStatus(RecommendationStatus.ACCEPTED);
+        LocalDateTime decidedAt = LocalDateTime.now().minusHours(1);
+        accepted.setDecidedAt(decidedAt);
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(accepted));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
 
-        // Act
-        List<Recommendation> result = recommendationService.generate(1L);
+        Recommendation refreshed = generateOne();
 
-        // Assert
-        assertEquals(List.of(existing), result);
+        assertThat(refreshed).isSameAs(accepted);
+        assertThat(refreshed.getStatus()).isEqualTo(RecommendationStatus.ACCEPTED);
+        assertThat(refreshed.getDecidedAt()).isEqualTo(decidedAt);
+        assertThat(refreshed.getPreferencesVersion()).isEqualTo(prefs.getUpdatedAt());
+    }
+
+    // ----- caching and staleness -----
+
+    @Test
+    void aRecommendationMadeAfterThePreferencesLastChangedIsReusedWithoutTheModel() {
+        Instant version = Instant.now().minusSeconds(3600);
+        preferencesSavedAt(version);
+        Recommendation cached = savedRecommendationMadeAt(LocalDateTime.now());
+        cached.setPreferencesVersion(version);   // written for exactly the preferences saved now
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(cached));
+        theImpactsAre(skiImpact(4L));
+
+        List<Recommendation> result = service.generate(ITINERARY_ID);
+
+        assertThat(result).containsExactly(cached);
         verifyNoInteractions(chatService);
-        verify(recommendations, never()).save(any(Recommendation.class));
+        verify(recommendations, never()).delete(any());
+        verify(recommendations, never()).save(any());
+    }
+
+    // ----- refreshing a stale recommendation -----
+    //
+    // the refresh must be atomic: the impact is never left without a recommendation, never given
+    // two, and a failure while refreshing leaves the old one in place
+
+    @Test
+    void aRecommendationMadeBeforeThePreferencesChangedIsUpdatedInPlace() {
+        preferencesSavedAt(Instant.now());
+        Recommendation stale = staleRecommendation();
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(stale));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
+
+        Recommendation refreshed = generateOne();
+
+        // the same row, not a new one, so the impact still has exactly one recommendation
+        assertThat(refreshed).isSameAs(stale);
+        assertThat(refreshed.getSuggestedOption()).isEqualTo(museum);
+        assertThat(refreshed.getAdvice()).isEqualTo("Visit the art museum.");
+        assertThat(refreshed.getCreatedAt()).isAfter(LocalDateTime.now().minusMinutes(1));   // no longer stale
+        verify(recommendations).save(stale);
+        verify(recommendations, never()).delete(any());
     }
 
     @Test
-    @DisplayName("Should return nothing when the itinerary has no impacts")
-    void generate_ShouldReturnEmpty_WhenNothingIsImpacted() {
-        // Arrange
-        givenImpacts();
+    void aRefreshNeverDeletesTheOldRowSoThereIsNoMomentWithNoRecommendation() {
+        preferencesSavedAt(Instant.now());
+        Recommendation stale = staleRecommendation();
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(stale));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "MONITOR", null, "Keep watching.");
 
-        // Act
-        List<Recommendation> result = recommendationService.generate(1L);
+        generateOne();
 
-        // Assert
-        assertTrue(result.isEmpty());
+        verify(recommendations, never()).delete(any());
+        verify(recommendations, never()).deleteAll();
+    }
+
+    @Test
+    void aFailedSaveDuringARefreshPropagatesAndNeverTouchesTheOldRow() {
+        preferencesSavedAt(Instant.now());
+        Recommendation stale = staleRecommendation();
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(stale));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
+        doThrow(new RuntimeException("database is down")).when(recommendations).save(any(Recommendation.class));
+
+        // an ordinary failure is not hidden, and the old row was never deleted, so it is still saved
+        assertThatThrownBy(() -> service.generate(ITINERARY_ID))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("database is down");
+        verify(recommendations, never()).delete(any());
+    }
+
+    @Test
+    void whenTheModelIsDownAStaleRowIsStillRefreshedWithTheFallback() {
+        preferencesSavedAt(Instant.now());
+        Recommendation stale = staleRecommendation();
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(stale));
+        theImpactsAre(skiImpact(4L));
+        when(chatService.ask(anyString(), any())).thenThrow(new RuntimeException("ollama is not running"));
+
+        Recommendation refreshed = generateOne();
+
+        // the fallback follows the new preferences too, and it lands on the same row
+        assertThat(refreshed).isSameAs(stale);
+        assertThat(refreshed.getSuggestedOption()).isEqualTo(museum);
+        verify(recommendations, never()).delete(any());
+    }
+
+    @Test
+    void nothingIsWrittenUntilTheWholeAnswerIsReady() {
+        preferencesSavedAt(Instant.now());
+        Recommendation stale = staleRecommendation();
+        stale.setAdvice("the old advice");
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(stale));
+        theImpactsAre(skiImpact(4L));
+        // the shortlist lookup blows up while the new answer is being worked out
+        when(options.findByCountry("Japan")).thenThrow(new IllegalStateException("options table unreadable"));
+
+        assertThatThrownBy(() -> service.generate(ITINERARY_ID)).isInstanceOf(IllegalStateException.class);
+
+        // the old row was neither changed nor saved
+        assertThat(stale.getAdvice()).isEqualTo("the old advice");
+        verify(recommendations, never()).save(any());
+        verify(recommendations, never()).delete(any());
+    }
+
+    // ----- the preferences version a recommendation is written for -----
+
+    @Test
+    void aRecommendationRecordsTheVersionOfThePreferencesItWasWrittenFor() {
+        Instant version = Instant.parse("2026-11-01T10:00:00Z");
+        preferencesSavedAt(version);
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "MONITOR", null, "Keep watching.");
+
+        assertThat(generateOne().getPreferencesVersion()).isEqualTo(version);
+    }
+
+    @Test
+    void aTravellerWhoNeverChangedAnythingStillGetsTheirDefaultRowsVersion() {
+        // getPreferences saves a row of defaults the first time, so there is always a real version
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "MONITOR", null, "Keep watching.");
+
+        assertThat(generateOne().getPreferencesVersion()).isEqualTo(prefs.getUpdatedAt());
+    }
+
+    @Test
+    void olderRecommendationsAreNotRedoneJustBecauseTheDefaultRowWasCreated() {
+        // made before versions existed, so no version. the traveller's row of defaults has just been
+        // saved with "now" as its updatedAt, which must not make every older row look out of date
+        preferencesSavedAt(Instant.now());
+        Recommendation older = savedRecommendationMadeAt(LocalDateTime.now().minusDays(30));
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(older));
+        theImpactsAre(skiImpact(4L));
+
+        List<Recommendation> result = service.generate(ITINERARY_ID);
+
+        assertThat(result).containsExactly(older);
+        verifyNoInteractions(chatService);    // no model call per impact
+        verify(recommendations, never()).save(any());
+    }
+
+    @Test
+    void olderRecommendationsAreRedoneOnceTheSettingsHaveChanged() {
+        preferencesSavedAt(Instant.now());
+        prefs.setFlexibilityLevel(FlexibilityLevel.FIXED_DATES);
+        Recommendation older = savedRecommendationMadeAt(LocalDateTime.now().minusDays(30));
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(older));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "MONITOR", null, "Keep watching.");
+
+        generateOne();
+
+        verify(chatService).ask(anyString(), any());
+        verify(recommendations).save(older);
+    }
+
+    // ----- telling the client which recommendations are out of date -----
+
+    @Test
+    void theStoredListMarksAdviceWrittenForOlderPreferencesAsStale() {
+        preferencesSavedAt(Instant.now());
+        Recommendation stale = staleRecommendation();
+        Recommendation current = savedRecommendationMadeAt(LocalDateTime.now());
+        current.setPreferencesVersion(prefs.getUpdatedAt());
+        when(recommendations.findByImpactItineraryId(ITINERARY_ID)).thenReturn(List.of(stale, current));
+
+        List<Recommendation> result = service.getByItinerary(ITINERARY_ID);
+
+        assertThat(stale.isStale()).isTrue();
+        assertThat(current.isStale()).isFalse();
+        assertThat(result).containsExactlyInAnyOrder(stale, current);
+    }
+
+    @Test
+    void readingTheStoredListNeverCallsTheModelOrWrites() {
+        preferencesSavedAt(Instant.now());
+        when(recommendations.findByImpactItineraryId(ITINERARY_ID)).thenReturn(List.of(staleRecommendation()));
+
+        service.getByItinerary(ITINERARY_ID);
+
+        // stale advice is still returned as it was, only marked. redoing it is the client's choice
+        verifyNoInteractions(chatService);
+        verify(recommendations, never()).save(any());
+        verify(recommendations, never()).delete(any());
+    }
+
+    @Test
+    void aTravellerWhoSwitchesToFixedDatesSeesTheOldRescheduleMarkedStale() {
+        // the example from the review: a stored "reschedule" must not look current after the change
+        Recommendation reschedule = savedRecommendationMadeAt(LocalDateTime.now().minusDays(1));
+        reschedule.setAction(Action.RESCHEDULE);
+        reschedule.setPreferencesVersion(Instant.now().minusSeconds(86400));
+        prefs.setFlexibilityLevel(FlexibilityLevel.FIXED_DATES);
+        preferencesSavedAt(Instant.now());
+        when(recommendations.findByImpactItineraryId(ITINERARY_ID)).thenReturn(List.of(reschedule));
+
+        service.getByItinerary(ITINERARY_ID);
+
+        assertThat(reschedule.getAction()).isEqualTo(Action.RESCHEDULE);   // not hidden or changed
+        assertThat(reschedule.isStale()).isTrue();                          // but flagged
+    }
+
+    @Test
+    void aStoredRecommendationWithNoVersionIsNotFlaggedForATravellerOnDefaults() {
+        preferencesSavedAt(Instant.now());
+        Recommendation legacy = savedRecommendationMadeAt(LocalDateTime.now().minusDays(30));
+        when(recommendations.findByImpactItineraryId(ITINERARY_ID)).thenReturn(List.of(legacy));
+
+        service.getByItinerary(ITINERARY_ID);
+
+        assertThat(legacy.isStale()).isFalse();
+    }
+
+    @Test
+    void whatGenerateReturnsIsNotMarkedStale() {
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "MONITOR", null, "Keep watching.");
+
+        assertThat(generateOne().isStale()).isFalse();
+    }
+
+    @Test
+    void preferencesChangedWhileTheModelIsAnsweringLeaveTheAdviceOutOfDate() {
+        Instant startedWith = Instant.parse("2026-11-01T10:00:00Z");
+        preferencesSavedAt(startedWith);
+        theImpactsAre(skiImpact(4L));
+        // the traveller saves new preferences while the model is still working
+        when(chatService.ask(anyString(), any())).thenAnswer(invocation -> {
+            ReflectionTestUtils.setField(prefs, "updatedAt", Instant.now());
+            return modelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.").answer(invocation);
+        });
+
+        Recommendation made = generateOne();
+
+        // it is stamped with the version the model was told about, not the one saved afterwards
+        assertThat(made.getPreferencesVersion()).isEqualTo(startedWith);
+        // and createdAt is later than the change, which is what used to make it look current
+        assertThat(made.getCreatedAt()).isAfter(LocalDateTime.now().minusMinutes(1));
+        assertThat(RecommendationServiceImpl.isStale(made, prefs)).isTrue();
+    }
+
+    @Test
+    void aRefreshStampsTheRowWithTheNewVersion() {
+        Instant newVersion = Instant.parse("2026-11-01T12:00:00Z");
+        preferencesSavedAt(newVersion);
+        Recommendation stale = staleRecommendation();
+        stale.setPreferencesVersion(Instant.parse("2026-11-01T10:00:00Z"));
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.of(stale));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "MONITOR", null, "Keep watching.");
+
+        generateOne();
+
+        assertThat(stale.getPreferencesVersion()).isEqualTo(newVersion);
+        assertThat(RecommendationServiceImpl.isStale(stale, prefs)).isFalse();
+    }
+
+    // ----- two requests at the same moment -----
+
+    @Test
+    void ifAnotherRequestCreatedTheFirstRowFirstItsRowIsUsedInstead() {
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
+        Recommendation winner = savedRecommendationMadeAt(LocalDateTime.now());
+        // first lookup finds nothing, then the other request's insert lands before ours
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.empty(), Optional.of(winner));
+        doThrow(new DataIntegrityViolationException("duplicate impact_id"))
+                .when(recommendations).save(any(Recommendation.class));
+
+        Recommendation result = generateOne();
+
+        assertThat(result).isSameAs(winner);
+    }
+
+    @Test
+    void aDuplicateThatCannotBeFoundAgainIsNotHidden() {
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
+        // the constraint fired but there is no row to fall back on, so something else is wrong
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L)).thenReturn(Optional.empty(), Optional.empty());
+        doThrow(new DataIntegrityViolationException("duplicate impact_id"))
+                .when(recommendations).save(any(Recommendation.class));
+
+        assertThatThrownBy(() -> service.generate(ITINERARY_ID))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void theNewRowIsSavedExactlyOnceWhenThereWasNoneBefore() {
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
+
+        Recommendation created = generateOne();
+
+        assertThat(created.getSuggestedOption()).isEqualTo(museum);
+        verify(recommendations).save(created);
+        verify(recommendations, never()).delete(any());
+    }
+
+    // ----- picking the option -----
+
+    @Test
+    void anOptionOfThePreferredKindChosenByTheModelIsKept() {
+        prefs.setPreferredCategories(Set.of(ActivityCategory.SHOPPING));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "REPLACE", 2L, "Try Sapporo Mall instead.");
+
+        Recommendation recommendation = generateOne();
+
+        assertThat(recommendation.getSuggestedOption()).isEqualTo(mall);
+        assertThat(recommendation.getAdvice()).isEqualTo("Try Sapporo Mall instead.");   // the model's own words
+    }
+
+    @Test
+    void aModelThatIgnoresThePreferredKindIsOverruled() {
+        prefs.setPreferredCategories(Set.of(ActivityCategory.SHOPPING));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "REPLACE", 1L, "Go to the art museum.");   // a museum, not shopping
+
+        Recommendation recommendation = generateOne();
+
+        assertThat(recommendation.getSuggestedOption()).isEqualTo(mall);
+        assertThat(recommendation.getAction()).isEqualTo(Action.REPLACE);
+        // the model's advice named the museum, so it is replaced with one that names the mall
+        assertThat(recommendation.getAdvice()).isEqualTo("Swap this for Sapporo Mall in Sapporo.");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = { "MONITOR", "RESCHEDULE", "CANCEL", "RELOCATE" })
+    void aSwappedOptionIsAlwaysAReplaceWhateverTheModelSaid(String modelAction) {
+        prefs.setPreferredCategories(Set.of(ActivityCategory.SHOPPING));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", modelAction, 1L, "Do something else.");   // a museum, not shopping
+
+        Recommendation recommendation = generateOne();
+
+        // the advice says "Swap this for ...", so the action must say the same and not contradict it
+        assertThat(recommendation.getSuggestedOption()).isEqualTo(mall);
+        assertThat(recommendation.getAction()).isEqualTo(Action.REPLACE);
+        assertThat(recommendation.getAdvice()).isEqualTo("Swap this for Sapporo Mall in Sapporo.");
+    }
+
+    @Test
+    void aModelPickThatIsAlreadyPreferredKeepsTheActionTheModelGave() {
+        prefs.setPreferredCategories(Set.of(ActivityCategory.SHOPPING));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "RELOCATE", 2L, "Move the day to the mall.");   // nothing was swapped
+
+        // only a swap forces REPLACE. when the code did not interfere the model's own answer stands
+        assertThat(generateOne().getAction()).isEqualTo(Action.RELOCATE);
+    }
+
+    @Test
+    void aPreferenceNeverForcesAnOptionOnAModelThatChoseNone() {
+        prefs.setPreferredCategories(Set.of(ActivityCategory.SHOPPING));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "MONITOR", null, "Keep watching the news.");
+
+        Recommendation recommendation = generateOne();
+
+        assertThat(recommendation.getSuggestedOption()).isNull();
+        assertThat(recommendation.getAction()).isEqualTo(Action.MONITOR);
+        assertThat(recommendation.getAdvice()).isEqualTo("Keep watching the news.");
+    }
+
+    @Test
+    void anOptionIdWeNeverOfferedIsDropped() {
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "REPLACE", 999L, "Go to the Grand Hall.");
+
+        // the guard this whole design exists for: an invented id never reaches the database
+        assertThat(generateOne().getSuggestedOption()).isNull();
+    }
+
+    // ----- flexibility -----
+
+    @Test
+    void fixedDatesRefuseARescheduleTheModelStillSuggested() {
+        prefs.setFlexibilityLevel(FlexibilityLevel.FIXED_DATES);
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "RESCHEDULE", null, "Move it to next week.");
+
+        Recommendation recommendation = generateOne();
+
+        assertThat(recommendation.getAction()).isEqualTo(Action.MONITOR);
+        // the model's advice described the reschedule we just refused, so it is not kept
+        assertThat(recommendation.getAdvice()).doesNotContain("next week");
+    }
+
+    @Test
+    void fixedDatesTurnARescheduleIntoASwapWhenThereIsSomewhereToGo() {
+        prefs.setFlexibilityLevel(FlexibilityLevel.FIXED_DATES);
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "RESCHEDULE", 2L, "Move it to next week.");
+
+        Recommendation recommendation = generateOne();
+
+        assertThat(recommendation.getAction()).isEqualTo(Action.REPLACE);
+        assertThat(recommendation.getSuggestedOption()).isEqualTo(mall);
+        assertThat(recommendation.getAdvice()).isEqualTo("Swap this for Sapporo Mall in Sapporo.");
+    }
+
+    @Test
+    void aFlexibleTravellersRescheduleIsKept() {
+        prefs.setFlexibilityLevel(FlexibilityLevel.VERY_FLEXIBLE);
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "RESCHEDULE", null, "Move it to next week.");
+
+        Recommendation recommendation = generateOne();
+
+        assertThat(recommendation.getAction()).isEqualTo(Action.RESCHEDULE);
+        assertThat(recommendation.getAdvice()).isEqualTo("Move it to next week.");
+    }
+
+    // ----- severity, failure and special cases -----
+
+    @Test
+    void lowSeverityMeansMonitorAndNoAlternative() {
+        theImpactsAre(skiImpact(4L));
+        theModelSays("LOW", "REPLACE", 1L, "No change needed.");
+
+        Recommendation recommendation = generateOne();
+
+        assertThat(recommendation.getSeverity()).isEqualTo(Severity.LOW);
+        assertThat(recommendation.getAction()).isEqualTo(Action.MONITOR);
+        assertThat(recommendation.getSuggestedOption()).isNull();
+    }
+
+    @Test
+    void whenTheModelIsDownTheBestOfTheShortlistIsOffered() {
+        theImpactsAre(skiImpact(4L));
+        when(chatService.ask(anyString(), any())).thenThrow(new RuntimeException("ollama is not running"));
+
+        Recommendation recommendation = generateOne();
+
+        assertThat(recommendation.getSeverity()).isEqualTo(Severity.MEDIUM);
+        assertThat(recommendation.getAction()).isEqualTo(Action.REPLACE);
+        assertThat(recommendation.getSuggestedOption()).isEqualTo(museum);   // first by the rules
+        assertThat(recommendation.getAdvice()).isEqualTo("Swap this for Sapporo Art Museum in Sapporo.");
+    }
+
+    @Test
+    void whenTheModelIsDownThePreferredKindIsStillFirst() {
+        prefs.setPreferredCategories(Set.of(ActivityCategory.FOOD_DINING));
+        theImpactsAre(skiImpact(4L));
+        when(chatService.ask(anyString(), any())).thenThrow(new RuntimeException("ollama is not running"));
+
+        assertThat(generateOne().getSuggestedOption()).isEqualTo(restaurant);
+    }
+
+    @Test
+    void aWholeTripImpactNeverCallsTheModelAndOffersNoPlace() {
+        Impact wholeTrip = mock(Impact.class);
+        when(wholeTrip.getId()).thenReturn(5L);
+        when(wholeTrip.getActivity()).thenReturn(null);
+        theImpactsAre(wholeTrip);
+
+        Recommendation recommendation = generateOne();
+
+        assertThat(recommendation.getSeverity()).isEqualTo(Severity.MEDIUM);
+        assertThat(recommendation.getAction()).isEqualTo(Action.MONITOR);
+        assertThat(recommendation.getSuggestedOption()).isNull();
         verifyNoInteractions(chatService);
     }
 
     @Test
-    @DisplayName("Should pass on the not found error when the itinerary does not exist")
-    void generate_ShouldThrow_WhenItineraryDoesNotExist() {
-        // Arrange
-        when(itineraryService.getItineraryById(99L)).thenThrow(new ItineraryNotFoundException(99L));
+    void adviceTooLongForTheColumnIsCutBeforeItIsSaved() {
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "MONITOR", null, "x".repeat(600));
 
-        // Act + Assert
-        assertThrows(ItineraryNotFoundException.class, () -> recommendationService.generate(99L));
-        verifyNoInteractions(chatService);
-    }
-
-    // ===== GENERATE: USING THE MODEL'S ANSWER =====
-
-    @Test
-    @DisplayName("Should save the model's severity, action, place and advice when the place was offered")
-    void generate_ShouldSaveModelAnswer_WhenOptionWasOffered() {
-        // Arrange
-        givenImpacts(skiImpact);
-        givenNothingStored();
-        givenJapanOptions();
-        givenSaveEchoes();
-        givenModelAnswers("HIGH", "REPLACE", 501L, "Spend the day at the art museum instead.");
-
-        // Act
-        Recommendation result = recommendationService.generate(1L).get(0);
-
-        // Assert
-        assertEquals(Severity.HIGH, result.getSeverity());
-        assertEquals(Action.REPLACE, result.getAction());
-        assertSame(museum, result.getSuggestedOption());
-        assertEquals("Spend the day at the art museum instead.", result.getAdvice());
-        assertSame(skiImpact, result.getImpact());
-        assertNotNull(result.getCreatedAt());
-        verify(recommendations, times(1)).save(any(Recommendation.class));
+        // the column holds 500 characters, a longer string would fail the insert
+        assertThat(generateOne().getAdvice()).hasSize(500).endsWith("...");
     }
 
     @Test
-    @DisplayName("Should only offer the model indoor places, never another ski field")
-    void generate_ShouldOnlyOfferSubstitutes_InThePrompt() {
-        // Arrange
-        givenImpacts(skiImpact);
-        givenNothingStored();
-        givenJapanOptions();
-        givenSaveEchoes();
-        givenModelAnswers("MEDIUM", "REPLACE", 501L, "Go to the museum.");
+    void recommendationsComeBackWorstFirst() {
+        theImpactsAre(skiImpact(4L), skiImpact(5L));
+        when(chatService.ask(anyString(), any()))
+                .thenAnswer(modelSays("LOW", "MONITOR", null, "No change needed."))
+                .thenAnswer(modelSays("HIGH", "REPLACE", 1L, "Go to the art museum."));
 
-        // Act
-        recommendationService.generate(1L);
+        List<Recommendation> result = service.generate(ITINERARY_ID);
 
-        // Assert
-        verify(chatService).ask(argThat(prompt -> prompt.contains("501: Sapporo Art Museum")
-                && prompt.contains("502: Ramen Alley")
-                && !prompt.contains("Rusutsu")), any(Class.class));
+        assertThat(result).extracting(Recommendation::getSeverity)
+                .containsExactly(Severity.HIGH, Severity.LOW);
     }
 
-    @Test
-    @DisplayName("Should drop a place the model made up, since it was never on the shortlist")
-    void generate_ShouldDropOption_WhenModelInventsOne() {
-        // Arrange
-        givenImpacts(skiImpact);
-        givenNothingStored();
-        givenJapanOptions();
-        givenSaveEchoes();
-        givenModelAnswers("HIGH", "REPLACE", 999L, "Go to the Hokkaido Snow Palace.");
-
-        // Act
-        Recommendation result = recommendationService.generate(1L).get(0);
-
-        // Assert
-        assertNull(result.getSuggestedOption());
-    }
+    // ----- what the model is told -----
 
     @Test
-    @DisplayName("Should say no change is needed when severity is LOW, even if the model named a place")
-    void generate_ShouldMonitorWithoutOption_WhenSeverityIsLow() {
-        // Arrange
-        givenImpacts(skiImpact);
-        givenNothingStored();
-        givenJapanOptions();
-        givenSaveEchoes();
-        givenModelAnswers("LOW", "REPLACE", 501L, "No change is needed.");
+    void thePromptCarriesThePreferencesAndOnlyTheAllowedActions() {
+        prefs.setFlexibilityLevel(FlexibilityLevel.FIXED_DATES);
+        prefs.setPreferredCategories(Set.of(ActivityCategory.SHOPPING));
+        prefs.setTravellingWithChildren(true);
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "REPLACE", 2L, "Try Sapporo Mall instead.");
 
-        // Act
-        Recommendation result = recommendationService.generate(1L).get(0);
+        generateOne();
 
-        // Assert
-        assertEquals(Severity.LOW, result.getSeverity());
-        assertEquals(Action.MONITOR, result.getAction());
-        assertNull(result.getSuggestedOption());
-    }
+        ArgumentCaptor<String> prompt = ArgumentCaptor.forClass(String.class);
+        verify(chatService).ask(prompt.capture(), any());
+        String text = prompt.getValue();
 
-    @Test
-    @DisplayName("Should fall back to safe defaults when the model sends severity and action we do not know")
-    void generate_ShouldUseDefaults_WhenModelSendsUnknownValues() {
-        // Arrange
-        givenImpacts(skiImpact);
-        givenNothingStored();
-        givenJapanOptions();
-        givenSaveEchoes();
-        givenModelAnswers("CATASTROPHIC", "PANIC", 999L, "Run.");
-
-        // Act
-        Recommendation result = recommendationService.generate(1L).get(0);
-
-        // Assert: medium by default, and with no place to go there is nothing to replace with
-        assertEquals(Severity.MEDIUM, result.getSeverity());
-        assertEquals(Action.MONITOR, result.getAction());
-        assertNull(result.getSuggestedOption());
-    }
-
-    @Test
-    @DisplayName("Should write its own advice when the model leaves it blank")
-    void generate_ShouldUseFallbackAdvice_WhenModelAdviceIsBlank() {
-        // Arrange
-        givenImpacts(skiImpact);
-        givenNothingStored();
-        givenJapanOptions();
-        givenSaveEchoes();
-        givenModelAnswers("HIGH", "REPLACE", 501L, "  ");
-
-        // Act
-        Recommendation result = recommendationService.generate(1L).get(0);
-
-        // Assert
-        assertEquals("Swap this for Sapporo Art Museum in Sapporo.", result.getAdvice());
-    }
-
-    // ===== GENERATE: WHEN THE MODEL CANNOT HELP =====
-
-    @Test
-    @DisplayName("Should suggest the top shortlisted place when the model is unreachable")
-    void generate_ShouldUseTopOption_WhenModelFails() {
-        // Arrange
-        givenImpacts(skiImpact);
-        givenNothingStored();
-        givenJapanOptions();
-        givenSaveEchoes();
-        when(chatService.ask(anyString(), any(Class.class))).thenThrow(new RuntimeException("ollama is down"));
-
-        // Act
-        Recommendation result = recommendationService.generate(1L).get(0);
-
-        // Assert
-        assertEquals(Severity.MEDIUM, result.getSeverity());
-        assertEquals(Action.REPLACE, result.getAction());
-        assertSame(museum, result.getSuggestedOption());
-        assertEquals("Swap this for Sapporo Art Museum in Sapporo.", result.getAdvice());
-    }
-
-    @Test
-    @DisplayName("Should advise watching the news when the model fails and there is nothing to offer")
-    void generate_ShouldMonitor_WhenModelFailsWithEmptyShortlist() {
-        // Arrange: an activity from before categories existed gets no shortlist at all
-        skiDay.setCategory(null);
-        givenImpacts(skiImpact);
-        givenNothingStored();
-        givenSaveEchoes();
-        when(chatService.ask(anyString(), any(Class.class))).thenThrow(new RuntimeException("ollama is down"));
-
-        // Act
-        Recommendation result = recommendationService.generate(1L).get(0);
-
-        // Assert
-        assertEquals(Action.MONITOR, result.getAction());
-        assertNull(result.getSuggestedOption());
-        assertEquals("No change needed for now, keep an eye on the news before you travel.", result.getAdvice());
-        verifyNoInteractions(options);
-    }
-
-    @Test
-    @DisplayName("Should monitor a whole trip impact without asking the model")
-    void generate_ShouldMonitorWithoutModel_WhenImpactCoversWholeTrip() {
-        // Arrange
-        Impact wholeTrip = impactOn(101L, null, "Flights into Sapporo may be delayed");
-        givenImpacts(wholeTrip);
-        givenNothingStored();
-        givenSaveEchoes();
-
-        // Act
-        Recommendation result = recommendationService.generate(1L).get(0);
-
-        // Assert
-        assertEquals(Severity.MEDIUM, result.getSeverity());
-        assertEquals(Action.MONITOR, result.getAction());
-        assertNull(result.getSuggestedOption());
-        verifyNoInteractions(chatService);
-    }
-
-    // ===== ORDERING =====
-
-    @Test
-    @DisplayName("Should return the worst severity first when generating")
-    void generate_ShouldSortWorstFirst() {
-        // Arrange: the stored one is low, the new one comes back high
-        Activity onsen = new Activity();
-        onsen.setId(11L);
-        onsen.setName("Onsen visit");
-        onsen.setItinerary(itinerary);
-        Impact onsenImpact = impactOn(102L, onsen, "Baths closed for checks");
-
-        givenImpacts(onsenImpact, skiImpact);
-        when(recommendations.findFirstByImpactIdOrderByIdDesc(102L)).thenReturn(Optional.of(stored(onsenImpact, Severity.LOW)));
-        when(recommendations.findFirstByImpactIdOrderByIdDesc(100L)).thenReturn(Optional.empty());
-        givenJapanOptions();
-        givenSaveEchoes();
-        givenModelAnswers("HIGH", "REPLACE", 501L, "Go to the museum.");
-
-        // Act
-        List<Recommendation> result = recommendationService.generate(1L);
-
-        // Assert
-        assertEquals(List.of(Severity.HIGH, Severity.LOW),
-                result.stream().map(Recommendation::getSeverity).toList());
-    }
-
-    @Test
-    @DisplayName("Should list stored recommendations worst first without asking the model")
-    void getByItinerary_ShouldSortWorstFirst_AndNeverAskModel() {
-        // Arrange
-        Recommendation low = stored(skiImpact, Severity.LOW);
-        Recommendation high = stored(skiImpact, Severity.HIGH);
-        Recommendation medium = stored(skiImpact, Severity.MEDIUM);
-        when(recommendations.findByImpactItineraryId(1L)).thenReturn(List.of(low, high, medium));
-
-        // Act
-        List<Recommendation> result = recommendationService.getByItinerary(1L);
-
-        // Assert
-        assertEquals(List.of(high, medium, low), result);
-        verifyNoInteractions(chatService);
-    }
-
-    // ===== GUARDS ON THE MODEL'S ANSWER =====
-    // pick and parse stop a bad model answer getting into the database, so they are checked on their own
-
-    @Test
-    @DisplayName("Should pick the place when the model chose one we offered")
-    void pick_ShouldReturnOption_WhenItWasOffered() {
-        // Act
-        ActivityOption picked = RecommendationServiceImpl.pick(501L, List.of(museum));
-
-        // Assert
-        assertEquals(museum, picked);
-    }
-
-    @Test
-    @DisplayName("Should drop a place id the model made up")
-    void pick_ShouldReturnNull_WhenOptionWasNeverOffered() {
-        // Act
-        ActivityOption picked = RecommendationServiceImpl.pick(999L, List.of(museum));
-
-        // Assert: the model inventing an id is the failure this whole design exists to catch
-        assertNull(picked);
-    }
-
-    @Test
-    @DisplayName("Should drop a missing place id")
-    void pick_ShouldReturnNull_WhenOptionIdIsNull() {
-        // Act
-        ActivityOption picked = RecommendationServiceImpl.pick(null, List.of(museum));
-
-        // Assert
-        assertNull(picked);
-    }
-
-    @Test
-    @DisplayName("Should read an enum the model sent with odd casing and spaces")
-    void parse_ShouldReadEnum_WhenModelSendsMessyText() {
-        // Act
-        Severity severity = RecommendationServiceImpl.parse(Severity.class, " high ", Severity.MEDIUM);
-
-        // Assert
-        assertEquals(Severity.HIGH, severity);
-    }
-
-    @Test
-    @DisplayName("Should fall back when the model makes up an enum or sends none")
-    void parse_ShouldUseFallback_WhenValueIsUnknownOrNull() {
-        // Act
-        Action madeUp = RecommendationServiceImpl.parse(Action.class, "PANIC", Action.MONITOR);
-        Action missing = RecommendationServiceImpl.parse(Action.class, null, Action.MONITOR);
-
-        // Assert
-        assertEquals(Action.MONITOR, madeUp);
-        assertEquals(Action.MONITOR, missing);
+        assertThat(text)
+                .contains("The traveller prefers these kinds of activity: SHOPPING")
+                .contains("The dates cannot move")
+                .contains("Children are travelling")
+                .contains("2: Sapporo Mall (Sapporo, SHOPPING)");   // the shortlist, with its categories
+        String actionLine = text.lines().filter(line -> line.startsWith("action - one of"))
+                .findFirst().orElseThrow();
+        assertThat(actionLine).contains("REPLACE").doesNotContain("RESCHEDULE");
     }
 }

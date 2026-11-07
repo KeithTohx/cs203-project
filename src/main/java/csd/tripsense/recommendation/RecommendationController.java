@@ -13,6 +13,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import csd.tripsense.auth.CurrentUser;
+import csd.tripsense.itinerary.ItineraryAccess;
+import csd.tripsense.itinerary.ItineraryService;
 import jakarta.validation.Valid;
 
 @RestController
@@ -20,8 +22,14 @@ import jakarta.validation.Valid;
 public class RecommendationController {
     private RecommendationService recommendationService;
 
-    public RecommendationController(RecommendationService recommendationService) {
+    private final ItineraryService itineraryService;
+    private final ItineraryAccess access;
+
+    public RecommendationController(RecommendationService recommendationService,
+                                    ItineraryService itineraryService, ItineraryAccess access) {
         this.recommendationService = recommendationService;
+        this.itineraryService = itineraryService;
+        this.access = access;
     }
 
     /**
@@ -32,7 +40,9 @@ public class RecommendationController {
      * @return one recommendation per impacted activity, worst severity first
      */
     @PostMapping("/recommendation/generate")
-    public List<RecommendationResponse> generate(@Valid @RequestBody GenerateRequest request) {
+    public List<RecommendationResponse> generate(@Valid @RequestBody GenerateRequest request,
+            @AuthenticationPrincipal CurrentUser me) {
+        access.requireAccess(itineraryService.getItineraryById(request.itineraryId()), me);
         return recommendationService.generate(request.itineraryId()).stream()
                 .map(RecommendationResponse::from).toList();
     }
@@ -48,6 +58,7 @@ public class RecommendationController {
     public List<RecommendationResponse> getByItinerary(@PathVariable Long itineraryId,
             @RequestParam(defaultValue = "false") boolean includeDismissed,
             @AuthenticationPrincipal CurrentUser me) {
+        access.requireAccess(itineraryService.getItineraryById(itineraryId), me);
         return recommendationService.getByItinerary(itineraryId, includeDismissed, me).stream()
                 .map(RecommendationResponse::from).toList();
     }
