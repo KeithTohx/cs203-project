@@ -17,7 +17,7 @@ class AlertEmailStoreTest {
         var alerts = mock(AlertRepository.class);
         var groups = mock(AlertEmailGroupRepository.class);
         var evaluations = mock(EvaluationBatchRepository.class);
-        var store = new AlertEmailStore(alerts, groups, evaluations, 120, 30, 30);
+        var store = new AlertEmailStore(alerts, groups, evaluations, mock(csd.tripsense.impact.EvaluationTargetRepository.class), 120, 30, 30);
         var trip = new Itinerary(); trip.setId(10L);
         trip.setUser(new User("owner@example.com", "owner", "hash", "USER"));
         var news = new News(); news.setId(20L);

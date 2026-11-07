@@ -92,9 +92,13 @@ public class ImpactEvaluationJob {
                 var tripTargets = itineraryService.getItinerariesPendingForNews(news.getId(), countryId, now);
                 var activityTargets = activityService.getActivitiesPendingForNews(news.getId(), countryId, now);
                 var batches = new HashMap<Long, String>();
-                for (Itinerary trip : tripTargets) batches.computeIfAbsent(trip.getId(), id -> progress.begin(id, news.getId()));
+                for (Itinerary trip : tripTargets) batches.computeIfAbsent(trip.getId(), id -> progress.begin(id, news.getId(),
+                        tripTargets.stream().anyMatch(t -> t.getId().equals(id)),
+                        activityTargets.stream().filter(a -> a.getItinerary().getId().equals(id)).map(Activity::getId).toList()));
                 for (Activity activity : activityTargets) batches.computeIfAbsent(activity.getItinerary().getId(),
-                        id -> progress.begin(id, news.getId()));
+                        id -> progress.begin(id, news.getId(),
+                        tripTargets.stream().anyMatch(t -> t.getId().equals(id)),
+                        activityTargets.stream().filter(a -> a.getItinerary().getId().equals(id)).map(Activity::getId).toList()));
                 var expected = new HashMap<Long, Integer>();
                 var completed = new HashMap<Long, Integer>();
                 tripTargets.forEach(t -> expected.merge(t.getId(), 1, Integer::sum));
@@ -104,6 +108,7 @@ public class ImpactEvaluationJob {
                         if (judged >= maxPerRun) { done(judged, skipped, "cap reached"); return; }
                         try {
                             impactService.evaluateItineraryForNews(itinerary, news);
+                            progress.resolved(itinerary.getId(),news.getId(),null);
                             completed.merge(itinerary.getId(), 1, Integer::sum);
                             judged++;
                             failures = 0;
@@ -117,6 +122,7 @@ public class ImpactEvaluationJob {
                         if (judged >= maxPerRun) { done(judged, skipped, "cap reached"); return; }
                         try {
                             impactService.evaluateActivityForNews(activity, news);
+                            progress.resolved(activity.getItinerary().getId(),news.getId(),activity.getId());
                             completed.merge(activity.getItinerary().getId(), 1, Integer::sum);
                             judged++;
                             failures = 0;

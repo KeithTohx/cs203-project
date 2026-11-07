@@ -20,16 +20,17 @@ public class AlertEmailStore {
     private final AlertRepository alerts;
     private final AlertEmailGroupRepository emailGroups;
     private final EvaluationBatchRepository evaluations;
+    private final csd.tripsense.impact.EvaluationTargetRepository targets;
     private final long maxGroupWaitSeconds;
     private final long groupRecheckSeconds;
     private final long initialGroupWaitSeconds;
 
     public AlertEmailStore(AlertRepository alerts, AlertEmailGroupRepository emailGroups,
-            EvaluationBatchRepository evaluations,
+            EvaluationBatchRepository evaluations, csd.tripsense.impact.EvaluationTargetRepository targets,
             @Value("${alerts.email.max-group-wait-seconds:120}") long maxGroupWaitSeconds,
             @Value("${alerts.email.group-recheck-seconds:30}") long groupRecheckSeconds,
             @Value("${alerts.email.initial-group-wait-seconds:30}") long initialGroupWaitSeconds) {
-        this.alerts = alerts; this.emailGroups = emailGroups; this.evaluations = evaluations;
+        this.alerts = alerts; this.emailGroups = emailGroups; this.evaluations = evaluations; this.targets=targets;
         this.maxGroupWaitSeconds = Math.max(0, maxGroupWaitSeconds);
         this.groupRecheckSeconds = Math.max(1, groupRecheckSeconds);
         this.initialGroupWaitSeconds = Math.min(this.maxGroupWaitSeconds, Math.max(0, initialGroupWaitSeconds));
@@ -116,8 +117,8 @@ public class AlertEmailStore {
         String deliveryKey = emailGroups.findById(AlertEmailGroup.key(tripId, newsId))
                 .orElseGet(() -> emailGroups.saveAndFlush(new AlertEmailGroup(tripId, newsId,
                         group.getFirst().getEmailDeliveryKey()))).getDeliveryKey();
-        boolean partial = incomplete || evaluations.findFirstByItineraryIdAndNewsIdOrderByStartedAtDesc(tripId, newsId)
-                .map(b -> b.isPartial() || b.getFinishedAt() == null).orElse(false);
+        boolean partial=incomplete || targets.countUnresolved(tripId,newsId)>0
+                || evaluations.countLegacyIncomplete(tripId,newsId)>0;
         return Optional.of(new Delivery(leader.getId(), claims.getFirst().attempt(), deliveryKey,
                 recipient.getEmail(), AlertResponse.from(leader),
                 members.stream().map(AlertResponse::from).toList(), List.copyOf(claims), partial));

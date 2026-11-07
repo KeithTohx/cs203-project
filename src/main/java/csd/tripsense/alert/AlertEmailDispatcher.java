@@ -29,7 +29,7 @@ public class AlertEmailDispatcher {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onCreated(AlertCreatedEvent event) { enqueue(event.alert().id()); }
 
-    @Scheduled(fixedDelayString = "${alerts.email.retry-interval-ms:15000}", initialDelay = 15000)
+    @Scheduled(scheduler = "alertTaskScheduler", fixedDelayString = "${alerts.email.retry-interval-ms:15000}", initialDelay = 15000)
     public void retryPending() {
         if (!sender.enabled()) return;
         for (Long id : alerts.findEmailReady(AlertEmailStore.RETRYABLE, Instant.now(), PageRequest.of(0, 50))) enqueue(id);

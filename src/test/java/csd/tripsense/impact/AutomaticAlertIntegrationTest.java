@@ -40,6 +40,7 @@ class AutomaticAlertIntegrationTest {
         r.add("spring.datasource.url", () -> "jdbc:sqlite:" + DATABASE + "?foreign_keys=on");
     }
     @Autowired private EvaluationProgress progress;
+    @Autowired private EvaluationTargetRepository targetProgress;
     @Autowired private EvaluationBatchRepository batches;
     @Autowired private csd.tripsense.alert.AlertEmailGroupRepository emailGroups;
     @Autowired UserRepository users;
@@ -247,7 +248,7 @@ class AutomaticAlertIntegrationTest {
     @Test void initialGroupingWindowIncludesActivitiesAddedImmediatelyAfterTheTrip() {
         Itinerary trip = newTrip(); listener.processPending();
         var first = alerts.list(owner.getId(), false, null, 20).content().getFirst();
-        var grouping = new AlertEmailStore(alertRows, emailGroups, batches, 120, 30, 30);
+        var grouping = new AlertEmailStore(alertRows, emailGroups, batches, targetProgress, 120, 30, 30);
         var tx = new TransactionTemplate(transactions);
         var waiting = tx.execute(s -> grouping.claim(first.id(), first.createdAt().plusSeconds(1)));
         assertThat(waiting).isEmpty();

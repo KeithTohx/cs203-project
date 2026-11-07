@@ -25,6 +25,7 @@ public class DemoDisruptionService {
     private final AlertEmailGroupRepository emailGroups;
     private final EvaluationBatchRepository evaluations;
     private final boolean enabled;
+    private final boolean disposable;
     private final long userId;
     private final long itineraryId;
     private final long newsId;
@@ -33,13 +34,14 @@ public class DemoDisruptionService {
             RecommendationRepository recommendations, ItineraryRepository itineraries, UserRepository users,
             AlertService alertService, AlertEmailGroupRepository emailGroups,
             EvaluationBatchRepository evaluations, @Value("${alerts.demo.enabled:false}") boolean enabled,
+            @Value("${alerts.demo.disposable-fixture:false}") boolean disposable,
             @Value("${alerts.demo.user-id:0}") long userId,
             @Value("${alerts.demo.itinerary-id:0}") long itineraryId,
             @Value("${alerts.demo.news-id:0}") long newsId) {
         this.impacts = impacts; this.alerts = alerts; this.recommendations = recommendations;
         this.itineraries = itineraries; this.users = users; this.alertService = alertService;
         this.emailGroups = emailGroups; this.evaluations = evaluations;
-        this.enabled = enabled; this.userId = userId; this.itineraryId = itineraryId; this.newsId = newsId;
+        this.enabled = enabled; this.disposable=disposable; this.userId = userId; this.itineraryId = itineraryId; this.newsId = newsId;
     }
 
     public record Result(long itineraryId, long newsId, int impacts, int alerts, String state) {}
@@ -55,14 +57,10 @@ public class DemoDisruptionService {
         alerts.deleteAll(existing);
         alerts.flush();
         emailGroups.deleteById(AlertEmailGroup.key(itineraryId, newsId));
-        var associated = recommendations.findByImpactItineraryId(itineraryId).stream()
-                .filter(r -> r.getImpact().getNews().getId().equals(newsId)).toList();
-        recommendations.deleteAll(associated);
         for (Impact impact : fixture) {
             impact.setImpacted(false);
             // Remembers which saved positive verdicts the replay should restore.
             impact.setAlertEligible(true);
-            impact.setRejected(false);
         }
         impacts.saveAll(fixture);
         return new Result(itineraryId, newsId, fixture.size(), 0, "READY");
@@ -78,7 +76,6 @@ public class DemoDisruptionService {
         for (Impact impact : fixture) {
             impact.setImpacted(true);
             impact.setAlertEligible(true);
-            impact.setRejected(false);
         }
         impacts.saveAllAndFlush(fixture);
         // Create the complete group atomically so email cannot run before all impacts are restored.
@@ -90,7 +87,7 @@ public class DemoDisruptionService {
     }
 
     private List<Impact> requireFixture(Long callerId) {
-        if (!enabled || userId <= 0 || itineraryId <= 0 || newsId <= 0 || !Long.valueOf(userId).equals(callerId)) {
+        if (!enabled || !disposable || userId <= 0 || itineraryId <= 0 || newsId <= 0 || !Long.valueOf(userId).equals(callerId)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Demo disruption not available");
         }
         var owner = users.findById(userId).orElseThrow(() ->
@@ -103,6 +100,12 @@ public class DemoDisruptionService {
         var saved = impacts.findByItineraryIdAndNewsId(itineraryId, newsId);
         if (saved.isEmpty() || saved.stream().anyMatch(i -> i.getReason() == null || i.getReason().isBlank())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Complete the demo assessment before preparing replay");
+        }
+        if (saved.stream().anyMatch(i -> Boolean.TRUE.equals(i.getRejected()))
+                || recommendations.findByImpactItineraryId(itineraryId).stream()
+                .filter(r -> r.getImpact().getNews().getId().equals(newsId))
+                .anyMatch(r -> r.getStatus()!=csd.tripsense.recommendation.RecommendationStatus.PENDING)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,"Demo replay cannot erase user decisions; use a disposable fixture");
         }
         var positive = saved.stream().filter(i -> Boolean.TRUE.equals(i.getImpacted())
                 || Boolean.TRUE.equals(i.getAlertEligible())).toList();

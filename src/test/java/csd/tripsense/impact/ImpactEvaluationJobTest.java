@@ -42,7 +42,7 @@ class ImpactEvaluationJobTest {
 
     @org.junit.jupiter.api.BeforeEach
     void progressIdentity() {
-        lenient().when(progress.begin(anyLong(), anyLong())).thenAnswer(i -> i.getArgument(0) + ":" + i.getArgument(1));
+        lenient().when(progress.begin(anyLong(), anyLong(), anyBoolean(), anyList())).thenAnswer(i -> i.getArgument(0) + ":" + i.getArgument(1));
     }
 
     @Test void capClosesSelectedGroupAsPartialInsteadOfLeavingItRunning() {

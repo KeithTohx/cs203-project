@@ -97,22 +97,25 @@ public class NewItemEvaluationListener {
                 for (; cursor < articles.size(); cursor++) {
                     var article = news.findById(articles.get(cursor)).orElse(null);
                     if (article != null) {
-                        String batch = progress.begin(trip.getId(), article.getId());
-                        boolean partial = true;
-                        try {
-                            // A new activity may arrive after fresh news; ensure its parent's verdict exists too.
-                            if (impacts.findFirstByNewsIdAndItineraryIdAndActivityIsNull(article.getId(), trip.getId())
-                                    .filter(i -> i.getReason() != null).isEmpty()) {
-                                budget.take(); evaluator.evaluateItineraryForNews(trip, article);
-                            }
-                            for (Activity target : targets) {
-                                if (impacts.findFirstByNewsIdAndActivityId(article.getId(), target.getId())
-                                        .filter(i -> i.getReason() != null).isEmpty()) {
-                                    budget.take(); evaluator.evaluateActivityForNews(target, article);
+                        boolean overall=impacts.findFirstByNewsIdAndItineraryIdAndActivityIsNull(article.getId(),trip.getId())
+                                .filter(i -> i.getReason()!=null).isEmpty();
+                        var pending=targets.stream().filter(target -> impacts.findFirstByNewsIdAndActivityId(article.getId(),target.getId())
+                                .filter(i -> i.getReason()!=null).isEmpty()).toList();
+                        if (overall || !pending.isEmpty()) {
+                            String batch=progress.begin(trip.getId(),article.getId(),overall,pending.stream().map(Activity::getId).toList());
+                            boolean partial=true;
+                            try {
+                                if (overall) {
+                                    budget.take(); evaluator.evaluateItineraryForNews(trip,article);
+                                    progress.resolved(trip.getId(),article.getId(),null);
                                 }
-                            }
-                            partial = false;
-                        } finally { progress.finish(batch, partial); }
+                                for (Activity target:pending) {
+                                    budget.take(); evaluator.evaluateActivityForNews(target,article);
+                                    progress.resolved(trip.getId(),article.getId(),target.getId());
+                                }
+                                partial=false;
+                            } finally { progress.finish(batch,partial); }
+                        }
                     }
                     queue.progress(task.getTaskKey(), cursor + 1, Instant.now());
                 }

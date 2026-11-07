@@ -100,6 +100,17 @@ class ImpactServiceImplTest {
         verifyNoInteractions(events);
     }
 
+    @Test void alertProgressDoesNotCrashWhenAnAssessmentReasonIsNull() {
+        when(itineraryService.getItineraryById(1L)).thenReturn(itinerary);
+        when(newsService.getNewsById(5L)).thenReturn(news);
+        when(activityService.getActivitiesByItinerary(1L)).thenReturn(List.of());
+        givenModelAnswers(true,null); givenSaveEchoes();
+        var result=impactService.evaluate(1L,5L);
+        assertNotNull(result);
+        assertNull(result.itinerary().reason());
+        verify(progress).finish(null,true);
+    }
+
     // ===== evaluateItineraryForNews =====
 
     @Test
