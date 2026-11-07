@@ -6,13 +6,17 @@ import java.util.Optional;
 import java.time.LocalDateTime;
 
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
 
 @Service
 public class ItineraryServiceImpl implements ItineraryService {
-    private ItineraryRepository itineraries;
 
-    public ItineraryServiceImpl(ItineraryRepository itineraries){
+    private ItineraryRepository itineraries;
+    private ApplicationEventPublisher events;
+
+    public ItineraryServiceImpl(ItineraryRepository itineraries, ApplicationEventPublisher events) {
         this.itineraries = itineraries;
+        this.events = events;
     }
 
     @Override 
@@ -67,9 +71,11 @@ public class ItineraryServiceImpl implements ItineraryService {
         return itinerariesByCountry;
     }
 
-    @Override 
+    @Override
     public Itinerary addItinerary(Itinerary itinerary){
-        return itineraries.save(itinerary);
+        Itinerary saved = itineraries.save(itinerary);
+        events.publishEvent(new ItineraryCreatedEvent(saved.getId()));
+        return saved;
     }
 
     @Override 
