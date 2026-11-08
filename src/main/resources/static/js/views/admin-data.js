@@ -2,6 +2,9 @@
 // edit and delete for each. mostly for testing, eg making an impact by hand to see the alert and
 // recommendation flow without waiting for the model.
 //
+// the itineraries table sums up what each trip holds. opening one shows its activities, with the
+// impacts on each activity under it, and the impacts on the whole trip above them.
+//
 // everything is loaded in one go and every section draws from that, since a change in one
 // (deleting an itinerary) also removes rows in the others (its impacts and recommendations)
 import { api } from "../api.js";
@@ -99,19 +102,153 @@ const impactTarget = impact => impact.activityName
 
 const impactLabel = impact => `#${impact.id} ${newsTitleOf(impact.newsTitle)}, on ${impactTarget(impact)}`;
 
-// ---------- one section: a table plus an add or edit form ----------
+const countOf = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+
+// how many activity names an itinerary's summary lists before it says "+2 more"
+const SUMMARY_NAMES = 3;
+
+// ---------- shared by every section: a table of records, and an add or edit form ----------
 
 // config:
-//   key, noun           - eg "itinerary", used in ids, buttons and messages
-//   rows(state)         - the records to show, or null when the section is waiting on something
-//   waitingText         - shown when rows gives null
-//   emptyText           - shown when there are no rows
+//   key, noun           - eg "impacts" and "impact", used in buttons and messages
 //   columns             - [{ label, cell: record => html, long }], long gives free text room to breathe
 //   rowButtons(record)  - extra buttons for a row (optional)
 //   fields(record, state) - the form fields, record is null when adding
-//   wireForm(form, state) - hook up anything the fields need once drawn (optional)
 //   readForm(inputs, record) - the request body, throwing an Error shows its message
 //   create(body), update(id, body), remove(id)
+
+// edit and delete for one record. data-kind keeps them apart when one card holds more than one
+// kind of record, like an activity and the impacts under it
+const createRecordButtons = (config, record) => `
+    <button class="ghost small" type="button" data-kind="${config.key}" data-edit="${Number(record.id)}">Edit</button>
+    <button class="ghost small danger" type="button" data-kind="${config.key}" data-delete="${Number(record.id)}"
+            aria-label="Delete ${escapeHtml(config.noun)} ${Number(record.id)}">Delete</button>
+`;
+
+const createRow = (config, record) => {
+    const cells = config.columns.map(column => {
+        const classAttribute = column.long ? ' class="long-text"' : "";
+        return `<td${classAttribute}>${column.cell(record)}</td>`;
+    }).join("");
+    const extraButtons = config.rowButtons ? config.rowButtons(record) : "";
+
+    return `
+        <tr>
+            ${cells}
+            <td class="row-actions-cell">
+                <div class="row-actions">
+                    ${extraButtons}
+                    ${createRecordButtons(config, record)}
+                </div>
+            </td>
+        </tr>
+    `;
+};
+
+const createTable = (config, rows) => {
+    const headings = config.columns.map(column => `<th scope="col">${escapeHtml(column.label)}</th>`).join("");
+
+    return `
+        <div class="table-scroll">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        ${headings}
+                        <th scope="col"><span class="sr-only">Actions</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows.map(record => createRow(config, record)).join("")}
+                </tbody>
+            </table>
+        </div>
+    `;
+};
+
+// fills slot with an add form (record is null) or an edit form.
+// onSaved runs after a successful save, onCancel when the form is closed without saving
+function openRecordForm(slot, config, record, { state, onSaved, onCancel, onAuthLost }) {
+    const isNew = record == null;
+    const title = isNew ? `New ${config.noun}` : `Edit ${config.noun} #${Number(record.id)}`;
+
+    slot.hidden = false;
+    slot.innerHTML = `
+        <form class="admin-form">
+            <h3>${escapeHtml(title)}</h3>
+            <div class="field-grid">
+                ${config.fields(record, state)}
+            </div>
+            <p class="err" data-form-error role="alert"></p>
+            <div class="actions">
+                <button type="submit" class="primary">Save</button>
+                <button type="button" class="ghost" data-cancel>Cancel</button>
+            </div>
+        </form>
+    `;
+
+    const form = slot.querySelector("form");
+    const errorMessage = form.querySelector("[data-form-error]");
+    const saveButton = form.querySelector("button[type=submit]");
+
+    form.querySelector("[data-cancel]").addEventListener("click", onCancel);
+    form.querySelector("input, select, textarea")?.focus();
+
+    form.addEventListener("submit", async event => {
+        event.preventDefault();
+        errorMessage.textContent = "";
+        saveButton.disabled = true;
+
+        try {
+            const body = config.readForm(form.elements, record);
+            if (isNew) {
+                await config.create(body);
+            } else {
+                await config.update(record.id, body);
+            }
+        } catch (error) {
+            saveButton.disabled = false;
+            if (error.status === 401) {
+                onAuthLost();
+                return;
+            }
+            errorMessage.textContent = error.message;
+            return;
+        }
+
+        showToast(`${config.noun.charAt(0).toUpperCase()}${config.noun.slice(1)} saved.`);
+        await onSaved();
+    });
+}
+
+// arms every delete button for this kind of record inside container. two clicks, like everywhere
+// else in the app
+function wireDeleteButtons(container, config, { errorElement, onChange, onAuthLost }) {
+    for (const button of container.querySelectorAll(`[data-delete][data-kind="${config.key}"]`)) {
+        const id = Number(button.dataset.delete);
+
+        confirmTwice(button, { confirmText: "Delete?", onConfirm: async () => {
+            button.disabled = true;
+            errorElement.textContent = "";
+            try {
+                await config.remove(id);
+            } catch (error) {
+                button.disabled = false;
+                if (error.status === 401) {
+                    onAuthLost();
+                    return;
+                }
+                errorElement.textContent = error.message;
+                return;
+            }
+            showToast(`Deleted ${config.noun} #${id}.`);
+            await onChange();
+        } });
+    }
+}
+
+// ---------- a card holding one table, used for itineraries and recommendations ----------
+
+// config also has rows(state) and emptyText
 function mountSection(card, config, { getState, onChange, onAuthLost }) {
     const list = card.querySelector("[data-list]");
     const formSlot = card.querySelector("[data-form-slot]");
@@ -122,155 +259,42 @@ function mountSection(card, config, { getState, onChange, onAuthLost }) {
     const closeForm = () => {
         formSlot.innerHTML = "";
         formSlot.hidden = true;
-        addButton.hidden = getState() == null || config.rows(getState()) == null;
+        addButton.hidden = getState() == null;
     };
 
     const openForm = record => {
-        const isNew = record == null;
-        const state = getState();
-        const title = isNew ? `New ${config.noun}` : `Edit ${config.noun} #${Number(record.id)}`;
-
-        formSlot.hidden = false;
         addButton.hidden = true;
-        formSlot.innerHTML = `
-            <form class="admin-form">
-                <h3>${escapeHtml(title)}</h3>
-                <div class="field-grid">
-                    ${config.fields(record, state)}
-                </div>
-                <p class="err" data-form-error role="alert"></p>
-                <div class="actions">
-                    <button type="submit" class="primary">Save</button>
-                    <button type="button" class="ghost" data-cancel>Cancel</button>
-                </div>
-            </form>
-        `;
-
-        const form = formSlot.querySelector("form");
-        const errorMessage = form.querySelector("[data-form-error]");
-        const saveButton = form.querySelector("button[type=submit]");
-
-        config.wireForm?.(form, state);
-        form.querySelector("[data-cancel]").addEventListener("click", closeForm);
-        form.querySelector("input, select, textarea")?.focus();
-
-        form.addEventListener("submit", async event => {
-            event.preventDefault();
-            errorMessage.textContent = "";
-            saveButton.disabled = true;
-
-            try {
-                const body = config.readForm(form.elements, record);
-                if (isNew) {
-                    await config.create(body);
-                } else {
-                    await config.update(record.id, body);
-                }
-            } catch (error) {
-                saveButton.disabled = false;
-                if (error.status === 401) {
-                    onAuthLost();
-                    return;
-                }
-                errorMessage.textContent = error.message;
-                return;
-            }
-
-            closeForm();
-            showToast(`${config.noun.charAt(0).toUpperCase()}${config.noun.slice(1)} saved.`);
-            await onChange();
-        });
-    };
-
-    const createRow = record => {
-        const cells = config.columns.map(column => {
-            const classAttribute = column.long ? ' class="long-text"' : "";
-            return `<td${classAttribute}>${column.cell(record)}</td>`;
-        }).join("");
-        const extraButtons = config.rowButtons ? config.rowButtons(record) : "";
-
-        return `
-            <tr>
-                ${cells}
-                <td class="row-actions-cell">
-                    <div class="row-actions">
-                        ${extraButtons}
-                        <button class="ghost small" type="button" data-edit="${Number(record.id)}">Edit</button>
-                        <button class="ghost small danger" type="button" data-delete="${Number(record.id)}"
-                                aria-label="Delete ${escapeHtml(config.noun)} ${Number(record.id)}">Delete</button>
-                    </div>
-                </td>
-            </tr>
-        `;
-    };
-
-    const createTable = rows => {
-        const headings = config.columns.map(column => `<th scope="col">${escapeHtml(column.label)}</th>`).join("");
-
-        return `
-            <div class="table-scroll">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            ${headings}
-                            <th scope="col"><span class="sr-only">Actions</span></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${rows.map(createRow).join("")}
-                    </tbody>
-                </table>
-            </div>
-        `;
-    };
-
-    // deleting needs two clicks, like everywhere else in the app
-    const wireDeleteButtons = () => {
-        for (const button of list.querySelectorAll("[data-delete]")) {
-            const id = Number(button.dataset.delete);
-
-            confirmTwice(button, { confirmText: "Delete?", onConfirm: async () => {
-                button.disabled = true;
-                sectionError.textContent = "";
-                try {
-                    await config.remove(id);
-                } catch (error) {
-                    button.disabled = false;
-                    if (error.status === 401) {
-                        onAuthLost();
-                        return;
-                    }
-                    sectionError.textContent = error.message;
-                    return;
-                }
-                showToast(`Deleted ${config.noun} #${id}.`);
+        openRecordForm(formSlot, config, record, {
+            state: getState(),
+            onSaved: async () => {
+                closeForm();
                 await onChange();
-            } });
-        }
+            },
+            onCancel: closeForm,
+            onAuthLost,
+        });
     };
 
     const draw = () => {
         const rows = config.rows(getState());
-        shownRows = rows ?? [];
+        shownRows = rows;
 
-        if (rows == null) {
-            list.innerHTML = `<p class="meta">${escapeHtml(config.waitingText)}</p>`;
-        } else if (!rows.length) {
+        if (!rows.length) {
             list.innerHTML = `<p class="meta">${escapeHtml(config.emptyText)}</p>`;
         } else {
-            list.innerHTML = createTable(rows);
-            wireDeleteButtons();
+            list.innerHTML = createTable(config, rows);
+            wireDeleteButtons(list, config, { errorElement: sectionError, onChange, onAuthLost });
         }
 
         // an open form keeps its typing when the lists redraw. if its record was deleted meanwhile,
         // saving just shows the 404 under the form
         const formIsOpen = !formSlot.hidden;
-        if (!formIsOpen) addButton.hidden = rows == null;
+        if (!formIsOpen) addButton.hidden = false;
     };
 
     addButton.addEventListener("click", () => openForm(null));
     list.addEventListener("click", event => {
-        const editButton = event.target.closest("[data-edit]");
+        const editButton = event.target.closest(`[data-edit][data-kind="${config.key}"]`);
         if (!editButton) return;
 
         const record = shownRows.find(row => row.id === Number(editButton.dataset.edit));
@@ -281,12 +305,10 @@ function mountSection(card, config, { getState, onChange, onAuthLost }) {
     return { draw, closeForm };
 }
 
-// ---------- the four sections ----------
-
 const createSectionCard = (key, title, addLabel) => `
     <section class="card admin-data" id="admin-${key}">
         <div class="row">
-            <h2 data-title>${escapeHtml(title)}</h2>
+            <h2>${escapeHtml(title)}</h2>
             <button class="ghost small" type="button" data-add>${escapeHtml(addLabel)}</button>
         </div>
         <p class="err" data-section-error role="alert"></p>
@@ -297,7 +319,39 @@ const createSectionCard = (key, title, addLabel) => `
     </section>
 `;
 
-const itineraryConfig = (userId, lookups, view) => ({
+// ---------- what each kind of record looks like ----------
+
+// what an itinerary holds, shown in its row so the trips can be compared without opening each one
+const createTripSummary = (state, itinerary) => {
+    const itsActivities = state.activitiesByItinerary.get(itinerary.id) ?? [];
+    const itsImpacts = state.impacts.filter(impact => impact.itineraryId === itinerary.id);
+    const onWholeTrip = itsImpacts.filter(impact => impact.activityId == null).length;
+    const live = itsImpacts.filter(impact => impact.impacted && !impact.rejected).length;
+
+    let activityLine = "No activities";
+    if (itsActivities.length) {
+        const names = itsActivities.slice(0, SUMMARY_NAMES).map(activity => escapeHtml(activity.name)).join(", ");
+        const hidden = itsActivities.length - SUMMARY_NAMES;
+        const more = hidden > 0 ? `, +${hidden} more` : "";
+        activityLine = `${countOf(itsActivities.length, "activity", "activities")}: ${names}${more}`;
+    }
+
+    let impactLine = "No impacts";
+    if (itsImpacts.length) {
+        impactLine = countOf(itsImpacts.length, "impact", "impacts");
+        if (onWholeTrip) impactLine += `, ${onWholeTrip} on the whole trip`;
+    }
+    const liveTag = live ? `<span class="tag bad">${live} impacted</span>` : "";
+
+    return `
+        <div class="trip-summary">
+            <span>${activityLine}</span>
+            <span>${impactLine}${liveTag}</span>
+        </div>
+    `;
+};
+
+const itineraryConfig = (userId, lookups, view, getState) => ({
     key: "itineraries",
     noun: "itinerary",
     rows: state => state.itineraries,
@@ -307,12 +361,13 @@ const itineraryConfig = (userId, lookups, view) => ({
         { label: "Name", cell: itinerary => `<strong>${escapeHtml(itinerary.name)}</strong>` },
         { label: "Country", cell: itinerary => escapeHtml(itinerary.countryName) },
         { label: "Dates", cell: itinerary => `<span class="nowrap">${escapeHtml(dateRange(itinerary.dateStart, itinerary.dateEnd))}</span>` },
+        { label: "Holds", long: true, cell: itinerary => createTripSummary(getState(), itinerary) },
     ],
     rowButtons: itinerary => {
-        const isSelected = itinerary.id === view.selectedItineraryId;
+        const isOpen = itinerary.id === view.selectedItineraryId;
         return `
-            <button class="ghost small" type="button" data-show-activities="${Number(itinerary.id)}"${isSelected ? ' aria-pressed="true"' : ""}>
-                Activities
+            <button class="ghost small" type="button" data-open-itinerary="${Number(itinerary.id)}" aria-pressed="${isOpen}">
+                Open
             </button>
         `;
     },
@@ -339,22 +394,21 @@ const itineraryConfig = (userId, lookups, view) => ({
     remove: id => api.adminDeleteItinerary(id),
 });
 
+// the line under an activity's name: when, where and what kind
+const activityDetails = activity => {
+    const parts = [];
+    if (activity.dateStart) parts.push(formatDateTime(activity.dateStart));
+    if (activity.address) parts.push(activity.address);
+
+    const category = CATEGORIES.find(choice => choice.value === activity.category);
+    if (category) parts.push(category.label);
+
+    return parts.map(escapeHtml).join(" · ");
+};
+
 const activityConfig = view => ({
     key: "activities",
     noun: "activity",
-    rows: state => {
-        if (view.selectedItineraryId == null) return null;
-        return state.activitiesByItinerary.get(view.selectedItineraryId) ?? null;
-    },
-    waitingText: "Pick Activities on an itinerary above to see and change its activities.",
-    emptyText: "This itinerary has no activities yet.",
-    columns: [
-        { label: "ID", cell: activity => Number(activity.id) },
-        { label: "Name", cell: activity => `<strong>${escapeHtml(activity.name)}</strong>` },
-        { label: "Address", cell: activity => escapeHtml(activity.address ?? "") },
-        { label: "When", cell: activity => `<span class="nowrap">${escapeHtml(formatDateTime(activity.dateStart))}</span>` },
-        { label: "Category", cell: activity => escapeHtml(CATEGORIES.find(category => category.value === activity.category)?.label ?? "") },
-    ],
     fields: activity => `
         ${createInput("name", "Name", `value="${escapeHtml(activity?.name)}" maxlength="100" required`)}
         ${createInput("address", "Address", `value="${escapeHtml(activity?.address)}" maxlength="200"`)}
@@ -377,54 +431,59 @@ const activityConfig = view => ({
     remove: id => api.adminDeleteActivity(id),
 });
 
-// the activity dropdown only offers the chosen itinerary's activities
-const activityChoicesFor = (state, itineraryId) => {
-    const activities = state.activitiesByItinerary.get(Number(itineraryId)) ?? [];
-    return activities.map(activity => ({ value: activity.id, label: `#${activity.id} ${activity.name}` }));
-};
-
-const impactConfig = (userId, lookups) => ({
+// place is where a new impact goes: { itineraryId, itineraryName, activityId, activityName },
+// with no activity for a whole trip impact. it comes from the group the add button was in, so
+// the form does not need to ask
+const impactConfig = (userId, lookups, place) => ({
     key: "impacts",
     noun: "impact",
-    rows: state => state.impacts,
-    emptyText: "No impacts yet. Add one by hand to test alerts and recommendations without the model.",
+    // which trip and activity it is on is shown by where the table sits
     columns: [
         { label: "ID", cell: impact => Number(impact.id) },
         { label: "News", long: true, cell: impact => escapeHtml(newsTitleOf(impact.newsTitle)) },
-        { label: "On", cell: impact => escapeHtml(impactTarget(impact)) },
         {
             label: "Verdict",
             cell: impact => {
                 const verdict = impact.impacted ? `<span class="tag bad">Impacted</span>` : `<span class="tag ok">Not impacted</span>`;
-                const rejected = impact.rejected ? ` <span class="tag">Rejected</span>` : "";
-                return verdict + rejected;
+                const rejected = impact.rejected ? `<span class="tag">Rejected</span>` : "";
+                return `
+                    <div class="tag-stack">
+                        ${verdict}
+                        ${rejected}
+                    </div>
+                `;
             },
         },
         { label: "Reason", long: true, cell: impact => escapeHtml(impact.reason ?? "") },
     ],
-    fields: (impact, state) => {
+    fields: impact => {
         // once made, an impact is only re-judged, so what it is about is shown but not editable
+        const newsLine = impact
+            ? `
+                <dt>News</dt>
+                <dd>${escapeHtml(newsTitleOf(impact.newsTitle))}</dd>
+            `
+            : "";
+        const about = `
+            <dl class="span-all">
+                ${newsLine}
+                <dt>On</dt>
+                <dd>${escapeHtml(impactTarget(impact ?? place))}</dd>
+            </dl>
+        `;
+
         if (impact) {
             return `
-                <dl class="span-all">
-                    <dt>News</dt>
-                    <dd>${escapeHtml(newsTitleOf(impact.newsTitle))}</dd>
-                    <dt>On</dt>
-                    <dd>${escapeHtml(impactTarget(impact))}</dd>
-                </dl>
+                ${about}
                 ${createCheckbox("impacted", "Impacted", impact.impacted)}
                 ${createCheckbox("rejected", "Rejected by the traveller", impact.rejected)}
                 ${createTextarea("reason", "Reason", impact.reason, 500)}
             `;
         }
 
-        const itineraryChoices = state.itineraries.map(itinerary => ({ value: itinerary.id, label: `#${itinerary.id} ${itinerary.name}` }));
         const newsChoices = lookups.news.map(article => ({ value: article.id, label: `#${article.id} ${newsTitleOf(article.title)}` }));
-        const firstItineraryId = state.itineraries[0]?.id;
-
         return `
-            ${createSelect("itineraryId", "Itinerary", itineraryChoices, firstItineraryId, { required: true })}
-            ${createSelect("activityId", "Activity", activityChoicesFor(state, firstItineraryId), "", { emptyLabel: "Whole trip" })}
+            ${about}
             <div class="span-all">
                 ${createSelect("newsId", "News", newsChoices, "", { emptyLabel: "Pick a news article", required: true })}
             </div>
@@ -436,17 +495,6 @@ const impactConfig = (userId, lookups) => ({
             </div>
         `;
     },
-    wireForm: (form, state) => {
-        const itinerarySelect = form.elements.itineraryId;
-        const activitySelect = form.elements.activityId;
-        if (!itinerarySelect || !activitySelect) return;
-
-        itinerarySelect.addEventListener("change", () => {
-            const choices = activityChoicesFor(state, itinerarySelect.value);
-            const options = choices.map(choice => `<option value="${escapeHtml(choice.value)}">${escapeHtml(choice.label)}</option>`).join("");
-            activitySelect.innerHTML = `<option value="">Whole trip</option>${options}`;
-        });
-    },
     readForm: (inputs, impact) => {
         const verdict = {
             impacted: inputs.impacted.checked,
@@ -457,8 +505,8 @@ const impactConfig = (userId, lookups) => ({
 
         return {
             ...verdict,
-            itineraryId: Number(inputs.itineraryId.value),
-            activityId: numberOrNull(inputs.activityId),
+            itineraryId: place.itineraryId,
+            activityId: place.activityId,
             newsId: Number(inputs.newsId.value),
             sendAlert: inputs.sendAlert.checked,
         };
@@ -527,6 +575,216 @@ const recommendationConfig = () => ({
     remove: id => api.adminDeleteRecommendation(id),
 });
 
+// ---------- the opened itinerary: whole trip impacts, then each activity with its impacts ----------
+
+const createTripCard = () => `
+    <section class="card admin-data" id="admin-trip" hidden>
+        <div class="row">
+            <h2 data-title></h2>
+            <div class="heading-actions">
+                <button class="ghost small" type="button" data-add-activity>Add activity</button>
+                <button class="ghost small" type="button" data-close-trip>Close</button>
+            </div>
+        </div>
+        <p class="err" data-section-error role="alert"></p>
+        <div data-body></div>
+    </section>
+`;
+
+function mountTripDetail(card, { userId, lookups, view, getState, onChange, onAuthLost, onClose }) {
+    const title = card.querySelector("[data-title]");
+    const body = card.querySelector("[data-body]");
+    const sectionError = card.querySelector("[data-section-error]");
+    const activities = activityConfig(view);
+
+    // the one form open in this card, or null. { key, recordId, activityId }: recordId is null when
+    // adding, and activityId says which group a new impact goes in (null for the whole trip)
+    let openForm = null;
+
+    const selectedTrip = () => getState().itineraries.find(itinerary => itinerary.id === view.selectedItineraryId);
+    const activitiesOf = trip => getState().activitiesByItinerary.get(trip.id) ?? [];
+
+    const impactsOn = (trip, activityId) => getState().impacts.filter(impact => {
+        const onThisTrip = impact.itineraryId === trip.id;
+        const onThisActivity = (impact.activityId ?? null) === activityId;
+        return onThisTrip && onThisActivity;
+    });
+
+    const placeFor = (trip, activity) => ({
+        itineraryId: trip.id,
+        itineraryName: trip.name,
+        activityId: activity?.id ?? null,
+        activityName: activity?.name ?? null,
+    });
+
+    // forms open inside the group they belong to: "new" for a new activity, "trip" for the whole
+    // trip impacts, or an activity's id
+    const groupOf = activityId => activityId == null ? "trip" : String(activityId);
+    const slotOf = groupKey => body.querySelector(`[data-group="${groupKey}"] > [data-form-slot]`);
+
+    const createImpactList = (trip, activity) => {
+        const impacts = impactsOn(trip, activity?.id ?? null);
+        const emptyText = activity ? "No impacts on this activity." : "No impacts on the whole trip.";
+        const list = impacts.length
+            ? createTable(impactConfig(userId, lookups, placeFor(trip, activity)), impacts)
+            : `<p class="meta">${emptyText}</p>`;
+
+        return `
+            <div class="trip-impacts">
+                ${list}
+            </div>
+        `;
+    };
+
+    const createWholeTripGroup = trip => `
+        <div class="trip-group" data-group="trip">
+            <div class="row">
+                <div>
+                    <h3>Whole trip</h3>
+                    <p class="meta">Impacts on the trip itself rather than one activity.</p>
+                </div>
+                <div class="heading-actions">
+                    <button class="ghost small" type="button" data-add-impact="">Add impact</button>
+                </div>
+            </div>
+            <div data-form-slot hidden></div>
+            ${createImpactList(trip, null)}
+        </div>
+    `;
+
+    const createActivityGroup = (trip, activity) => `
+        <div class="trip-group" data-group="${Number(activity.id)}">
+            <div class="row">
+                <div>
+                    <h3>${escapeHtml(activity.name)} <span class="meta">#${Number(activity.id)}</span></h3>
+                    <p class="meta">${activityDetails(activity) || "No time or place set."}</p>
+                </div>
+                <div class="heading-actions">
+                    <button class="ghost small" type="button" data-add-impact="${Number(activity.id)}">Add impact</button>
+                    ${createRecordButtons(activities, activity)}
+                </div>
+            </div>
+            <div data-form-slot hidden></div>
+            ${createImpactList(trip, activity)}
+        </div>
+    `;
+
+    // puts the open form back after a redraw, in the group it belongs to
+    const showOpenForm = trip => {
+        if (!openForm) return;
+
+        let config;
+        let record = null;
+        let groupKey;
+
+        if (openForm.key === "activities") {
+            config = activities;
+            if (openForm.recordId != null) {
+                record = activitiesOf(trip).find(activity => activity.id === openForm.recordId);
+            }
+            groupKey = openForm.recordId == null ? "new" : String(openForm.recordId);
+        } else {
+            if (openForm.recordId != null) {
+                record = getState().impacts.find(impact => impact.id === openForm.recordId);
+            }
+            const activityId = record ? (record.activityId ?? null) : openForm.activityId;
+            const activity = activitiesOf(trip).find(candidate => candidate.id === activityId) ?? null;
+            config = impactConfig(userId, lookups, placeFor(trip, activity));
+            groupKey = groupOf(activityId);
+        }
+
+        // what the form was for is gone, eg deleted from another tab
+        const slot = slotOf(groupKey);
+        const recordIsGone = openForm.recordId != null && !record;
+        if (recordIsGone || !slot) {
+            openForm = null;
+            return;
+        }
+
+        const closeThisForm = () => {
+            openForm = null;
+            slot.innerHTML = "";
+            slot.hidden = true;
+        };
+
+        openRecordForm(slot, config, record, {
+            state: getState(),
+            onSaved: async () => {
+                openForm = null;
+                await onChange();
+            },
+            onCancel: closeThisForm,
+            onAuthLost,
+        });
+    };
+
+    const draw = () => {
+        const trip = selectedTrip();
+        card.hidden = trip == null;
+        if (!trip) {
+            openForm = null;
+            return;
+        }
+
+        title.textContent = trip.name;
+
+        const itsActivities = activitiesOf(trip);
+        const activityGroups = itsActivities.length
+            ? itsActivities.map(activity => createActivityGroup(trip, activity)).join("")
+            : `<p class="meta">No activities yet.</p>`;
+
+        body.innerHTML = `
+            <div data-group="new">
+                <div data-form-slot hidden></div>
+            </div>
+            ${createWholeTripGroup(trip)}
+            <h3 class="trip-heading">Activities</h3>
+            ${activityGroups}
+        `;
+
+        const deleteHooks = { errorElement: sectionError, onChange, onAuthLost };
+        wireDeleteButtons(body, activities, deleteHooks);
+        wireDeleteButtons(body, impactConfig(userId, lookups, null), deleteHooks);
+
+        showOpenForm(trip);
+    };
+
+    // one form at a time, so opening another one closes whatever was open
+    const open = form => {
+        openForm = form;
+        sectionError.textContent = "";
+        draw();
+    };
+
+    card.querySelector("[data-add-activity]").addEventListener("click", () => {
+        open({ key: "activities", recordId: null });
+    });
+    card.querySelector("[data-close-trip]").addEventListener("click", onClose);
+
+    body.addEventListener("click", event => {
+        const addImpactButton = event.target.closest("[data-add-impact]");
+        if (addImpactButton) {
+            const value = addImpactButton.dataset.addImpact;
+            const activityId = value === "" ? null : Number(value);
+            open({ key: "impacts", recordId: null, activityId });
+            return;
+        }
+
+        const editButton = event.target.closest("[data-edit]");
+        if (editButton) {
+            open({ key: editButton.dataset.kind, recordId: Number(editButton.dataset.edit) });
+        }
+    });
+
+    // for switching to another itinerary, so a half filled form does not follow it there
+    const reset = () => {
+        openForm = null;
+        sectionError.textContent = "";
+    };
+
+    return { draw, reset };
+}
+
 // ---------- loading ----------
 
 async function loadState(userId) {
@@ -536,7 +794,7 @@ async function loadState(userId) {
         api.adminRecommendations(userId),
     ]);
 
-    // every itinerary's activities up front, so the impact form can offer them without waiting
+    // every itinerary's activities up front, so the summaries can count them without opening each trip
     const activityLists = await Promise.all(itineraries.map(itinerary => api.adminActivities(itinerary.id)));
     const activitiesByItinerary = new Map();
     itineraries.forEach((itinerary, index) => activitiesByItinerary.set(itinerary.id, activityLists[index]));
@@ -549,12 +807,12 @@ export async function mountUserData(container, userId, onAuthLost, { onChange = 
     container.innerHTML = `
         <h2 class="form-section">Trip data</h2>
         <p class="meta hint">
-            Everything this account owns, for testing. Changes are recorded in the activity below.
-            New itineraries and activities are checked against recent news, like a traveller's.
+            Everything this account owns, for testing. Open an itinerary to see its activities, with the
+            impacts on each one under it. Changes are recorded in the activity below, and new itineraries
+            and activities are checked against recent news, like a traveller's.
         </p>
         ${createSectionCard("itineraries", "Itineraries", "Add itinerary")}
-        ${createSectionCard("activities", "Activities", "Add activity")}
-        ${createSectionCard("impacts", "Impacts", "Add impact")}
+        ${createTripCard()}
         ${createSectionCard("recommendations", "Recommendations", "Add recommendation")}
     `;
 
@@ -573,18 +831,17 @@ export async function mountUserData(container, userId, onAuthLost, { onChange = 
     const view = { selectedItineraryId: null };
     const getState = () => state;
 
-    const activitiesCard = container.querySelector("#admin-activities");
-    const activitiesTitle = activitiesCard.querySelector("[data-title]");
+    const itinerariesCard = container.querySelector("#admin-itineraries");
+    const tripCard = container.querySelector("#admin-trip");
 
     const drawAll = () => {
-        // the picked itinerary may have just been deleted
+        // the opened itinerary may have just been deleted
         const stillThere = state.itineraries.some(itinerary => itinerary.id === view.selectedItineraryId);
         if (!stillThere) view.selectedItineraryId = null;
 
-        const selected = state.itineraries.find(itinerary => itinerary.id === view.selectedItineraryId);
-        activitiesTitle.textContent = selected ? `Activities in ${selected.name}` : "Activities";
-
-        for (const section of sections) section.draw();
+        itinerarySection.draw();
+        tripDetail.draw();
+        recommendationSection.draw();
     };
 
     const refresh = async () => {
@@ -603,25 +860,30 @@ export async function mountUserData(container, userId, onAuthLost, { onChange = 
         onChange();
     };
 
-    const hooks = { getState, onChange: afterChange, onAuthLost };
-    const itinerarySection = mountSection(container.querySelector("#admin-itineraries"), itineraryConfig(userId, lookups, view), hooks);
-    const activitySection = mountSection(activitiesCard, activityConfig(view), hooks);
-    const sections = [
-        itinerarySection,
-        activitySection,
-        mountSection(container.querySelector("#admin-impacts"), impactConfig(userId, lookups), hooks),
-        mountSection(container.querySelector("#admin-recommendations"), recommendationConfig(), hooks),
-    ];
+    const showTrip = itineraryId => {
+        view.selectedItineraryId = itineraryId;
+        tripDetail.reset();
+        drawAll();
+    };
 
-    // picking an itinerary's activities swaps the activities section over to it
-    container.querySelector("#admin-itineraries").addEventListener("click", event => {
-        const button = event.target.closest("[data-show-activities]");
+    const hooks = { getState, onChange: afterChange, onAuthLost };
+    const itinerarySection = mountSection(itinerariesCard, itineraryConfig(userId, lookups, view, getState), hooks);
+    const tripDetail = mountTripDetail(tripCard, {
+        userId, lookups, view, getState, onChange: afterChange, onAuthLost,
+        onClose: () => showTrip(null),
+    });
+    const recommendationSection = mountSection(container.querySelector("#admin-recommendations"), recommendationConfig(), hooks);
+
+    // open swaps the trip card over to that itinerary, and pressing it again closes it
+    itinerariesCard.addEventListener("click", event => {
+        const button = event.target.closest("[data-open-itinerary]");
         if (!button) return;
 
-        view.selectedItineraryId = Number(button.dataset.showActivities);
-        activitySection.closeForm();
-        drawAll();
-        activitiesCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        const itineraryId = Number(button.dataset.openItinerary);
+        const isAlreadyOpen = view.selectedItineraryId === itineraryId;
+        showTrip(isAlreadyOpen ? null : itineraryId);
+
+        if (!isAlreadyOpen) tripCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
 
     await refresh();
