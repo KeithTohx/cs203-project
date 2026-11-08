@@ -103,6 +103,24 @@ const realApi = {
   adminDeleteUser:id => request(`/api/admin/users/${id}`, "DELETE"),                   // -> 204, the account and everything in it is gone. not allowed on yourself
   userActivity:(id, {action = "", page = 0} = {}) => request(`/api/admin/users/${id}/actions?${new URLSearchParams({action, page})}`),   // what the account did and what was done to it, newest first
   auditLog:   ({email = "", action = "", page = 0} = {}) => request(`/api/admin/audit?${new URLSearchParams({email, action, page})}`),   // everyone's actions, newest first
+  // admin console: any account's trip data, mostly for testing. every change is in the audit log
+  adminCreateUser:details => request("/api/admin/users", "POST", details),             // {username, email, password, role} -> the account
+  adminItineraries:userId => request(`/api/admin/users/${userId}/itineraries`),
+  adminAddItinerary:(userId, itinerary) => request(`/api/admin/users/${userId}/itineraries`, "POST", itinerary),   // {name, countryId, dateStart, dateEnd}
+  adminUpdateItinerary:(id, itinerary) => request(`/api/admin/itineraries/${id}`, "PUT", itinerary),
+  adminDeleteItinerary:id => request(`/api/admin/itineraries/${id}`, "DELETE"),        // its activities, impacts, alerts and recommendations go too
+  adminActivities:itineraryId => request(`/api/admin/itineraries/${itineraryId}/activities`),
+  adminAddActivity:(itineraryId, activity) => request(`/api/admin/itineraries/${itineraryId}/activities`, "POST", activity),   // {name, address, dateStart, dateEnd, category}
+  adminUpdateActivity:(id, activity) => request(`/api/admin/activities/${id}`, "PUT", activity),
+  adminDeleteActivity:id => request(`/api/admin/activities/${id}`, "DELETE"),
+  adminImpacts:userId => request(`/api/admin/users/${userId}/impacts`),                // newest first, rejected ones included
+  adminAddImpact:(userId, impact) => request(`/api/admin/users/${userId}/impacts`, "POST", impact),   // {newsId, itineraryId, activityId, impacted, reason, rejected, sendAlert}
+  adminUpdateImpact:(id, changes) => request(`/api/admin/impacts/${id}`, "PUT", changes),   // {impacted, reason, rejected}
+  adminDeleteImpact:id => request(`/api/admin/impacts/${id}`, "DELETE"),
+  adminRecommendations:userId => request(`/api/admin/users/${userId}/recommendations`),   // every attempt, newest first
+  adminAddRecommendation:(impactId, recommendation) => request(`/api/admin/impacts/${impactId}/recommendations`, "POST", recommendation),   // {severity, action, advice, optionId, status}
+  adminUpdateRecommendation:(id, recommendation) => request(`/api/admin/recommendations/${id}`, "PUT", recommendation),
+  adminDeleteRecommendation:id => request(`/api/admin/recommendations/${id}`, "DELETE"),
 };
 
 // Mock mode only on localhost, via http://localhost:8080/?mock

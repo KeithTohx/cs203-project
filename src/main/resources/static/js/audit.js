@@ -15,6 +15,17 @@ export const AUDIT_ACTIONS = [
     { value: "ACCOUNT_ENABLED", label: "Enabled account" },
     { value: "ACCOUNT_DELETED", label: "Deleted account" },
     { value: "ROLE_CHANGED", label: "Changed role" },
+    { value: "ACCOUNT_CREATED", label: "Created account" },
+    // only the admin console makes these for now
+    { value: "ACTIVITY_CREATED", label: "Created activity" },
+    { value: "ACTIVITY_UPDATED", label: "Updated activity" },
+    { value: "ACTIVITY_DELETED", label: "Deleted activity" },
+    { value: "IMPACT_CREATED", label: "Created impact" },
+    { value: "IMPACT_UPDATED", label: "Updated impact" },
+    { value: "IMPACT_DELETED", label: "Deleted impact" },
+    { value: "RECOMMENDATION_CREATED", label: "Created recommendation" },
+    { value: "RECOMMENDATION_UPDATED", label: "Updated recommendation" },
+    { value: "RECOMMENDATION_DELETED", label: "Deleted recommendation" },
 ];
 
 // the text for an action, or the raw value if the backend sends one this file does not know yet

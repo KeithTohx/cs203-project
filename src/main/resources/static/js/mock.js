@@ -277,6 +277,57 @@ const removeAccount = account => {
     USERS.splice(USERS.indexOf(account), 1);
 };
 
+// ---------- admin console helpers ----------
+
+// the impact with this id and the itinerary it sits under, or null
+const findImpactEntry = id => {
+    for (const [itineraryId, impacts] of Object.entries(IMPACTS)) {
+        const impact = impacts.find(candidate => candidate.id === Number(id));
+        if (impact) return { itineraryId: Number(itineraryId), impact };
+    }
+    return null;
+};
+
+// the recommendation with this id and the itinerary it sits under, or null
+const findRecommendationEntry = id => {
+    for (const [itineraryId, recommendations] of Object.entries(RECOMMENDATIONS)) {
+        const recommendation = recommendations.find(candidate => candidate.id === Number(id));
+        if (recommendation) return { itineraryId: Number(itineraryId), recommendation };
+    }
+    return null;
+};
+
+const ownerOfItinerary = itineraryId => ITINERARIES.find(itinerary => itinerary.id === Number(itineraryId))?.userId ?? null;
+
+// the impact in the admin shape, which also says whose trip it is on
+const adminImpact = (itineraryId, impact) => {
+    const itinerary = ITINERARIES.find(candidate => candidate.id === itineraryId);
+    return { ...impact, itineraryId, itineraryName: itinerary?.name ?? null, userId: itinerary?.userId ?? null };
+};
+
+// the seeded rows have no status, they are all still waiting on the traveller
+const adminRecommendation = recommendation => ({ status: "PENDING", decidedAt: null, stale: false, ...recommendation });
+
+const allOptions = () => Object.values(OPTIONS).flat();
+
+// an impact goes with its alert and its recommendations
+const removeImpact = (itineraryId, impact) => {
+    IMPACTS[itineraryId].splice(IMPACTS[itineraryId].indexOf(impact), 1);
+
+    const recommendations = RECOMMENDATIONS[itineraryId] ?? [];
+    RECOMMENDATIONS[itineraryId] = recommendations.filter(recommendation => recommendation.impactId !== impact.id);
+
+    for (let index = ALERTS.length - 1; index >= 0; index--) {
+        if (ALERTS[index].impactId === impact.id) ALERTS.splice(index, 1);
+    }
+};
+
+// like the backend's checks on dates sent to the admin console
+const endsBeforeItStarts = ({ dateStart, dateEnd }) => dateStart && dateEnd && dateEnd < dateStart;
+
+// recorded against the owner, so it shows up on their admin page
+const recordByAdmin = (action, ownerId, details) => record(action, me.id, me.email, ownerId, `${details} (by admin)`);
+
 export const mockApi = {
     // like the backend: a disabled account gets the same answer as a wrong password, so nothing is given away
     login: (email, password) => {
@@ -476,6 +527,252 @@ export const mockApi = {
 
         removeAccount(account);
         record("ACCOUNT_DELETED", me.id, me.email, account.id, `deleted user '${account.username}'`);
+        return respondWith(null);
+    },
+    adminCreateUser: ({ username, email, password, role }) => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const taken = USERS.some(user => user.email.toLowerCase() === email.toLowerCase()
+            || user.username.toLowerCase() === username.toLowerCase());
+        if (taken) return fail(409, "email or username is already taken");
+
+        const account = { id: Math.max(...USERS.map(user => user.id)) + 1, username, email, password, role, enabled: true };
+        USERS.push(account);
+        record("ACCOUNT_CREATED", me.id, me.email, account.id, `created ${role} account '${username}'`);
+        return respondWith(withoutPassword(account));
+    },
+    // ---------- admin console: any account's trip data ----------
+    adminItineraries: userId => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+        if (!findUser(userId)) return userNotFound(userId);
+
+        const theirs = ITINERARIES.filter(itinerary => itinerary.userId === Number(userId));
+        return respondWith([...theirs].sort((first, second) => first.id - second.id));
+    },
+    adminAddItinerary: (userId, { name, countryId, dateStart, dateEnd }) => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+        if (!findUser(userId)) return userNotFound(userId);
+
+        const country = COUNTRIES.find(candidate => candidate.id === Number(countryId));
+        if (!country) return fail(400, `no country with id ${countryId}`);
+        if (endsBeforeItStarts({ dateStart, dateEnd })) return fail(400, "the end cannot be before the start");
+
+        const nextId = Math.max(0, ...ITINERARIES.map(itinerary => itinerary.id)) + 1;
+        const itinerary = makeItinerary(nextId, Number(userId), name, country.name, dateStart, dateEnd);
+        ITINERARIES.push(itinerary);
+        recordByAdmin("ITINERARY_CREATED", itinerary.userId, `itinerary ${itinerary.id} '${itinerary.name}'`);
+        return respondWith(itinerary);
+    },
+    adminUpdateItinerary: (id, { name, countryId, dateStart, dateEnd }) => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const itinerary = ITINERARIES.find(candidate => candidate.id === Number(id));
+        if (!itinerary) return fail(404, `Itinerary with ID: ${id} not found`);
+        const country = COUNTRIES.find(candidate => candidate.id === Number(countryId));
+        if (!country) return fail(400, `no country with id ${countryId}`);
+        if (endsBeforeItStarts({ dateStart, dateEnd })) return fail(400, "the end cannot be before the start");
+
+        Object.assign(itinerary, { name, dateStart, dateEnd, countryId: country.id, countryName: country.name });
+        recordByAdmin("ITINERARY_UPDATED", itinerary.userId, `itinerary ${itinerary.id} '${itinerary.name}'`);
+        return respondWith(itinerary);
+    },
+    adminDeleteItinerary: id => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const itinerary = ITINERARIES.find(candidate => candidate.id === Number(id));
+        if (!itinerary) return fail(404, `Itinerary with ID: ${id} not found`);
+
+        removeItinerary(itinerary);
+        recordByAdmin("ITINERARY_DELETED", itinerary.userId, `itinerary ${itinerary.id} '${itinerary.name}'`);
+        return respondWith(null);
+    },
+    adminActivities: itineraryId => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+        if (ownerOfItinerary(itineraryId) == null) return fail(404, `Itinerary with ID: ${itineraryId} not found`);
+
+        const onTrip = ACTIVITIES.filter(activity => activity.itineraryId === Number(itineraryId));
+        return respondWith([...onTrip].sort((first, second) => String(first.dateStart).localeCompare(String(second.dateStart))));
+    },
+    adminAddActivity: (itineraryId, { name, address, dateStart, dateEnd, category }) => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const ownerId = ownerOfItinerary(itineraryId);
+        if (ownerId == null) return fail(404, `Itinerary with ID: ${itineraryId} not found`);
+        if (endsBeforeItStarts({ dateStart, dateEnd })) return fail(400, "the end cannot be before the start");
+
+        const nextId = Math.max(0, ...ACTIVITIES.map(activity => activity.id)) + 1;
+        const activity = { ...makeActivity(nextId, Number(itineraryId), name, address, dateStart, dateEnd), category };
+        ACTIVITIES.push(activity);
+        recordByAdmin("ACTIVITY_CREATED", ownerId, `activity ${activity.id} '${activity.name}'`);
+        return respondWith(activity);
+    },
+    adminUpdateActivity: (id, { name, address, dateStart, dateEnd, category }) => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const activity = ACTIVITIES.find(candidate => candidate.id === Number(id));
+        if (!activity) return fail(404, `Activity with ID: ${id} not found`);
+        if (endsBeforeItStarts({ dateStart, dateEnd })) return fail(400, "the end cannot be before the start");
+
+        Object.assign(activity, { name, address, dateStart, dateEnd, category });
+        recordByAdmin("ACTIVITY_UPDATED", ownerOfItinerary(activity.itineraryId), `activity ${activity.id} '${activity.name}'`);
+        return respondWith(activity);
+    },
+    // the impacts on it go too, with their alerts and recommendations
+    adminDeleteActivity: id => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const activity = ACTIVITIES.find(candidate => candidate.id === Number(id));
+        if (!activity) return fail(404, `Activity with ID: ${id} not found`);
+
+        const onActivity = (IMPACTS[activity.itineraryId] ?? []).filter(impact => impact.activityId === activity.id);
+        for (const impact of onActivity) removeImpact(activity.itineraryId, impact);
+
+        ACTIVITIES.splice(ACTIVITIES.indexOf(activity), 1);
+        recordByAdmin("ACTIVITY_DELETED", ownerOfItinerary(activity.itineraryId), `activity ${activity.id} '${activity.name}'`);
+        return respondWith(null);
+    },
+    adminImpacts: userId => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+        if (!findUser(userId)) return userNotFound(userId);
+
+        const theirTrips = ITINERARIES.filter(itinerary => itinerary.userId === Number(userId));
+        const theirImpacts = theirTrips.flatMap(itinerary =>
+            (IMPACTS[itinerary.id] ?? []).map(impact => adminImpact(itinerary.id, impact)));
+        return respondWith(theirImpacts.sort((first, second) => second.id - first.id));
+    },
+    adminAddImpact: (userId, { newsId, itineraryId, activityId, impacted, reason, rejected, sendAlert }) => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+        if (!findUser(userId)) return userNotFound(userId);
+
+        // same checks, and the same 400s, as the backend
+        const ownerId = ownerOfItinerary(itineraryId);
+        if (ownerId == null) return fail(400, `no itinerary with id ${itineraryId}`);
+        if (ownerId !== Number(userId)) return fail(400, `itinerary ${itineraryId} does not belong to user ${userId}`);
+
+        let activity = null;
+        if (activityId != null) {
+            activity = ACTIVITIES.find(candidate => candidate.id === Number(activityId));
+            if (!activity) return fail(400, `no activity with id ${activityId}`);
+            if (activity.itineraryId !== Number(itineraryId)) return fail(400, `activity ${activityId} is not on itinerary ${itineraryId}`);
+        }
+        if (!NEWS[newsId]) return fail(400, `no news with id ${newsId}`);
+        if (sendAlert && (!impacted || rejected || !reason)) {
+            return fail(400, "an alert needs an impacted, not rejected impact with a reason");
+        }
+
+        const allIds = Object.values(IMPACTS).flat().map(impact => impact.id);
+        const impact = makeImpact(Math.max(0, ...allIds) + 1, impacted, Number(newsId), activity?.id ?? null, activity?.name ?? null, reason);
+        impact.rejected = Boolean(rejected);
+        IMPACTS[itineraryId] ??= [];
+        IMPACTS[itineraryId].push(impact);
+
+        if (sendAlert) {
+            const nextAlertId = Math.max(0, ...ALERTS.map(alert => alert.id)) + 1;
+            ALERTS.push({ id: nextAlertId, impactId: impact.id, createdAt: new Date().toISOString(), readAt: null });
+        }
+        recordByAdmin("IMPACT_CREATED", ownerId, `impact ${impact.id} (${impacted ? "impacted" : "not impacted"})`);
+        return respondWith(adminImpact(Number(itineraryId), impact));
+    },
+    adminUpdateImpact: (id, { impacted, reason, rejected }) => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const entry = findImpactEntry(id);
+        if (!entry) return fail(404, `Could not find impact ${id}`);
+
+        Object.assign(entry.impact, { impacted, reason, rejected: Boolean(rejected) });
+        recordByAdmin("IMPACT_UPDATED", ownerOfItinerary(entry.itineraryId), `impact ${entry.impact.id} (${impacted ? "impacted" : "not impacted"})`);
+        return respondWith(adminImpact(entry.itineraryId, entry.impact));
+    },
+    adminDeleteImpact: id => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const entry = findImpactEntry(id);
+        if (!entry) return fail(404, `Could not find impact ${id}`);
+
+        removeImpact(entry.itineraryId, entry.impact);
+        recordByAdmin("IMPACT_DELETED", ownerOfItinerary(entry.itineraryId), `impact ${entry.impact.id}`);
+        return respondWith(null);
+    },
+    adminRecommendations: userId => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+        if (!findUser(userId)) return userNotFound(userId);
+
+        const theirTrips = ITINERARIES.filter(itinerary => itinerary.userId === Number(userId));
+        const theirs = theirTrips.flatMap(itinerary => (RECOMMENDATIONS[itinerary.id] ?? []).map(adminRecommendation));
+        return respondWith(theirs.sort((first, second) => second.id - first.id));
+    },
+    adminAddRecommendation: (impactId, { severity, action, advice, optionId, status }) => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const entry = findImpactEntry(impactId);
+        if (!entry) return fail(404, `Could not find impact ${impactId}`);
+        const option = optionId == null ? null : allOptions().find(candidate => candidate.id === Number(optionId));
+        if (optionId != null && !option) return fail(400, `no activity option with id ${optionId}`);
+
+        const recommendation = makeRecommendation(nextRecommendationId++, entry.impact, severity, action, advice, option);
+        const chosenStatus = status ?? "PENDING";
+        Object.assign(recommendation, {
+            itineraryId: entry.itineraryId,
+            status: chosenStatus,
+            decidedAt: chosenStatus === "PENDING" ? null : new Date().toISOString(),
+        });
+        RECOMMENDATIONS[entry.itineraryId] ??= [];
+        RECOMMENDATIONS[entry.itineraryId].push(recommendation);
+
+        recordByAdmin("RECOMMENDATION_CREATED", ownerOfItinerary(entry.itineraryId), `recommendation ${recommendation.id} (${action})`);
+        return respondWith(adminRecommendation(recommendation));
+    },
+    adminUpdateRecommendation: (id, { severity, action, advice, optionId, status }) => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const entry = findRecommendationEntry(id);
+        if (!entry) return fail(404, `No recommendation with id ${id}`);
+        const option = optionId == null ? null : allOptions().find(candidate => candidate.id === Number(optionId));
+        if (optionId != null && !option) return fail(400, `no activity option with id ${optionId}`);
+
+        const recommendation = entry.recommendation;
+        const newStatus = status ?? "PENDING";
+        // like the backend, the decision time only moves when the status really changes
+        if (newStatus !== (recommendation.status ?? "PENDING")) {
+            recommendation.decidedAt = newStatus === "PENDING" ? null : new Date().toISOString();
+        }
+        Object.assign(recommendation, {
+            severity, action, advice, status: newStatus,
+            optionId: option?.id ?? null,
+            optionName: option?.name ?? null,
+            optionArea: option?.area ?? null,
+            optionAddress: option?.address ?? null,
+        });
+
+        recordByAdmin("RECOMMENDATION_UPDATED", ownerOfItinerary(entry.itineraryId), `recommendation ${recommendation.id} (${action})`);
+        return respondWith(adminRecommendation(recommendation));
+    },
+    adminDeleteRecommendation: id => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const entry = findRecommendationEntry(id);
+        if (!entry) return fail(404, `No recommendation with id ${id}`);
+
+        const list = RECOMMENDATIONS[entry.itineraryId];
+        list.splice(list.indexOf(entry.recommendation), 1);
+        recordByAdmin("RECOMMENDATION_DELETED", ownerOfItinerary(entry.itineraryId), `recommendation ${entry.recommendation.id} (${entry.recommendation.action})`);
         return respondWith(null);
     },
     // like the backend: not on yourself, and the last enabled admin cannot be made a user

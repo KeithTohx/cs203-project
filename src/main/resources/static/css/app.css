@@ -1792,3 +1792,81 @@ main:has(.dashboard) {
         display: none;
     }
 }
+
+/* ===== admin console (trip data on an admin's user page) ===== */
+.admin-data h2 {
+    margin: 0;
+}
+
+/* the add or edit form opens above the table it belongs to */
+.admin-form {
+    margin: 12px 0;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+}
+
+.admin-form h3 {
+    margin: 0;
+    font-size: 15px;
+}
+
+/* fields side by side where there is room, one per line on a phone */
+.admin-form .field-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    column-gap: 16px;
+    align-items: end;
+}
+
+.admin-form .span-all {
+    grid-column: 1 / -1;
+}
+
+.admin-form textarea {
+    width: 100%;
+    font: inherit;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--text);
+    resize: vertical;
+}
+
+/* free text like reasons and advice gets room, instead of a few words per line */
+table.data-table td.long-text {
+    min-width: 180px;
+}
+
+/* the buttons column only needs to fit its buttons, so it overrides the audit details rule */
+table.data-table td.row-actions-cell {
+    min-width: 0;
+    width: 1%;
+}
+
+/* two tags in one table cell, one above the other */
+.tag-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+}
+
+/* edit and delete at the end of each row, stacked so wide tables still fit without scrolling */
+.row-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+}
+
+.row-actions button {
+    margin-top: 0;
+    white-space: nowrap;
+}
+
+.row-actions button[aria-pressed="true"] {
+    border-color: var(--accent);
+}
