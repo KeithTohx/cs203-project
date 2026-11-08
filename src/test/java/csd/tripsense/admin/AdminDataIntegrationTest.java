@@ -50,7 +50,7 @@ import jakarta.persistence.PersistenceContext;
     "impact.eval.new-itinerary.enabled=false"
 })
 @DisplayName("Admin console deletes against a real database")
-class AdminDataDeleteIntegrationTest {
+class AdminDataIntegrationTest {
 
     @PersistenceContext private EntityManager em;
     @Autowired private AdminDataService adminData;
