@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.stream.LongStream;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -45,7 +46,7 @@ class ImpactEvaluationJobTest {
         lenient().when(progress.begin(anyLong(), anyLong(), anyBoolean(), anyList())).thenAnswer(i -> i.getArgument(0) + ":" + i.getArgument(1));
     }
 
-    @Test void capClosesSelectedGroupAsPartialInsteadOfLeavingItRunning() {
+    @Test void capDoesNotOpenBatchesForTripsThatWillNotBeEvaluated() {
         News n = news(10L);
         givenCountryWithNews(n);
         givenPendingItineraries(n, itinerary(1L), itinerary(2L));
@@ -53,7 +54,55 @@ class ImpactEvaluationJobTest {
         job(true, 1).run();
 
         verify(progress).finish("1:10", false);
-        verify(progress).finish("2:10", true);
+        verify(progress, never()).begin(eq(2L), anyLong(), anyBoolean(), anyList());
+        verify(progress, never()).finish(eq("2:10"), anyBoolean());
+    }
+
+    @Test
+    void manyTripsFinishTheirOwnActivitiesBeforeAnotherTripStartsItsEmailWindow() {
+        News n = news(10L);
+        Itinerary[] trips = LongStream.rangeClosed(1, 40).mapToObj(ImpactEvaluationJobTest::itinerary)
+                .toArray(Itinerary[]::new);
+        Activity[] activities = LongStream.rangeClosed(1, 40).mapToObj(id -> {
+            Activity a = activity(100L + id);
+            a.setItinerary(trips[(int) id - 1]);
+            return a;
+        }).toArray(Activity[]::new);
+        givenCountryWithNews(n);
+        givenPendingItineraries(n, trips);
+        givenPendingActivities(n, activities);
+
+        job(true, 200).run();
+
+        var order = inOrder(progress, impactService);
+        for (int i = 0; i < trips.length; i++) {
+            long tripId = trips[i].getId();
+            order.verify(progress).begin(tripId, n.getId(), true, List.of(activities[i].getId()));
+            order.verify(impactService).evaluateItineraryForNews(trips[i], n);
+            order.verify(progress).resolved(tripId, n.getId(), null);
+            order.verify(impactService).evaluateActivityForNews(activities[i], n);
+            order.verify(progress).resolved(tripId, n.getId(), activities[i].getId());
+            order.verify(progress).finish(tripId + ":10", false);
+        }
+        order.verifyNoMoreInteractions();
+    }
+
+    @Test
+    void activityOnlyTripStillHasItsOwnBatchWhenItsItineraryWasAlreadyAssessed() {
+        News n = news(10L);
+        Activity a = activity(100L);
+        a.setItinerary(itinerary(2L));
+        givenCountryWithNews(n);
+        givenPendingItineraries(n, itinerary(1L));
+        givenPendingActivities(n, a);
+
+        job(true, 200).run();
+
+        var order = inOrder(progress, impactService);
+        order.verify(progress).finish("1:10", false);
+        order.verify(progress).begin(2L, 10L, false, List.of(100L));
+        order.verify(impactService).evaluateActivityForNews(a, n);
+        order.verify(progress).finish("2:10", false);
     }
 
     // ---------------------------------------------------------------- helpers
@@ -279,6 +328,7 @@ class ImpactEvaluationJobTest {
 
         verify(impactService, times(1)).evaluateItineraryForNews(any(Itinerary.class), any(News.class));
         verify(impactService, times(1)).evaluateActivityForNews(any(Activity.class), any(News.class));
+        verify(progress).finish("1:10", true);
     }
 
     // ===== CONCURRENCY AND THE SHARED FAILURE COUNTER =====
@@ -331,10 +381,10 @@ class ImpactEvaluationJobTest {
 
         job(true, 200).run();
 
-        // failures is one counter for both loops, so 2 trips plus 1 activity is already 3 in
-        // a row and the second activity is never attempted. moving the counter inside either
-        // loop would break this
-        verify(impactService, times(2)).evaluateItineraryForNews(any(Itinerary.class), any(News.class));
-        verify(impactService, times(1)).evaluateActivityForNews(any(Activity.class), any(News.class));
+        // The first trip and its two activities fail consecutively, so the next trip is not attempted.
+        verify(impactService, times(1)).evaluateItineraryForNews(any(Itinerary.class), any(News.class));
+        verify(impactService, times(2)).evaluateActivityForNews(any(Activity.class), any(News.class));
+        verify(progress).finish("1:10", true);
+        verify(progress, never()).begin(eq(2L), anyLong(), anyBoolean(), anyList());
     }
 }

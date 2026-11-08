@@ -5,7 +5,8 @@ import csd.tripsense.alert.AlertProgressReporter;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.slf4j.Logger;
@@ -93,49 +94,58 @@ public class ImpactEvaluationJob {
 
                 var tripTargets = itineraryService.getItinerariesPendingForNews(news.getId(), countryId, now);
                 var activityTargets = activityService.getActivitiesPendingForNews(news.getId(), countryId, now);
-                var batches = new HashMap<Long, String>();
-                for (Itinerary trip : tripTargets) batches.computeIfAbsent(trip.getId(), id -> progress.begin(id, news.getId(),
-                        tripTargets.stream().anyMatch(t -> t.getId().equals(id)),
-                        activityTargets.stream().filter(a -> a.getItinerary().getId().equals(id)).map(Activity::getId).toList()));
-                for (Activity activity : activityTargets) batches.computeIfAbsent(activity.getItinerary().getId(),
-                        id -> progress.begin(id, news.getId(),
-                        tripTargets.stream().anyMatch(t -> t.getId().equals(id)),
-                        activityTargets.stream().filter(a -> a.getItinerary().getId().equals(id)).map(Activity::getId).toList()));
-                var expected = new HashMap<Long, Integer>();
-                var completed = new HashMap<Long, Integer>();
-                tripTargets.forEach(t -> expected.merge(t.getId(), 1, Integer::sum));
-                activityTargets.forEach(a -> expected.merge(a.getItinerary().getId(), 1, Integer::sum));
-                try {
-                    for (Itinerary itinerary : tripTargets) {
-                        if (judged >= maxPerRun) { done(judged, skipped, "cap reached"); return; }
-                        try {
-                            impactService.evaluateItineraryForNews(itinerary, news);
-                            progress.resolved(itinerary.getId(),news.getId(),null);
-                            completed.merge(itinerary.getId(), 1, Integer::sum);
-                            judged++;
-                            failures = 0;
-                        } catch (Exception e) {
-                            skipped++;
-                            if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }
-                        }
-                    }
+                var pendingTrips = new LinkedHashMap<Long, Itinerary>();
+                var activitiesByTrip = new LinkedHashMap<Long, List<Activity>>();
+                for (Itinerary trip : tripTargets) {
+                    pendingTrips.put(trip.getId(), trip);
+                    activitiesByTrip.put(trip.getId(), new ArrayList<>());
+                }
+                for (Activity activity : activityTargets) {
+                    activitiesByTrip.computeIfAbsent(activity.getItinerary().getId(), id -> new ArrayList<>())
+                            .add(activity);
+                }
 
-                    for (Activity activity : activityTargets) {
-                        if (judged >= maxPerRun) { done(judged, skipped, "cap reached"); return; }
-                        try {
-                            impactService.evaluateActivityForNews(activity, news);
-                            progress.resolved(activity.getItinerary().getId(),news.getId(),activity.getId());
-                            completed.merge(activity.getItinerary().getId(), 1, Integer::sum);
-                            judged++;
-                            failures = 0;
-                        } catch (Exception e) {
-                            skipped++;
-                            if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }
+                // Start each email window only when this trip's assessments actually begin.
+                // Assess its activities before moving on to another trip.
+                for (var entry : activitiesByTrip.entrySet()) {
+                    if (judged >= maxPerRun) { done(judged, skipped, "cap reached"); return; }
+                    Long tripId = entry.getKey();
+                    Itinerary itinerary = pendingTrips.get(tripId);
+                    List<Activity> activities = entry.getValue();
+                    String batch = progress.begin(tripId, news.getId(), itinerary != null,
+                            activities.stream().map(Activity::getId).toList());
+                    int expected = activities.size() + (itinerary != null ? 1 : 0);
+                    int completed = 0;
+                    try {
+                        if (itinerary != null) {
+                            try {
+                                impactService.evaluateItineraryForNews(itinerary, news);
+                                progress.resolved(tripId, news.getId(), null);
+                                completed++;
+                                judged++;
+                                failures = 0;
+                            } catch (Exception e) {
+                                skipped++;
+                                if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }
+                            }
                         }
+
+                        for (Activity activity : activities) {
+                            if (judged >= maxPerRun) { done(judged, skipped, "cap reached"); return; }
+                            try {
+                                impactService.evaluateActivityForNews(activity, news);
+                                progress.resolved(tripId, news.getId(), activity.getId());
+                                completed++;
+                                judged++;
+                                failures = 0;
+                            } catch (Exception e) {
+                                skipped++;
+                                if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }
+                            }
+                        }
+                    } finally {
+                        progress.finish(batch, completed < expected);
                     }
-                } finally {
-                    batches.forEach((tripId, batch) -> progress.finish(batch,
-                            completed.getOrDefault(tripId, 0) < expected.get(tripId)));
                 }
             }
         }
