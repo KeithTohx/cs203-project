@@ -1314,4 +1314,90 @@ class AlertIntegrationTest {
     private void verdict(boolean affected) { givenAiVerdict(affected); }
 
     private Impact evaluate() { return assessTripAsImpacted(skiTrip); }
+
+    @Test void sentGroupRemainsTerminalAfterItsSentImpactIsDeleted() {
+        Impact overall=evaluate();
+        var original=alertService.list(traveller.getId(),false,null,20).content().getFirst();
+        var now=java.time.Instant.now().plusSeconds(1);
+        emailStore.sent(emailStore.claim(original.id(),now).orElseThrow(),now);
+        Activity first=new Activity(); first.setName("First later activity"); first.setItinerary(skiTrip); first.setCountry(skiTrip.getCountry());
+        first=activityRepository.saveAndFlush(first); impactService.evaluateActivityForNews(first,earthquake);
+        var suppressed=alertService.list(traveller.getId(),false,null,20).content().getFirst();
+        assertThat(emailStore.claim(suppressed.id(),now.plusSeconds(1000))).isEmpty();
+        assertThat(alertRepository.findById(suppressed.id()).orElseThrow().getEmailStatus()).isEqualTo(EmailStatus.SUPPRESSED);
+        impactService.deleteImpact(overall.getId());
+        Activity second=new Activity(); second.setName("Second later activity"); second.setItinerary(skiTrip); second.setCountry(skiTrip.getCountry());
+        second=activityRepository.saveAndFlush(second); impactService.evaluateActivityForNews(second,earthquake);
+        var added=alertService.list(traveller.getId(),false,null,20).content().getFirst();
+        assertThat(emailStore.claim(added.id(),now.plusSeconds(1001))).isEmpty();
+        assertThat(emailStore.claim(added.id(),now.plusSeconds(2001))).isEmpty();
+        assertThat(alertRepository.findById(added.id()).orElseThrow().getEmailStatus()).isEqualTo(EmailStatus.SUPPRESSED);
+        assertThat(alertRepository.findEmailReady(AlertEmailStore.RETRYABLE,now.plusSeconds(2001),
+                org.springframework.data.domain.PageRequest.of(0,1000))).doesNotContain(added.id());
+    }
+
+    @Test void deletedAssessmentReopensItsTargetAndFailedReevaluationKeepsThePartialNotice() {
+        Activity a=new Activity(); a.setName("Assessment to retry"); a.setItinerary(skiTrip); a.setCountry(skiTrip.getCountry());
+        a=activityRepository.saveAndFlush(a);
+        Impact overall=evaluate(); Impact activityImpact=impactService.evaluateActivityForNews(a,earthquake);
+        impactService.evaluate(skiTrip.getId(),earthquake.getId());
+        assertThat(targets.countUnresolved(skiTrip.getId(),earthquake.getId())).isZero();
+        impactService.deleteImpact(activityImpact.getId());
+        org.mockito.Mockito.when(ai.ask(org.mockito.ArgumentMatchers.anyString(),org.mockito.ArgumentMatchers.any(Class.class)))
+                .thenThrow(new IllegalStateException("AI unavailable"));
+        var retry=impactService.evaluate(skiTrip.getId(),earthquake.getId());
+        assertThat(retry.activities().getFirst().reason()).startsWith("Could not evaluate:");
+        assertThat(targets.countUnresolved(skiTrip.getId(),earthquake.getId())).isEqualTo(1);
+        var alert=alertService.list(traveller.getId(),false,null,20).content().getFirst();
+        var delivery=emailStore.claim(alert.id(),java.time.Instant.now().plusSeconds(1)).orElseThrow();
+        assertThat(delivery.relatedAlerts()).hasSize(1);
+        assertThat(delivery.partialAssessment()).isTrue();
+    }
+
+    @Test void movedActivityDoesNotKeepItsOldTripsEmailMarkedPartial() {
+        Activity a=new Activity(); a.setName("Moved activity"); a.setItinerary(skiTrip); a.setCountry(skiTrip.getCountry());
+        a=activityRepository.saveAndFlush(a); evaluate();
+        String failed=progress.begin(skiTrip.getId(),earthquake.getId(),false,java.util.List.of(a.getId()));
+        progress.finish(failed,true);
+        Itinerary other=new Itinerary(); other.setName("Other trip"); other.setUser(traveller); other.setCountry(skiTrip.getCountry());
+        other=itineraryRepository.saveAndFlush(other); a.setItinerary(other); activityRepository.saveAndFlush(a);
+        assertThat(activityRepository.findByItineraryIdOrderByDateStart(skiTrip.getId())).isEmpty();
+        assertThat(targets.countUnresolved(skiTrip.getId(),earthquake.getId())).isZero();
+        var alert=alertService.list(traveller.getId(),false,null,20).content().getFirst();
+        assertThat(emailStore.claim(alert.id(),java.time.Instant.now().plusSeconds(1)).orElseThrow().partialAssessment()).isFalse();
+        metadata.clean();
+        assertThat(targets.countByItineraryId(skiTrip.getId())).isZero();
+    }
+
+    @Test void sentGroupStaysDeliveredWhenAllItsOriginalAlertsAreDeleted() {
+        Impact original=evaluate();
+        var alert=alertService.list(traveller.getId(),false,null,20).content().getFirst();
+        var now=java.time.Instant.now().plusSeconds(1);
+        emailStore.sent(emailStore.claim(alert.id(),now).orElseThrow(),now);
+        assertThat(emailGroups.findById(AlertEmailGroup.key(skiTrip.getId(),earthquake.getId())).orElseThrow().isDelivered()).isTrue();
+        impactService.deleteImpact(original.getId());
+        Activity activity=new Activity(); activity.setName("Added after deletion"); activity.setItinerary(skiTrip); activity.setCountry(skiTrip.getCountry());
+        activity=activityRepository.saveAndFlush(activity); impactService.evaluateActivityForNews(activity,earthquake);
+        var later=alertService.list(traveller.getId(),false,null,20).content().getFirst();
+        assertThat(emailStore.claim(later.id(),now.plusSeconds(1000))).isEmpty();
+        assertThat(alertRepository.findById(later.id()).orElseThrow().getEmailStatus()).isEqualTo(EmailStatus.SUPPRESSED);
+    }
+
+    @Test void concurrentAlertTargetRegistrationIsIdempotent() throws Exception {
+        Activity activity=new Activity(); activity.setName("Concurrent target"); activity.setItinerary(skiTrip); activity.setCountry(skiTrip.getCountry());
+        Long activityId=activityRepository.saveAndFlush(activity).getId();
+        var start=new java.util.concurrent.CountDownLatch(1);
+        var executor=java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            java.util.concurrent.Callable<String> register=() -> {
+                start.await();
+                return progress.begin(skiTrip.getId(),earthquake.getId(),false,java.util.List.of(activityId));
+            };
+            var first=executor.submit(register); var second=executor.submit(register); start.countDown();
+            String firstBatch=first.get(10,java.util.concurrent.TimeUnit.SECONDS);
+            String secondBatch=second.get(10,java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(firstBatch).isNotEqualTo(secondBatch);
+            assertThat(targets.countByItineraryId(skiTrip.getId())).isEqualTo(1);
+        } finally { executor.shutdownNow(); }
+    }
 }

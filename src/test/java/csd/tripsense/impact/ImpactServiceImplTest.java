@@ -35,7 +35,7 @@ class ImpactServiceImplTest {
     @Mock private NewsService newsService;
     @Mock private org.springframework.context.ApplicationEventPublisher events;
 
-    @Mock private EvaluationProgress progress;
+    @Mock private csd.tripsense.alert.AlertProgressReporter progress;
 
     @InjectMocks
     private ImpactServiceImpl impactService;
@@ -416,5 +416,22 @@ class ImpactServiceImplTest {
         // assert
         // the chatbot reads this list, so a rejected impact here would be brought up again
         assertEquals(List.of(notRejected, olderRow), result);
+    }
+
+    @Test void alertProgressFailureDoesNotChangeASavedPositiveAssessmentResponse() {
+        when(itineraryService.getItineraryById(1L)).thenReturn(itinerary);
+        when(newsService.getNewsById(5L)).thenReturn(news);
+        when(activityService.getActivitiesByItinerary(1L)).thenReturn(List.of());
+        givenModelAnswers(true,"Trip affected"); givenSaveEchoes();
+        var tracking=mock(EvaluationProgress.class);
+        doThrow(new IllegalStateException("progress store unavailable")).when(tracking).resolved(1L,5L,null);
+        org.springframework.test.util.ReflectionTestUtils.setField(impactService,"progress",new csd.tripsense.alert.AlertProgressReporter(tracking));
+        var response=impactService.evaluate(1L,5L);
+        assertTrue(response.impacted());
+        assertTrue(response.itinerary().impacted());
+        var saved=org.mockito.ArgumentCaptor.forClass(Impact.class);
+        verify(impactRepository).save(saved.capture());
+        assertTrue(saved.getValue().getImpacted());
+        assertEquals("Trip affected",saved.getValue().getReason());
     }
 }

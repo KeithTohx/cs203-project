@@ -154,7 +154,11 @@ let saveSession = 0;
 const queueSave = save => {
     const session = saveSession;
     savesRunning += 1;
-    const queued = saveQueue.then(save);
+    const queued = saveQueue.then(() => {
+        // A queued action belongs to the session that created it, not the next account's cookies.
+        if (session !== saveSession) return;
+        return save();
+    });
     saveQueue = queued.catch(() => { });   // one failed save should not block the ones after it
 
     saveQueue.then(() => {
@@ -287,7 +291,10 @@ export async function markAlertsRead(alerts) {
 
     // queued as one save, so nothing reloads between two alerts of the same group
     const saveEach = async () => {
-        for (const alert of unread) await api.markAlertRead(alert.id);
+        for (const alert of unread) {
+            if (isFromOldSession(session)) return;
+            await api.markAlertRead(alert.id);
+        }
     };
 
     const session = saveSession;

@@ -39,7 +39,9 @@ class AutomaticAlertIntegrationTest {
     @DynamicPropertySource static void databaseProperties(DynamicPropertyRegistry r) {
         r.add("spring.datasource.url", () -> "jdbc:sqlite:" + DATABASE + "?foreign_keys=on");
     }
-    @Autowired private EvaluationProgress progress;
+    @MockitoSpyBean private EvaluationProgress progress;
+    @Autowired private AlertEvaluationListener recovery;
+    @Autowired private AlertProgressReporter reporter;
     @Autowired private EvaluationTargetRepository targetProgress;
     @Autowired private EvaluationBatchRepository batches;
     @Autowired private csd.tripsense.alert.AlertEmailGroupRepository emailGroups;
@@ -97,7 +99,7 @@ class AutomaticAlertIntegrationTest {
         return activityService.addActivity(a);
     }
     private NewItemEvaluationListener worker(int budget) {
-        return new NewItemEvaluationListener(queue, tasks, trips, activities, news, impacts, evaluator, progress, true, budget);
+        return new NewItemEvaluationListener(queue, tasks, trips, activities, news, impacts, evaluator, reporter, true, budget);
     }
     private void readyAll() {
         for (var task : tasks.findAll()) queue.progress(task.getTaskKey(), task.getCursor(), Instant.EPOCH);
@@ -261,5 +263,21 @@ class AutomaticAlertIntegrationTest {
 
     private record Worker(NewItemEvaluationListener listener) implements AutoCloseable {
         @Override public void close() { listener.shutdown(); }
+    }
+
+    @Test void alertReconciliationRepairsMissedCompletionWithoutRepeatingAi() {
+        doThrow(new IllegalStateException("temporary progress failure")).doCallRealMethod()
+                .when(progress).resolved(anyLong(),anyLong(),isNull());
+        Itinerary trip=newTrip();
+        listener.processPending();
+        assertThat(impacts.findByItineraryId(trip.getId())).hasSize(1);
+        assertThat(tasks.count()).isZero();
+        assertThat(targetProgress.countUnresolved(trip.getId(),article.getId())).isEqualTo(1);
+        recovery.reconcile();
+        assertThat(tasks.count()).isZero();
+        assertThat(targetProgress.countUnresolved(trip.getId(),article.getId())).isZero();
+        verify(ai,times(1)).ask(anyString(),any(Class.class));
+        var alert=alerts.list(owner.getId(),false,null,20).content().getFirst();
+        assertThat(email.claim(alert.id(),Instant.now().plusSeconds(1)).orElseThrow().partialAssessment()).isFalse();
     }
 }

@@ -14,10 +14,12 @@ public class AlertEvaluationListener {
     private static final Logger log = LoggerFactory.getLogger(AlertEvaluationListener.class);
     private final AlertService alerts;
     private final ImpactRepository impacts;
+    private final AlertProgressReporter progress;
 
-    public AlertEvaluationListener(AlertService alerts, ImpactRepository impacts) {
+    public AlertEvaluationListener(AlertService alerts, ImpactRepository impacts, AlertProgressReporter progress) {
         this.alerts = alerts;
         this.impacts = impacts;
+        this.progress=progress;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
@@ -29,6 +31,7 @@ public class AlertEvaluationListener {
     @Scheduled(scheduler = "alertTaskScheduler", fixedDelayString = "${alerts.reconcile.interval-ms:15000}",
                initialDelayString = "${alerts.reconcile.initial-delay-ms:15000}")
     public void reconcile() {
+        progress.reconcile();
         for (Long id : impacts.findAwaitingAlerts(PageRequest.of(0, 100))) create(id);
     }
 

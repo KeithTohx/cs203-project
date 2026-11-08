@@ -1,5 +1,7 @@
 package csd.tripsense.impact;
 
+import csd.tripsense.alert.AlertProgressReporter;
+
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -35,14 +37,14 @@ public class ImpactEvaluationJob {
     private final ActivityService activityService;
     private final NewsService newsService;
     private final ImpactService impactService;
-    private final EvaluationProgress progress;
+    private final AlertProgressReporter progress;
     private final boolean enabled;
     private final int lookbackDays;
     private final int maxPerRun;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     public ImpactEvaluationJob(ItineraryService itineraryService, ActivityService activityService,
-                               NewsService newsService, ImpactService impactService, EvaluationProgress progress,
+                               NewsService newsService, ImpactService impactService, AlertProgressReporter progress,
                                @Value("${impact.eval.enabled:true}") boolean enabled,
                                @Value("${impact.eval.news-lookback-days:3}") int lookbackDays,
                                @Value("${impact.eval.max-per-run:200}") int maxPerRun) {

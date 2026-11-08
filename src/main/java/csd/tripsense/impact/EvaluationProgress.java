@@ -29,11 +29,17 @@ public class EvaluationProgress {
     }
     private void register(Long tripId,Long newsId,Long activityId,List<String> keys) {
         String key=EvaluationTarget.key(tripId,newsId,activityId); keys.add(key);
-        if (!targets.existsById(key)) targets.save(new EvaluationTarget(tripId,newsId,activityId));
+        targets.register(key,tripId,newsId,activityId,Instant.now());
     }
     @Transactional(propagation=Propagation.REQUIRES_NEW)
     public void resolved(Long tripId,Long newsId,Long activityId) {
-        targets.findById(EvaluationTarget.key(tripId,newsId,activityId)).ifPresent(EvaluationTarget::resolve);
+        targets.resolveIfAssessed(EvaluationTarget.key(tripId,newsId,activityId),Instant.now());
+    }
+    /** Repairs only alert metadata, using persisted verdicts; never calls AI or changes its queue. */
+    @Transactional(propagation=Propagation.REQUIRES_NEW)
+    public void reconcile() {
+        for (String key:targets.findResolvable(org.springframework.data.domain.PageRequest.of(0,100)))
+            targets.resolveIfAssessed(key,Instant.now());
     }
     @Transactional(propagation=Propagation.REQUIRES_NEW)
     public void finish(String id,boolean partial) {

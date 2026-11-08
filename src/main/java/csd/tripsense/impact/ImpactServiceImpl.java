@@ -1,5 +1,7 @@
 package csd.tripsense.impact;
 
+import csd.tripsense.alert.AlertProgressReporter;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -30,12 +32,12 @@ public class ImpactServiceImpl implements ImpactService {
     private ActivityService activityService;
     private NewsService newsService;
     private final ApplicationEventPublisher events;
-    private final EvaluationProgress progress;
+    private final AlertProgressReporter progress;
     private static final Logger log = LoggerFactory.getLogger(ImpactServiceImpl.class);
 
     public ImpactServiceImpl(ImpactRepository impacts, ChatService chatService,
                              ItineraryService itineraryService, ActivityService activityService,
-                             NewsService newsService, ApplicationEventPublisher events, EvaluationProgress progress){
+                             NewsService newsService, ApplicationEventPublisher events, AlertProgressReporter progress){
         this.impacts = impacts;
         this.chatService = chatService;
         this.itineraryService = itineraryService;

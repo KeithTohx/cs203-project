@@ -58,14 +58,19 @@ public class AlertEmailStore {
         var recipient = impact.getItinerary().getUser();
         if (!recipient.isEnabled()) return Optional.empty();
         var group = alerts.findEmailGroup(impact.getItinerary().getId(), impact.getNews().getId());
-        // A news/trip pair is notified once, including after a later activity assessment or restart.
-        var sent = group.stream().filter(a -> a.getEmailStatus() == EmailStatus.SENT).findFirst();
-        if (sent.isPresent()) {
-            for (Alert member : group) {
-                if (RETRYABLE.contains(member.getEmailStatus())) {
-                    alerts.suppressEmail(member.getId(), member.getEmailAttempts(), RETRYABLE);
-                }
-            }
+        Long tripId=impact.getItinerary().getId();
+        Long newsId=impact.getNews().getId();
+        var deliveryGroup=emailGroups.findById(AlertEmailGroup.key(tripId,newsId));
+        // The group retains its terminal state even if a sent impact/alert is subsequently deleted.
+        var sent=group.stream().filter(a -> a.getEmailStatus()==EmailStatus.SENT).findFirst();
+        boolean previouslyDelivered=deliveryGroup.map(AlertEmailGroup::isDelivered).orElse(false)
+                || sent.isPresent() || group.stream().anyMatch(a -> a.getEmailStatus()==EmailStatus.SUPPRESSED);
+        if (previouslyDelivered) {
+            var state=deliveryGroup.orElseGet(() -> emailGroups.saveAndFlush(new AlertEmailGroup(
+                    tripId,newsId,group.getFirst().getEmailDeliveryKey())));
+            state.markDelivered(sent.map(Alert::getEmailSentAt).orElse(null));
+            for (Alert member:group) if (RETRYABLE.contains(member.getEmailStatus()))
+                alerts.suppressEmail(member.getId(),member.getEmailAttempts(),RETRYABLE);
             return Optional.empty();
         }
         // A new member must not bypass an active SMTP lease or another member's retry backoff.
@@ -89,8 +94,6 @@ public class AlertEmailStore {
             deferPending(group, settleUntil);
             return Optional.empty();
         }
-        Long tripId = impact.getItinerary().getId();
-        Long newsId = impact.getNews().getId();
         boolean incomplete = evaluations.countRunning(tripId, newsId, now) != 0;
         if (incomplete && now.isBefore(deadline)) {
             Instant recheck = now.plusSeconds(groupRecheckSeconds);
@@ -132,8 +135,17 @@ public class AlertEmailStore {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void sent(Delivery delivery, Instant now) {
+        int completed=0;
         for (ClaimedAlert claim : delivery.claims()) {
-            alerts.finishEmail(claim.id(), claim.attempt(), List.of(EmailStatus.SENDING), EmailStatus.SENT, now, now);
+            completed+=alerts.finishEmail(claim.id(),claim.attempt(),List.of(EmailStatus.SENDING),EmailStatus.SENT,now,now);
+        }
+        // An obsolete worker must not mark a newer replay/group delivered.
+        if (completed>0) {
+            var summary=delivery.alert();
+            var group=emailGroups.findById(AlertEmailGroup.key(summary.itineraryId(),summary.newsId()))
+                    .orElseGet(() -> emailGroups.saveAndFlush(new AlertEmailGroup(
+                            summary.itineraryId(),summary.newsId(),delivery.key())));
+            group.markDelivered(now);
         }
     }
 

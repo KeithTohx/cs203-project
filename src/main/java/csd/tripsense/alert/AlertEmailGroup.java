@@ -8,6 +8,8 @@ import jakarta.persistence.Id;
 public class AlertEmailGroup {
     @Id private String id;
     private String deliveryKey;
+    private Boolean delivered;
+    private java.time.Instant sentAt;
     @jakarta.persistence.Column(name="itinerary_id")
     private Long itineraryId;
     private Long newsId;
@@ -20,5 +22,10 @@ public class AlertEmailGroup {
         this.itineraryId=tripId; this.newsId=newsId;
     }
     public static String key(Long tripId, Long newsId) { return tripId + ":" + newsId; }
+    public boolean isDelivered() { return Boolean.TRUE.equals(delivered); }
+    public void markDelivered(java.time.Instant when) {
+        delivered=true;
+        if (sentAt==null) sentAt=when;
+    }
     public String getDeliveryKey() { return deliveryKey; }
 }

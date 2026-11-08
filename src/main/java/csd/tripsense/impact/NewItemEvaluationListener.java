@@ -1,5 +1,7 @@
 package csd.tripsense.impact;
 
+import csd.tripsense.alert.AlertProgressReporter;
+
 import csd.tripsense.activity.*;
 import csd.tripsense.itinerary.*;
 import csd.tripsense.news.NewsRepository;
@@ -30,7 +32,7 @@ public class NewItemEvaluationListener {
     private final NewsRepository news;
     private final ImpactRepository impacts;
     private final ImpactService evaluator;
-    private final EvaluationProgress progress;
+    private final AlertProgressReporter progress;
     private final boolean enabled;
     private final int maxCalls;
     private final AtomicBoolean running = new AtomicBoolean();
@@ -41,7 +43,7 @@ public class NewItemEvaluationListener {
 
     public NewItemEvaluationListener(ImpactEvaluationQueue queue, PendingImpactEvaluationRepository tasks,
             ItineraryRepository trips, ActivityRepository activities, NewsRepository news,
-            ImpactRepository impacts, ImpactService evaluator, EvaluationProgress progress,
+            ImpactRepository impacts, ImpactService evaluator, AlertProgressReporter progress,
             @Value("${impact.eval.new-itinerary.enabled:true}") boolean enabled,
             @Value("${impact.eval.new-itinerary.max-calls:200}") int maxCalls) {
         this.queue = queue; this.tasks = tasks; this.trips = trips; this.activities = activities;

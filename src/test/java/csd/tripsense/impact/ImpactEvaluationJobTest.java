@@ -38,7 +38,7 @@ class ImpactEvaluationJobTest {
     @Mock private ActivityService activityService;
     @Mock private NewsService newsService;
     @Mock private ImpactService impactService;
-    @Mock private EvaluationProgress progress;
+    @Mock private csd.tripsense.alert.AlertProgressReporter progress;
 
     @org.junit.jupiter.api.BeforeEach
     void progressIdentity() {
