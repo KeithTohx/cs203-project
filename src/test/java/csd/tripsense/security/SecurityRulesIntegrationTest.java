@@ -356,6 +356,37 @@ class SecurityRulesIntegrationTest {
             .status(HttpStatus.NOT_FOUND);
     }
 
+    // the admin console is the one way in to someone else's trips, so it has to stay admin only
+    @Test
+    @DisplayName("Should return 403 when a normal user opens the admin console, even for their own data")
+    void adminConsole_ShouldReturn403_WhenUser() {
+        User traveller = savedAccount("traveller", "USER", true);
+
+        given()
+            .postProcessors(user(loggedInAs(traveller)))
+        .when()
+            .get("/api/admin/users/" + traveller.getId() + "/itineraries")
+        .then()
+            .status(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    @DisplayName("Should let an admin see another user's itineraries through the admin console")
+    void adminConsole_ShouldReturnOtherUsersItineraries_WhenAdmin() {
+        User owner = savedAccount("owner", "USER", true);
+        User admin = savedAccount("manager", "ADMIN", true);
+        savedTrip(owner, "Japan Ski Trip");
+
+        given()
+            .postProcessors(user(loggedInAs(admin)))
+        .when()
+            .get("/api/admin/users/" + owner.getId() + "/itineraries")
+        .then()
+            .status(HttpStatus.OK)
+            .body("size()", equalTo(1))
+            .body("[0].name", equalTo("Japan Ski Trip"));
+    }
+
     // ===== LOGIN AND LOGOUT =====
 
     @Test
