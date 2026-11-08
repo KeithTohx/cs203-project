@@ -18,4 +18,10 @@ public interface RecommendationRepository extends JpaRepository<Recommendation, 
 
     // every recommendation hanging off this user's impacts; must be removed before the impacts
     void deleteByImpactUserId(Long userId);
+
+    // nothing cascades from an activity to these, so deleting the activity has to clear them first
+    List<Recommendation> findByImpactActivityId(Long activityId);
+
+    // everything ever suggested to one user, for the admin console
+    List<Recommendation> findByImpactUserIdOrderByIdDesc(Long userId);
 }
