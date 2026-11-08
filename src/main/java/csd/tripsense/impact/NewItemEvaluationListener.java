@@ -14,7 +14,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.event.EventListener;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -51,19 +50,18 @@ public class NewItemEvaluationListener {
         this.enabled = enabled; this.maxCalls = Math.max(1, maxCalls);
     }
 
-    @EventListener
-    public void onItineraryCreated(ItineraryCreatedEvent event) {
-        if (enabled) queue.enqueue(event.itineraryId(), false);
-    }
+    @TransactionalEventListener(phase=TransactionPhase.AFTER_COMMIT,fallbackExecution=true)
+    public void onItineraryCreated(ItineraryCreatedEvent event) { enqueue(event.itineraryId(),false); }
 
-    @EventListener
-    public void onActivityCreated(ActivityCreatedEvent event) {
-        if (enabled) queue.enqueue(event.activityId(), true);
-    }
+    @TransactionalEventListener(phase=TransactionPhase.AFTER_COMMIT,fallbackExecution=true)
+    public void onActivityCreated(ActivityCreatedEvent event) { enqueue(event.activityId(),true); }
 
-    @TransactionalEventListener(classes = {ItineraryCreatedEvent.class, ActivityCreatedEvent.class},
-            phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
-    public void afterCreationCommitted() { retryPending(); }
+    private void enqueue(Long targetId,boolean activity) {
+        if (!enabled) return;
+        try { queue.enqueue(targetId,activity); }
+        catch (RuntimeException exception) { log.warn("New-item scheduling failed after source commit"); }
+        retryPending();
+    }
 
     @Scheduled(fixedDelayString = "${impact.eval.new-itinerary.retry-interval-ms:30000}", initialDelay = 15000)
     public void retryPending() {
@@ -82,6 +80,7 @@ public class NewItemEvaluationListener {
     // Package-private for deterministic integration tests; production calls it through the single worker.
     void processPending() {
         Budget budget = new Budget(maxCalls);
+        int consecutiveFailures=0;
         for (PendingImpactEvaluation task : tasks.findByRetryAtLessThanEqualOrderByRetryAtAscTaskKeyAsc(
                 Instant.now(), PageRequest.of(0, 10))) {
             int cursor = task.getCursor();
@@ -106,22 +105,39 @@ public class NewItemEvaluationListener {
                         if (overall || !pending.isEmpty()) {
                             String batch=progress.begin(trip.getId(),article.getId(),overall,pending.stream().map(Activity::getId).toList());
                             boolean partial=true;
+                            boolean anyFailed=false;
                             try {
                                 if (overall) {
-                                    budget.take(); evaluator.evaluateItineraryForNews(trip,article);
-                                    progress.resolved(trip.getId(),article.getId(),null);
+                                    budget.take();
+                                    try {
+                                        evaluator.evaluateItineraryForNews(trip,article);
+                                        consecutiveFailures=0;
+                                        progress.resolved(trip.getId(),article.getId(),null);
+                                    } catch (RuntimeException failure) {
+                                        anyFailed=true;
+                                        queue.deferArticle(task.getTaskKey(),article.getId(),cursor+1);
+                                        if (++consecutiveFailures>=3) return;
+                                    }
                                 }
                                 for (Activity target:pending) {
-                                    budget.take(); evaluator.evaluateActivityForNews(target,article);
-                                    progress.resolved(trip.getId(),article.getId(),target.getId());
+                                    budget.take();
+                                    try {
+                                        evaluator.evaluateActivityForNews(target,article);
+                                        consecutiveFailures=0;
+                                        progress.resolved(trip.getId(),article.getId(),target.getId());
+                                    } catch (RuntimeException failure) {
+                                        anyFailed=true;
+                                        queue.deferArticle(task.getTaskKey(),article.getId(),cursor+1);
+                                        if (++consecutiveFailures>=3) return;
+                                    }
                                 }
-                                partial=false;
+                                partial=anyFailed;
                             } finally { progress.finish(batch,partial); }
                         }
                     }
                     queue.progress(task.getTaskKey(), cursor + 1, Instant.now());
                 }
-                queue.complete(task.getTaskKey());
+                queue.finishPass(task.getTaskKey());
             } catch (BudgetReached exception) {
                 queue.progress(task.getTaskKey(), cursor, Instant.now().plusSeconds(30));
                 return;

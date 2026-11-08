@@ -27,8 +27,8 @@ class ActivityServiceImplTest {
 
     @Mock private ActivityRepository activityRepository;
     @Mock private ItineraryService itineraryService;
+    @Mock private ApplicationEventPublisher events;   // without this, @InjectMocks passes null
 
-    @Mock private ApplicationEventPublisher events;
 
     @InjectMocks
     private ActivityServiceImpl activityService;
@@ -95,6 +95,34 @@ class ActivityServiceImplTest {
         assertSame(japan, saved.getCountry());
     }
 
+    // ===== CREATED EVENT =====
+
+    @Test
+    @DisplayName("Should publish a created event carrying the saved activity's id")
+    void addActivity_ShouldPublishCreatedEvent_WithTheSavedId() {
+        Activity saved = new Activity();
+        saved.setId(25L);
+        when(itineraryService.getItineraryById(1L)).thenReturn(japanTrip);
+        when(activityRepository.save(any(Activity.class))).thenReturn(saved);
+
+        Activity result = activityService.addActivity(requestBody(1L));
+
+        assertSame(saved, result);
+        // the id the database assigned, not the null the request came in with
+        verify(events, times(1)).publishEvent(new ActivityCreatedEvent(25L));
+    }
+
+    @Test
+    @DisplayName("Should publish nothing when the activity could not be saved")
+    void addActivity_ShouldNotPublish_WhenSaveFails() {
+        when(itineraryService.getItineraryById(1L)).thenReturn(japanTrip);
+        when(activityRepository.save(any(Activity.class))).thenThrow(new RuntimeException("db down"));
+
+        assertThrows(RuntimeException.class, () -> activityService.addActivity(requestBody(1L)));
+
+        verifyNoInteractions(events);
+    }
+
     // ===== UPDATE =====
 
     @Test
@@ -144,6 +172,20 @@ class ActivityServiceImplTest {
         verify(activityRepository, never()).save(any(Activity.class));
     }
 
+    @Test
+    @DisplayName("Should not publish a created event when an activity is updated")
+    void updateActivity_ShouldNotPublish() {
+        Activity existing = new Activity();
+        existing.setId(10L);
+        existing.setItinerary(japanTrip);
+        when(activityRepository.findById(10L)).thenReturn(Optional.of(existing));
+        when(activityRepository.save(any(Activity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        activityService.updateActivity(10L, new Activity());
+
+        verifyNoInteractions(events);
+       // edits are not re-evaluated, only creation is
+    }
     // ===== DELETE =====
 
     @Test
@@ -182,43 +224,9 @@ class ActivityServiceImplTest {
     }
 
 
-    @Test
-    @DisplayName("Should publish a created event carrying the saved activity's id")
-    void addActivity_ShouldPublishCreatedEvent_WithTheSavedId() {
-        Activity saved = new Activity();
-        saved.setId(25L);
-        when(itineraryService.getItineraryById(1L)).thenReturn(japanTrip);
-        when(activityRepository.save(any(Activity.class))).thenReturn(saved);
 
-        Activity result = activityService.addActivity(requestBody(1L));
 
-        assertSame(saved, result);
-        // the id the database assigned, not the null the request came in with
-        verify(events, times(1)).publishEvent(new ActivityCreatedEvent(25L));
-    }
 
-    @Test
-    @DisplayName("Should publish nothing when the activity could not be saved")
-    void addActivity_ShouldNotPublish_WhenSaveFails() {
-        when(itineraryService.getItineraryById(1L)).thenReturn(japanTrip);
-        when(activityRepository.save(any(Activity.class))).thenThrow(new RuntimeException("db down"));
 
-        assertThrows(RuntimeException.class, () -> activityService.addActivity(requestBody(1L)));
 
-        verifyNoInteractions(events);
-    }
-
-    @Test
-    @DisplayName("Should not publish a created event when an activity is updated")
-    void updateActivity_ShouldNotPublish() {
-        Activity existing = new Activity();
-        existing.setId(10L);
-        existing.setItinerary(japanTrip);
-        when(activityRepository.findById(10L)).thenReturn(Optional.of(existing));
-        when(activityRepository.save(any(Activity.class))).thenAnswer(inv -> inv.getArgument(0));
-
-        activityService.updateActivity(10L, new Activity());
-
-        verifyNoInteractions(events);   // edits are not re-evaluated, only creation is
-    }
 }

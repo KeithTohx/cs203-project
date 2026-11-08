@@ -17,6 +17,20 @@ public class PendingImpactEvaluation {
     @Column(nullable = false) private int cursor;
     @Column(nullable = false) private Instant retryAt = Instant.now();
 
+    // Deferred articles survive a capped pass or restart without blocking later articles in the snapshot.
+    @Lob private String deferredArticleIds;
+    void defer(Long newsId) {
+        var deferred=new java.util.LinkedHashSet<Long>(deferredArticles()); deferred.add(newsId);
+        deferredArticleIds=deferred.stream().map(String::valueOf).collect(Collectors.joining(","));
+    }
+    List<Long> deferredArticles() {
+        return deferredArticleIds==null || deferredArticleIds.isBlank()?List.of():
+                Arrays.stream(deferredArticleIds.split(",")).map(Long::valueOf).toList();
+    }
+    void retryDeferred(Instant next) {
+        articleIds=deferredArticleIds; deferredArticleIds=null; cursor=0; retryAt=next;
+    }
+
     protected PendingImpactEvaluation() {}
     PendingImpactEvaluation(Long targetId, boolean activity, List<Long> articles) {
         this.taskKey = key(targetId, activity); this.targetId = targetId; this.activity = activity;

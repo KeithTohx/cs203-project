@@ -136,7 +136,7 @@ class AutomaticAlertIntegrationTest {
         clearInvocations(listener);
         new TransactionTemplate(transactions).executeWithoutResult(status -> {
             newTrip();
-            assertThat(tasks.count()).isEqualTo(1);
+            assertThat(tasks.count()).isZero();
             verify(listener, never()).retryPending();
             verifyNoInteractions(ai);
         });

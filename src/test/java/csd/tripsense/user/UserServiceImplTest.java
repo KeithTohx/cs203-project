@@ -26,6 +26,8 @@ import csd.tripsense.chat.ChatbotService;
 import csd.tripsense.impact.ImpactRepository;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryRepository;
+import csd.tripsense.recommendation.RecommendationRepository;
+import csd.tripsense.user.preference.UserPreferenceRepository;
 
 // unit tests for UserServiceImpl, one nested group per method.
 // the repositories and chatbot service are Mockito mocks. the password encoder is the real bcrypt one,
@@ -48,6 +50,12 @@ class UserServiceImplTest {
     @Mock
     private ChatbotService chatbotService;
 
+    @Mock
+    private RecommendationRepository recommendationRepository;
+
+    @Mock
+    private UserPreferenceRepository userPreferenceRepository;
+
     @Spy
     private PasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
@@ -64,7 +72,8 @@ class UserServiceImplTest {
     }
 
     private void verifyNothingWasDeleted() {
-        verifyNoInteractions(chatbotService, impactRepository, itineraryRepository);
+        verifyNoInteractions(chatbotService, impactRepository, itineraryRepository,
+            recommendationRepository, userPreferenceRepository);
         verify(userRepository, never()).delete(any(User.class));
     }
 

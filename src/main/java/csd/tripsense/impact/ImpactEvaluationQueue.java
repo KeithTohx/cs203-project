@@ -26,8 +26,8 @@ public class ImpactEvaluationQueue {
         this.lookbackDays = Math.max(1, lookbackDays);
     }
 
-    /** Joins the source creation transaction, so a rollback also removes its queued work. */
-    @Transactional
+    /** Runs after source commit; a scheduling failure cannot roll back the saved trip/activity. */
+    @Transactional(propagation=org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public void enqueue(Long id, boolean activity) {
         if (tasks.existsById(PendingImpactEvaluation.key(id, activity))) return;
         Itinerary trip = activity
@@ -45,6 +45,19 @@ public class ImpactEvaluationQueue {
     @Transactional
     public void progress(String key, int cursor, Instant retryAt) {
         tasks.findById(key).ifPresent(task -> task.advance(cursor, retryAt));
+    }
+
+    @Transactional
+    public void deferArticle(String key,Long newsId,int nextCursor) {
+        tasks.findById(key).ifPresent(task -> { task.defer(newsId); task.advance(nextCursor,Instant.now().plusSeconds(60)); });
+    }
+
+    @Transactional
+    public void finishPass(String key) {
+        tasks.findById(key).ifPresent(task -> {
+            if (task.deferredArticles().isEmpty()) tasks.deleteById(key);
+            else task.retryDeferred(Instant.now().plusSeconds(60));
+        });
     }
 
     @Transactional

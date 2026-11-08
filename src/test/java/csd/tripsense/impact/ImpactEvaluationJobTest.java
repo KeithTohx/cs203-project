@@ -280,4 +280,61 @@ class ImpactEvaluationJobTest {
         verify(impactService, times(1)).evaluateItineraryForNews(any(Itinerary.class), any(News.class));
         verify(impactService, times(1)).evaluateActivityForNews(any(Activity.class), any(News.class));
     }
+
+    // ===== CONCURRENCY AND THE SHARED FAILURE COUNTER =====
+
+    @Test
+    @DisplayName("Should skip a second run that starts while one is still going")
+    void run_ShouldSkip_WhenAlreadyRunning() {
+        ImpactEvaluationJob theJob = job(true, 200);
+        // re-enter from inside the first run, which is what a second trigger would do
+        when(itineraryService.getCountryIdsWithActiveItineraries(any(LocalDateTime.class)))
+                .thenAnswer(inv -> {
+                    theJob.run();
+                    return List.of();
+                });
+
+        theJob.run();
+
+        // the guard turned the nested call away, so the body ran once and not twice
+        verify(itineraryService, times(1))
+                .getCountryIdsWithActiveItineraries(any(LocalDateTime.class));
+    }
+
+    @Test
+    @DisplayName("Should stop the run after 3 activity failures in a row")
+    void run_ShouldStop_AfterThreeActivityFailures() {
+        News n = news(10L);
+        givenCountryWithNews(n);
+        givenPendingActivities(n, activity(1L), activity(2L), activity(3L), activity(4L));
+        when(impactService.evaluateActivityForNews(any(Activity.class), any(News.class)))
+                .thenThrow(new RuntimeException("model down"));
+
+        job(true, 200).run();
+
+        // the breaker is written out twice, once per loop. the itinerary copy was already
+        // tested, this is the activity one
+        verify(impactService, times(3)).evaluateActivityForNews(any(Activity.class), any(News.class));
+    }
+
+    @Test
+    @DisplayName("Should carry the failure count from the itineraries into the activities")
+    void run_ShouldCarryFailureCount_AcrossBothLoops() {
+        News n = news(10L);
+        givenCountryWithNews(n);
+        givenPendingItineraries(n, itinerary(1L), itinerary(2L));
+        givenPendingActivities(n, activity(1L), activity(2L));
+        when(impactService.evaluateItineraryForNews(any(Itinerary.class), any(News.class)))
+                .thenThrow(new RuntimeException("model down"));
+        when(impactService.evaluateActivityForNews(any(Activity.class), any(News.class)))
+                .thenThrow(new RuntimeException("model down"));
+
+        job(true, 200).run();
+
+        // failures is one counter for both loops, so 2 trips plus 1 activity is already 3 in
+        // a row and the second activity is never attempted. moving the counter inside either
+        // loop would break this
+        verify(impactService, times(2)).evaluateItineraryForNews(any(Itinerary.class), any(News.class));
+        verify(impactService, times(1)).evaluateActivityForNews(any(Activity.class), any(News.class));
+    }
 }
