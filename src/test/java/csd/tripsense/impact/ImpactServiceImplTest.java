@@ -392,4 +392,81 @@ class ImpactServiceImplTest {
         // the chatbot reads this list, so a rejected impact here would be brought up again
         assertEquals(List.of(notRejected, olderRow), result);
     }
+
+    // ===== plain lookups and delete =====
+
+    @Test
+    @DisplayName("Should hand back every impact the repository holds")
+    void listImpacts_ShouldReturnAll() {
+        List<Impact> all = List.of(storedImpact("one"), storedImpact("two"));
+        when(impactRepository.findAll()).thenReturn(all);
+
+        assertEquals(all, impactService.listImpacts());
+    }
+
+    @Test
+    @DisplayName("Should hand back only the impacts belonging to the user")
+    void getImpactsByUser_ShouldReturnTheUsersRows() {
+        List<Impact> mine = List.of(storedImpact("mine"));
+        when(impactRepository.findByUserId(7L)).thenReturn(mine);
+
+        assertEquals(mine, impactService.getImpactsByUser(7L));
+    }
+
+    @Test
+    @DisplayName("Should hand back only the impacts for one activity")
+    void getImpactsByActivity_ShouldReturnTheActivityRows() {
+        List<Impact> forActivity = List.of(storedImpact("lifts shut"));
+        when(impactRepository.findByActivityId(10L)).thenReturn(forActivity);
+
+        assertEquals(forActivity, impactService.getImpactsByActivity(10L));
+    }
+
+    @Test
+    @DisplayName("Should delete the impact when it exists")
+    void deleteImpact_ShouldDelete_WhenImpactExists() {
+        when(impactRepository.existsById(3L)).thenReturn(true);
+
+        impactService.deleteImpact(3L);
+
+        verify(impactRepository).deleteById(3L);
+    }
+
+    @Test
+    @DisplayName("Should throw and delete nothing when the impact does not exist")
+    void deleteImpact_ShouldThrow_WhenImpactDoesNotExist() {
+        when(impactRepository.existsById(99L)).thenReturn(false);
+
+        assertThrows(ImpactNotFoundException.class, () -> impactService.deleteImpact(99L));
+        // a delete that quietly does nothing would hide a bad id from the caller
+        verify(impactRepository, never()).deleteById(anyLong());
+    }
+
+    @Test
+    @DisplayName("Should count the impacts on one itinerary for one user")
+    void countByItineraryIdAndUserId_ShouldReturnTheCount() {
+        when(impactRepository.countByItineraryIdAndUserId(1L, 7L)).thenReturn(4L);
+
+        assertEquals(4L, impactService.countByItineraryIdAndUserId(1L, 7L));
+    }
+
+    @Test
+    @DisplayName("Should re-ask the model when the stored activity row has no reason (seed data)")
+    void evaluateActivityForNews_ShouldUpdateSameRow_WhenStoredWithoutReason() {
+        // arrange
+        Impact seedRow = storedImpact(null);
+        seedRow.setId(42L);
+        when(impactRepository.findFirstByNewsIdAndActivityId(news.getId(), activity.getId()))
+                .thenReturn(Optional.of(seedRow));
+        givenModelAnswers(true, "Lifts are shut.");
+        givenSaveEchoes();
+
+        // act
+        Impact result = impactService.evaluateActivityForNews(activity, news);
+
+        // assert
+        // the same row is updated, a second row for the pair would be re-asked forever
+        assertEquals(42L, result.getId());
+        assertEquals("Lifts are shut.", result.getReason());
+    }
 }
