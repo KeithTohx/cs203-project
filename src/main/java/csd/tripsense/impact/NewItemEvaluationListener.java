@@ -6,7 +6,8 @@ import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
- 
+import java.util.function.IntSupplier;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,9 +18,11 @@ import org.springframework.transaction.event.TransactionalEventListener;
  
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityCreatedEvent;
+import csd.tripsense.activity.ActivityEditedEvent;
 import csd.tripsense.activity.ActivityService;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryCreatedEvent;
+import csd.tripsense.itinerary.ItineraryEditedEvent;
 import csd.tripsense.itinerary.ItineraryService;
 import csd.tripsense.news.News;
 import csd.tripsense.news.NewsService;
@@ -29,6 +32,7 @@ import jakarta.annotation.PreDestroy;
  * When a new itinerary is saved, judges the news already in the database (the last
  * impact.eval.new-itinerary.news-lookback-days days) against it. ImpactEvaluationJob only runs when
  * fresh news arrives, so without this a new trip would never be checked against older stories.
+ * The same goes for an edit to what a trip or activity was judged on, see StaleVerdictCleaner.
  *
  * Runs on its own single thread so creating an itinerary never waits on the model, and so two
  * new itineraries are judged one after the other instead of in parallel.
@@ -43,6 +47,7 @@ public class NewItemEvaluationListener {
     private final ActivityService activityService;
     private final NewsService newsService;
     private final ImpactService impactService;
+    private final StaleVerdictCleaner staleVerdicts;
     private final boolean enabled;
     private final int lookbackDays;
     private final int maxCalls;
@@ -51,10 +56,12 @@ public class NewItemEvaluationListener {
     @Autowired
     public NewItemEvaluationListener(ItineraryService itineraryService, ActivityService activityService,
                                           NewsService newsService, ImpactService impactService,
+                                          StaleVerdictCleaner staleVerdicts,
                                           @Value("${impact.eval.new-itinerary.enabled:true}") boolean enabled,
                                           @Value("${impact.eval.new-itinerary.news-lookback-days:5}") int lookbackDays,
                                           @Value("${impact.eval.new-itinerary.max-calls:200}") int maxCalls) {
-        this(itineraryService, activityService, newsService, impactService, enabled, lookbackDays, maxCalls,
+        this(itineraryService, activityService, newsService, impactService, staleVerdicts,
+                enabled, lookbackDays, maxCalls,
                 Executors.newSingleThreadExecutor(runnable -> {
                     Thread thread = new Thread(runnable, "new-itinerary-eval");
                     thread.setDaemon(true);
@@ -65,11 +72,13 @@ public class NewItemEvaluationListener {
     // package private so a test can pass a direct executor and avoid threads
     NewItemEvaluationListener(ItineraryService itineraryService, ActivityService activityService,
                                    NewsService newsService, ImpactService impactService,
+                                   StaleVerdictCleaner staleVerdicts,
                                    boolean enabled, int lookbackDays, int maxCalls, Executor executor) {
         this.itineraryService = itineraryService;
         this.activityService = activityService;
         this.newsService = newsService;
         this.impactService = impactService;
+        this.staleVerdicts = staleVerdicts;
         this.enabled = enabled;
         this.lookbackDays = lookbackDays;
         this.maxCalls = maxCalls;
@@ -89,6 +98,44 @@ public class NewItemEvaluationListener {
     public void onActivityCreated(ActivityCreatedEvent event) {
         if (!enabled) return;
         executor.execute(() -> evaluateActivity(event.activityId()));
+    }
+
+    // an edit to what the trip was judged on. StaleVerdictCleaner has already removed the old
+    // verdicts inside the edit's transaction, so judging it like a new trip only asks about the
+    // pairs that are now missing, and leaves the verdicts that still stand alone
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onItineraryEdited(ItineraryEditedEvent event) {
+        if (!enabled) return;
+        executor.execute(() -> {
+            clearLateVerdicts(() -> staleVerdicts.clearFor(event), "itinerary", event.itineraryId());
+            evaluate(event.itineraryId());
+        });
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onActivityEdited(ActivityEditedEvent event) {
+        if (!enabled) return;
+        executor.execute(() -> {
+            clearLateVerdicts(() -> staleVerdicts.clearFor(event), "activity", event.activityId());
+            evaluateActivity(event.activityId());
+        });
+    }
+
+    // the editor saves the trip and then its activities straight away, so an earlier run on this
+    // thread can still be judging the old details while an edit commits. anything it writes after
+    // the edit's own clear would be reused from then on. this thread runs one job at a time, so
+    // clearing again here, just before judging, means nothing judged before the edit survives it.
+    // usually there is nothing left to clear
+    private void clearLateVerdicts(IntSupplier clear, String what, Long id) {
+        try {
+            int cleared = clear.getAsInt();
+            if (cleared > 0) {
+                log.info("Edited {} {}: cleared {} verdicts judged on the old details", what, id, cleared);
+            }
+        } catch (Exception e) {
+            // still judge it, the pairs cleared by the edit itself need a verdict either way
+            log.warn("Could not clear late verdicts for edited {} {}: {}", what, id, e.getMessage());
+        }
     }
  
     void evaluateActivity(Long activityId) {

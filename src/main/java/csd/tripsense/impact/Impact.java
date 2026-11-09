@@ -67,5 +67,12 @@ public class Impact {
     @com.fasterxml.jackson.annotation.JsonIgnore
     private java.util.List<csd.tripsense.alert.Alert> alerts;
 
+    // advice about this impact makes no sense without it, so it goes too. this is what lets an
+    // impact, activity or itinerary be deleted without clearing its recommendations by hand first
+    @jakarta.persistence.OneToMany(mappedBy = "impact", cascade = jakarta.persistence.CascadeType.REMOVE,
+            fetch = jakarta.persistence.FetchType.LAZY)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private java.util.List<csd.tripsense.recommendation.Recommendation> recommendations;
+
 }
 

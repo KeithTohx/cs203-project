@@ -2,8 +2,10 @@ package csd.tripsense.activity;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.context.ApplicationEventPublisher;
 
 import csd.tripsense.itinerary.Itinerary;
@@ -52,9 +54,17 @@ public class ActivityServiceImpl implements ActivityService {
         return saved;
     }
 
+    // one transaction, so the cleared verdicts go with the edit, and the re-evaluation only starts
+    // once both have committed
     @Override
+    @Transactional
     public Activity updateActivity(Long id, Activity newActivityInfo) {
         return activities.findById(id).map(activity -> {
+            Long oldItineraryId = itineraryId(activity.getItinerary());
+            String oldName = activity.getName();
+            String oldAddress = activity.getAddress();
+            LocalDateTime oldStart = activity.getDateStart();
+
             Itinerary itinerary = newActivityInfo.getItinerary() == null
                     ? activity.getItinerary()
                     : itineraryService.getItineraryById(newActivityInfo.getItinerary().getId());
@@ -64,8 +74,27 @@ public class ActivityServiceImpl implements ActivityService {
             activity.setAddress(newActivityInfo.getAddress());
             activity.setDateStart(newActivityInfo.getDateStart());
             activity.setDateEnd(newActivityInfo.getDateEnd());
-            return activities.save(activity);
+            Activity saved = activities.save(activity);
+
+            // the model was asked about the name, address and start. a move to another trip also
+            // counts, since its verdicts still point at the old itinerary and may be about news
+            // from another country
+            boolean judgedFieldsChanged = !Objects.equals(oldName, saved.getName())
+                    || !Objects.equals(oldAddress, saved.getAddress())
+                    || !Objects.equals(oldStart, saved.getDateStart());
+            boolean movedTrip = !Objects.equals(oldItineraryId, itineraryId(saved.getItinerary()));
+            if (judgedFieldsChanged || movedTrip) {
+                events.publishEvent(new ActivityEditedEvent(saved.getId()));
+            }
+            return saved;
         }).orElseThrow(() -> new ActivityNotFoundException(id));
+    }
+
+    private static Long itineraryId(Itinerary itinerary) {
+        if (itinerary == null) {
+            return null;
+        }
+        return itinerary.getId();
     }
 
     @Override
