@@ -3,6 +3,7 @@ package csd.tripsense.impact;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 import org.springframework.stereotype.Service;
 import org.springframework.context.ApplicationEventPublisher;
@@ -160,10 +161,33 @@ public class ImpactServiceImpl implements ImpactService {
         return Boolean.TRUE.equals(impact.getRejected());
     }
 
+    // GkgParser stores a description like
+    //   "Reported by site.com. Places mentioned: A; B. Topics: x, y. (Generated from GDELT metadata; ...)"
+    // For judging impact only the topics are useful. The places are ranked by how often the article
+    // mentions them (so they can name a country the story is not about), the outlet hints at where
+    // the outlet is rather than where the event is, and the disclaimer is already in the prompt.
+    // Rows that do not have this shape are passed through unchanged.
+    private static final Pattern DESC_SOURCE = Pattern.compile("^\\s*Reported by \\S+?\\.(?=\\s|$)");
+    private static final Pattern DESC_PLACES =
+            Pattern.compile("\\s*Places mentioned: .*?\\.(?= Topics:| \\(Generated|\\s*$)");
+    private static final Pattern DESC_DISCLAIMER =
+            Pattern.compile("\\s*\\(Generated from GDELT metadata; the article text was not read\\.\\)");
+
+    private static String impactDetails(News news) {
+        String description = news.getDescription();
+        if (description == null || description.isBlank()) {
+            return "No further details were provided.";
+        }
+        String shortened = DESC_DISCLAIMER.matcher(
+                DESC_PLACES.matcher(
+                        DESC_SOURCE.matcher(description).replaceFirst("")
+                ).replaceFirst("")
+        ).replaceFirst("").strip();
+        return shortened.isEmpty() ? "No further details were provided." : shortened;
+    }
+
     private String buildItineraryPrompt(News news, Itinerary itinerary) {
-        String details = (news.getDescription() == null || news.getDescription().isBlank())
-                ? "No further details were provided."
-                : news.getDescription();
+        String details = impactDetails(news);
 
         return """
                 You are helping a traveller work out whether a news story affects their trip as a whole.
@@ -182,8 +206,7 @@ public class ImpactServiceImpl implements ImpactService {
                 safety, transport or entry rules.
 
                 Where the event happened:
-                - The headline is the evidence. The places in the details are only places the article
-                  mentioned, so never use them to decide where the event happened.
+                - The headline is the evidence for where the event happened.
                 - If the headline is about a different country from the trip's country, the trip is not affected.
                 - If the headline names no place, assume the story is about the trip's country.
 
@@ -199,9 +222,7 @@ public class ImpactServiceImpl implements ImpactService {
     }
 
     private String buildPrompt(News news, Activity activity) {
-        String details = (news.getDescription() == null || news.getDescription().isBlank())
-            ? "No further details were provided."
-            : news.getDescription();
+        String details = impactDetails(news);
 
         return """
             You are helping a traveller work out whether a news story affects one planned activity.
