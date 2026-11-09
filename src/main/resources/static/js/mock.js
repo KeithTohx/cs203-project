@@ -554,6 +554,21 @@ export const mockApi = {
         alert.readAt ??= new Date().toISOString();
         return respondWith(visibleAlert(alert));
     },
+    // Read the persisted news/trip group through the selected alert, including older pages.
+    markAlertGroupRead: id => {
+        const notLoggedIn = requireLogin();
+        if (notLoggedIn) return notLoggedIn;
+        const anchor = ALERTS.find(candidate => candidate.id === Number(id));
+        const group = anchor && visibleAlert(anchor);
+        if (!group) return fail(404, "Alert not found.");
+        const now = new Date().toISOString();
+        for (const alert of ALERTS) {
+            const visible = visibleAlert(alert);
+            if (visible && visible.itineraryId === group.itineraryId && visible.newsId === group.newsId
+                    && alert.id <= anchor.id) alert.readAt ??= now;
+        }
+        return respondWith({ unreadCount: ALERTS.filter(alert => alert.readAt == null && visibleAlert(alert)).length });
+    },
     // like the backend: every unread alert of this user up to upToId, whichever page it is on,
     // and the unreadCount left afterwards since newer alerts stay unread
     markAllAlertsRead: (upToId = null) => {

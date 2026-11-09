@@ -34,11 +34,13 @@
                 addEventListener(name, listener) { this.listeners[name]=listener; }
                 close() {}
             }
+            const onAlertsInvalidated=()=>()=>{};
             const escapeHtml=x=>x, findToastShelf=()=>null, newsTitleOf=x=>x, timeTag=x=>x, icon=()=>'';
             ${moduleSource}
             return { markAllAlertsRead, markAlertsRead, stopAlerts,
                 connect: () => { api.alertStreamUrl='/api/alerts/stream'; connectStream(); },
                 ready: () => state.stream.listeners.ready(), polling: () => intervals,
+                disconnect: () => { state.stream.readyState=0; state.stream.listeners.error(); },
                 hold: promise => queueSave(() => promise), setUser: id => { state.userId=id; } };
         `);
         const alerts = createModule(api, document);
@@ -90,8 +92,12 @@
         f.alerts.connect();
         assert(f.alerts.polling() === 1, "Polling must start while SSE connects");
         f.alerts.ready();
-        assert(f.alerts.polling() === 1, "A live stream must retain periodic history recovery");
-        passed.push("retain polling alongside SSE");
+        assert(f.alerts.polling() === 0, "A live stream must stop fallback polling");
+        f.alerts.disconnect();
+        assert(f.alerts.polling() === 1, "A reconnecting stream must resume polling");
+        f.alerts.ready();
+        assert(f.alerts.polling() === 0, "A recovered stream must stop polling again");
+        passed.push("poll only while the live stream is unavailable");
     }
     {
         const f = fixture();

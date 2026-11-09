@@ -50,7 +50,8 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
 
     @Modifying
     @Query("update Alert a set a.readAt = :now where a.readAt is null and a.id <= :upToId"
-            + " and a.id in (select v.id from Alert v where " + "v.impact.itinerary.user.id = :userId and v.impact.impacted = true "
+            + " and a.id in (select v.id from Alert v where v.impact.itinerary.user.id = :userId"
+            + " and v.impact.impacted = true "
             + "and (v.impact.rejected = false or v.impact.rejected is null)"
             + " and v.impact.itinerary.id = :tripId and v.impact.news.id = :newsId)")
     int markGroupRead(Long userId, Long tripId, Long newsId, Long upToId, Instant now);

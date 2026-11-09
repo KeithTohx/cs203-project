@@ -1,4 +1,5 @@
 import { mockApi, showMockBanner } from "./mock.js";
+import { invalidateAlerts } from "./alert-sync.js";
 // The ONLY file that knows URLs. Relative paths work locally and on Azure.
 export class ApiError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -110,4 +111,14 @@ const realApi = {
 const isLocalhost = ["localhost", "127.0.0.1"].includes(location.hostname);
 const useMock = isLocalhost && new URLSearchParams(location.search).has("mock");
 if (useMock) showMockBanner();
-export const api = useMock ? mockApi : realApi;
+const selectedApi = useMock ? mockApi : realApi;
+export const api = { ...selectedApi };
+// Successful changes invalidate alert history in this tab and other open tabs.
+for (const method of ["markAlertRead", "markAlertGroupRead", "markAllAlertsRead", "setImpactRejected",
+    "deleteActivity", "deleteItinerary"]) {
+  api[method] = async (...args) => {
+    const result = await selectedApi[method](...args);
+    invalidateAlerts();
+    return result;
+  };
+}

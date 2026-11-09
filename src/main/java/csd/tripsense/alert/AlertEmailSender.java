@@ -166,7 +166,7 @@ public class AlertEmailSender {
                                                 </div>
                                                 <p style="font-size:12px;color:#5d6f76;margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0">
                                                     This is an automated assessment.
-                Verify important changes with your travel provider.
+                                                    Verify important changes with your travel provider.
                                                     <br>
                                                     Alert reference: %s
                                                 </p>

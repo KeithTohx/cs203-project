@@ -1516,4 +1516,31 @@ class AlertIntegrationTest {
         assertThatThrownBy(() -> alertService.markGroupRead(anchor,traveller.getId()+100000))
                 .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
     }
+
+    @Test void groupReadEndpointRequiresOwnershipAndCsrf() throws Exception {
+        evaluate();
+        Long id=alertService.list(traveller.getId(),false,null,20).content().getFirst().id();
+        String endpoint="/api/alerts/"+id+"/group";
+        var ownSession=login(traveller);
+        var strangerSession=login(savedUser("stranger"));
+        mockMvc.perform(patch(endpoint).with(csrf()).contentType(MediaType.APPLICATION_JSON).content(READ_TRUE))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(patch(endpoint).session(strangerSession).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(READ_TRUE)).andExpect(status().isNotFound());
+        mockMvc.perform(patch(endpoint).session(ownSession).contentType(MediaType.APPLICATION_JSON).content(READ_TRUE))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(patch(endpoint).session(ownSession).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(READ_TRUE))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.unreadCount").value(0));
+    }
+
+    @Test void acceptedGroupIsNotReclaimedWhileItsConfirmationIsPending() {
+        evaluate();
+        var alert=alertService.list(traveller.getId(),false,null,20).content().getFirst();
+        var now=Instant.now().plusSeconds(1);
+        emailStore.claim(alert.id(),now).orElseThrow();
+        assertThat(emailStore.claim(alert.id(),now.plusSeconds(121),
+                java.util.Set.of(AlertEmailGroup.key(skiTrip.getId(),earthquake.getId())))).isEmpty();
+        assertThat(alertRepository.findById(alert.id()).orElseThrow().getEmailAttempts()).isEqualTo(1);
+    }
 }

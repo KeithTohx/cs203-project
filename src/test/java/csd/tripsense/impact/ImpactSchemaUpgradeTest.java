@@ -63,7 +63,7 @@ class ImpactSchemaUpgradeTest {
     }
 
 
-    @Test void upgradeConvertsTheLegacyMarkerAndCanRunAgain() {
+    @Test void upgradeConvertsTheLegacyMarkerAndRecordsItsVersion() {
         assertThat(sql.queryForObject("select email_status from alert where alert_id=8", String.class))
                 .isEqualTo("SUPPRESSED");
         assertThat(sql.queryForList("pragma table_info(alert)").stream()

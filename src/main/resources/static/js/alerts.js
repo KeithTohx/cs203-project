@@ -1,5 +1,6 @@
 // alerts bell in the top bar (CS203-5): live from /api/alerts/stream, or checked every minute without it
 import { api } from "./api.js";
+import { onAlertsInvalidated } from "./alert-sync.js";
 import { escapeHtml, findToastShelf, newsTitleOf, timeTag } from "./util.js";
 import { icon } from "./icons.js";
 
@@ -226,6 +227,7 @@ async function refresh() {
 // they are gathered into one reload instead of six requests for the same list
 const ALERT_BURST_MS = 500;
 let burstTimer = null;
+let stopSync = null;
 
 const refreshAfterBurst = () => {
     clearTimeout(burstTimer);
@@ -234,11 +236,10 @@ const refreshAfterBurst = () => {
 
 const canStream = () => Boolean(api.alertStreamUrl) && typeof EventSource !== "undefined";
 
-// while polling after the stream closed, each check tries the stream again too, eg once the backend is back up.
-// connecting reloads by itself, on "ready" or when it fails again, so that check needs no reload of its own
+// While disconnected, recover saved alerts and reconnect a closed stream.
 function checkAgain() {
     const canReconnect = canStream() && !state.stream;
-    if (canReconnect) return connectStream();
+    if (canReconnect) connectStream();
     refresh();
 }
 
@@ -252,19 +253,27 @@ function stopPolling() {
     state.pollTimer = null;
 }
 
+// Returning to a tab also recovers changes made outside this browser.
+document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refresh();
+});
+
 // both events reload the list, which also catches anything missed while disconnected
 function connectStream() {
     if (!canStream()) return startPolling();
 
     const stream = new EventSource(api.alertStreamUrl);
     stream.addEventListener("ready", () => {
-        startPolling();   // recover missed events and read/reject changes from other tabs
+        if (state.stream !== stream) return;
+        stopPolling();
         refresh();
     });
-    stream.addEventListener("alert", refreshAfterBurst);
+    stream.addEventListener("alert", () => {
+        if (state.stream === stream) refreshAfterBurst();
+    });
     stream.addEventListener("error", () => {
-        if (stream.readyState !== EventSource.CLOSED) return;
-        if (state.stream === stream) state.stream = null;
+        if (state.stream !== stream) return;
+        if (stream.readyState === EventSource.CLOSED) state.stream = null;
         startPolling();
         refresh();   // finds out whether the session ended, and if so sends the user to log in
     });
@@ -622,6 +631,7 @@ export function mountAlertBell(slot, user, { onAuthLost, redraw }) {
     if (state.userId !== user.id) {
         stopAlerts();
         state.userId = user.id;
+        stopSync = onAlertsInvalidated(refreshAfterBurst);
 
         // loaded straight away rather than waiting for "ready", which a proxy holding the stream back can delay for good
         refresh();
@@ -632,6 +642,8 @@ export function mountAlertBell(slot, user, { onAuthLost, redraw }) {
 
 // on logout or session end, so nothing keeps listening in the background
 export function stopAlerts() {
+    stopSync?.();
+    stopSync = null;
     state.stream?.close();
     clearInterval(state.pollTimer);
     clearTimeout(state.toastTimer);

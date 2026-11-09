@@ -97,10 +97,11 @@ public class AlertEmailStore {
                     EmailStatus.FAILED, null, now);
             return Optional.empty();
         }
-        Instant firstCreatedAt = group.stream().filter(a -> RETRYABLE.contains(a.getEmailStatus())).map(Alert::getCreatedAt).min(Comparator.naturalOrder()).orElse(now);
+        Instant firstCreatedAt = group.stream().filter(a -> RETRYABLE.contains(a.getEmailStatus()))
+                .map(Alert::getCreatedAt).min(Comparator.naturalOrder()).orElse(now);
         Instant deadline = firstCreatedAt.plusSeconds(maxGroupWaitSeconds);
         Instant settleUntil = firstCreatedAt.plusSeconds(initialGroupWaitSeconds);
-        if (group.stream().allMatch(a -> a.getEmailAttempts() == 0) && now.isBefore(settleUntil)) {
+        if (group.stream().filter(a -> RETRYABLE.contains(a.getEmailStatus())).allMatch(a -> a.getEmailAttempts() == 0) && now.isBefore(settleUntil)) {
             deferRetryable(group, settleUntil);
             return Optional.empty();
         }
@@ -110,7 +111,8 @@ public class AlertEmailStore {
             deferRetryable(group, recheck.isBefore(deadline) ? recheck : deadline);
             return Optional.empty();
         }
-        var members = group.stream().filter(a -> RETRYABLE.contains(a.getEmailStatus())).filter(a -> Boolean.TRUE.equals(a.getImpact().getImpacted())
+        var members = group.stream().filter(a -> RETRYABLE.contains(a.getEmailStatus()))
+                .filter(a -> Boolean.TRUE.equals(a.getImpact().getImpacted())
                 && !Boolean.TRUE.equals(a.getImpact().getRejected())).toList();
         if (members.isEmpty() || members.stream().anyMatch(a -> !RETRYABLE.contains(a.getEmailStatus())
                 || a.getEmailNextAttemptAt().isAfter(now))) return Optional.empty();
@@ -160,8 +162,10 @@ public class AlertEmailStore {
         boolean removed = delivery.claims().stream().allMatch(c -> !alerts.existsById(c.id()));
         if (completed>0 || removed) {
             var summary=delivery.alert();
-            var group=emailGroups.findById(AlertEmailGroup.key(summary.itineraryId(),summary.newsId()))
-                    .orElseGet(() -> emailGroups.saveAndFlush(new AlertEmailGroup(
+            var existing = emailGroups.findById(AlertEmailGroup.key(summary.itineraryId(),summary.newsId()));
+            // Deleting the trip also removes its delivery group. There is nothing left to confirm.
+            if (removed && existing.isEmpty()) return;
+            var group=existing.orElseGet(() -> emailGroups.saveAndFlush(new AlertEmailGroup(
                             summary.itineraryId(),summary.newsId(),delivery.key())));
             if (group.getDeliveryKey().equals(delivery.key())) {
                 group.markDelivered(now);
