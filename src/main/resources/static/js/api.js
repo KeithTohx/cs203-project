@@ -89,8 +89,11 @@ const realApi = {
   },
   alertStreamUrl:"/api/alerts/stream",                                                // server-sent events: "ready" on connect, "alert" when one is saved
   setImpactRejected:(id, rejected) => request(`/api/impact/${id}`, "PATCH", {rejected}),   // true = "not relevant to me", false = restore -> the impact
-  itineraryRecommendations:id => request(`/api/itinerary/${id}/recommendation`),       // -> the stored ones, worst first. never calls the model
+  itineraryRecommendations:(id, includeDismissed = false) => request(`/api/itinerary/${id}/recommendation?${new URLSearchParams({includeDismissed})}`),   // -> the newest attempt per impact, worst first. never calls the model
   generateRecommendations:itineraryId => request("/api/recommendation/generate", "POST", {itineraryId}),   // slow: asks the model once per impact without one -> every current one, worst first
+  decideRecommendation:(id, status) => request(`/api/recommendation/${id}`, "PATCH", {status}),   // "ACCEPTED" | "DISMISSED" | "PENDING", back to pending clears the decision time -> the recommendation
+  regenerateRecommendation:id => request(`/api/recommendation/${id}/regenerate`, "POST"),   // slow: asks the model again, skipping every place already offered -> a new one, the old stays as history
+  impactRecommendations:impactId => request(`/api/impact/${impactId}/recommendation`),   // -> every attempt for one impact, oldest first
   chat:       (itineraryId, message) => request(`/api/itinerary/${itineraryId}/chat`, "POST", {message}),   // -> {role: "assistant", content}
   chatHistory:itineraryId => request(`/api/itinerary/${itineraryId}/chat/history`),   // -> [{role: "user" | "assistant", content}], oldest first
   resetChat:  itineraryId => request(`/api/itinerary/${itineraryId}/chat`, "DELETE"),
