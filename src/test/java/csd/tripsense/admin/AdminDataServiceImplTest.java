@@ -27,6 +27,7 @@ import org.springframework.web.server.ResponseStatusException;
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityCreatedEvent;
 import csd.tripsense.activity.ActivityRepository;
+import csd.tripsense.activity.ActivityService;
 import csd.tripsense.alert.Alert;
 import csd.tripsense.alert.ImpactEvaluatedEvent;
 import csd.tripsense.country.Country;
@@ -36,6 +37,7 @@ import csd.tripsense.impact.ImpactRepository;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryCreatedEvent;
 import csd.tripsense.itinerary.ItineraryRepository;
+import csd.tripsense.itinerary.ItineraryService;
 import csd.tripsense.news.News;
 import csd.tripsense.news.NewsRepository;
 import csd.tripsense.recommendation.Action;
@@ -56,6 +58,8 @@ class AdminDataServiceImplTest {
 
     private UserRepository users;
     private UserService userService;
+    private ItineraryService itineraryService;
+    private ActivityService activityService;
     private ItineraryRepository itineraries;
     private ActivityRepository activities;
     private ImpactRepository impacts;
@@ -75,6 +79,8 @@ class AdminDataServiceImplTest {
     void setUp() {
         users = mock(UserRepository.class);
         userService = mock(UserService.class);
+        itineraryService = mock(ItineraryService.class);
+        activityService = mock(ActivityService.class);
         itineraries = mock(ItineraryRepository.class);
         activities = mock(ActivityRepository.class);
         impacts = mock(ImpactRepository.class);
@@ -84,7 +90,7 @@ class AdminDataServiceImplTest {
         options = mock(ActivityOptionRepository.class);
         preferences = mock(UserPreferenceRepository.class);
         events = mock(ApplicationEventPublisher.class);
-        service = new AdminDataServiceImpl(users, userService, itineraries, activities, impacts,
+        service = new AdminDataServiceImpl(users, userService, itineraryService, activityService, itineraries, activities, impacts,
                 recommendations, countries, news, options, preferences, events);
 
         owner = account(4L, "bob");
@@ -114,6 +120,18 @@ class AdminDataServiceImplTest {
             return impact;
         });
         when(recommendations.save(any(Recommendation.class))).thenAnswer(call -> call.getArgument(0));
+
+        // the traveller create paths hand back what they were given, saved
+        when(itineraryService.addItinerary(any(Itinerary.class))).thenAnswer(call -> {
+            Itinerary itinerary = call.getArgument(0);
+            itinerary.setId(10L);
+            return itinerary;
+        });
+        when(activityService.addActivity(any(Activity.class))).thenAnswer(call -> {
+            Activity activity = call.getArgument(0);
+            activity.setId(20L);
+            return activity;
+        });
     }
 
     // ---------- helpers ----------
@@ -156,6 +174,15 @@ class AdminDataServiceImplTest {
         impact.setId(id);
         impact.setUser(owner);
         when(impacts.findById(id)).thenReturn(Optional.of(impact));
+        return impact;
+    }
+
+    // an impact on trip 10, on the activity given or the whole trip when it is null
+    private static Impact impactOn(Activity activity) {
+        Impact impact = new Impact();
+        impact.setActivity(activity);
+        impact.setAlerts(List.of());
+        impact.setRecommendations(List.of());
         return impact;
     }
 
@@ -207,11 +234,12 @@ class AdminDataServiceImplTest {
     }
 
     @Test
-    @DisplayName("Should ask for a new itinerary to be judged against recent news, like a traveller's")
-    void createItinerary_PublishesCreatedEvent() {
-        service.createItinerary(4L, new AdminItineraryRequest("Trip", 1L, null, null));
+    @DisplayName("Should save a new itinerary through the traveller path, so it is judged against recent news the same way")
+    void createItinerary_GoesThroughTheTravellerPath() {
+        Itinerary created = service.createItinerary(4L, new AdminItineraryRequest("Trip", 1L, null, null));
 
-        verify(events).publishEvent(new ItineraryCreatedEvent(10L));
+        verify(itineraryService).addItinerary(created);
+        verify(itineraries, never()).save(any());
     }
 
     @Test
@@ -222,8 +250,7 @@ class AdminDataServiceImplTest {
         Throwable thrown = catchThrowable(() -> service.createItinerary(4L, request));
 
         assertBadRequest(thrown);
-        verify(itineraries, never()).save(any());
-        verify(events, never()).publishEvent(any(Object.class));
+        verify(itineraryService, never()).addItinerary(any());
     }
 
     @Test
@@ -263,25 +290,56 @@ class AdminDataServiceImplTest {
     }
 
     @Test
-    @DisplayName("Should drop the verdicts made for the old country and judge the trip again")
-    void updateItinerary_NewCountry_ClearsVerdictsAndJudgesAgain() {
-        savedTrip(10L, owner);
-        List<Recommendation> itsRecommendations = List.of(new Recommendation());
-        List<Impact> itsImpacts = List.of(new Impact());
-        when(recommendations.findByImpactItineraryId(10L)).thenReturn(itsRecommendations);
-        when(impacts.findByItineraryId(10L)).thenReturn(itsImpacts);
+    @DisplayName("Should drop the whole trip verdicts made for the old country and judge the trip again")
+    void updateItinerary_NewCountry_ClearsWholeTripVerdictsAndJudgesAgain() {
+        Itinerary trip = savedTrip(10L, owner);
+        Impact wholeTrip = impactOn(null);
+        Impact onActivity = impactOn(savedActivity(20L, trip));
+        when(impacts.findByItineraryId(10L)).thenReturn(List.of(wholeTrip, onActivity));
 
         Country france = new Country();
         france.setId(2L);
         when(countries.findById(2L)).thenReturn(Optional.of(france));
 
-        service.updateItinerary(10L, new AdminItineraryRequest("Japan Ski Trip", 2L, null, null));
+        AdminEdit<Itinerary> edit = service.updateItinerary(10L, new AdminItineraryRequest("Japan Ski Trip", 2L, null, null));
 
-        // recommendations point at the impacts, so they go first
-        InOrder order = inOrder(recommendations, impacts, events);
-        order.verify(recommendations).deleteAll(itsRecommendations);
-        order.verify(impacts).deleteAll(itsImpacts);
+        // the activity verdict was judged on the activity alone, so it stays
+        InOrder order = inOrder(impacts, events);
+        order.verify(impacts).deleteAll(List.of(wholeTrip));
         order.verify(events).publishEvent(new ItineraryCreatedEvent(10L));
+        assertThat(edit.clearedVerdicts()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("Should clear a verdict the traveller saw when the dates change, and sum up what they had been told")
+    void updateItinerary_NewDates_SumsUpWhatWasCleared() {
+        savedTrip(10L, owner);
+        Impact seen = impactOn(null);
+        seen.setId(70L);
+        seen.setUser(owner);
+        seen.setNews(savedNews(30L));
+        seen.setImpacted(true);
+        seen.setReason("Rail is suspended");
+        seen.setRejected(true);
+        seen.setAlerts(List.of(new Alert(seen)));
+        seen.setRecommendations(List.of(new Recommendation()));
+        when(impacts.findByItineraryId(10L)).thenReturn(List.of(seen));
+
+        AdminEdit<Itinerary> edit = service.updateItinerary(10L, new AdminItineraryRequest("Japan Ski Trip", 1L,
+                LocalDateTime.of(2026, 12, 2, 0, 0), null));
+
+        verify(impacts).deleteAll(List.of(seen));
+        verify(events).publishEvent(new ItineraryCreatedEvent(10L));
+
+        // the row is gone, so this summary is all the audit log will have
+        ClearedVerdict cleared = edit.clearedVerdicts().get(0);
+        assertThat(cleared.impactId()).isEqualTo(70L);
+        assertThat(cleared.ownerId()).isEqualTo(4L);
+        assertThat(cleared.newsTitle()).isEqualTo("Earthquake near Hokkaido");
+        assertThat(cleared.rejected()).isTrue();
+        assertThat(cleared.alerted()).isTrue();
+        assertThat(cleared.recommendations()).isEqualTo(1);
+        assertThat(cleared.reason()).isEqualTo("Rail is suspended");
     }
 
     @Test
@@ -289,81 +347,69 @@ class AdminDataServiceImplTest {
     void updateItinerary_OnlyName_KeepsVerdicts() {
         savedTrip(10L, owner);
 
-        service.updateItinerary(10L, new AdminItineraryRequest("Renamed Trip", 1L, null, null));
+        AdminEdit<Itinerary> edit = service.updateItinerary(10L, new AdminItineraryRequest("Renamed Trip", 1L, null, null));
 
         verify(impacts, never()).deleteAll(any());
         verify(events, never()).publishEvent(any(Object.class));
+        assertThat(edit.clearedVerdicts()).isEmpty();
     }
 
     @Test
-    @DisplayName("Should delete an itinerary's recommendations before the itinerary itself")
-    void deleteItinerary_RemovesRecommendationsFirst() {
+    @DisplayName("Should delete an itinerary and leave what hangs off it to the cascade")
+    void deleteItinerary_DeletesTheItinerary() {
         Itinerary trip = savedTrip(10L, owner);
-        List<Recommendation> itsRecommendations = List.of(new Recommendation());
-        when(recommendations.findByImpactItineraryId(10L)).thenReturn(itsRecommendations);
 
         Itinerary deleted = service.deleteItinerary(10L);
 
-        // nothing cascades to recommendations, so the order matters
-        InOrder order = inOrder(recommendations, itineraries);
-        order.verify(recommendations).deleteAll(itsRecommendations);
-        order.verify(itineraries).delete(trip);
+        verify(itineraries).delete(trip);
+        verify(recommendations, never()).deleteAll(any());
         assertThat(deleted).isSameAs(trip);
     }
 
     // ---------- activities ----------
 
     @Test
-    @DisplayName("Should copy the country from the itinerary onto a new activity")
-    void createActivity_CopiesCountryFromItinerary() {
-        savedTrip(10L, owner);
+    @DisplayName("Should save a new activity through the traveller path, which copies the country and judges it")
+    void createActivity_GoesThroughTheTravellerPath() {
+        Itinerary trip = savedTrip(10L, owner);
 
         Activity created = service.createActivity(10L,
                 new AdminActivityRequest("Onsen", "  ", null, null, null));
 
-        assertThat(created.getCountry()).isSameAs(japan);
+        verify(activityService).addActivity(created);
+        verify(activities, never()).save(any());
+        assertThat(created.getItinerary()).isSameAs(trip);
         assertThat(created.getAddress()).isNull();   // a blank address is stored as nothing
     }
 
     @Test
-    @DisplayName("Should ask for a new activity to be judged against recent news, like a traveller's")
-    void createActivity_PublishesCreatedEvent() {
-        savedTrip(10L, owner);
-
-        service.createActivity(10L, new AdminActivityRequest("Onsen", null, null, null, null));
-
-        verify(events).publishEvent(new ActivityCreatedEvent(20L));
-    }
-
-    @Test
-    @DisplayName("Should delete an activity's recommendations before the activity")
-    void deleteActivity_RemovesRecommendationsFirst() {
+    @DisplayName("Should delete an activity and leave what hangs off it to the cascade")
+    void deleteActivity_DeletesTheActivity() {
         Activity activity = savedActivity(20L, savedTrip(10L, owner));
-        List<Recommendation> itsRecommendations = List.of(new Recommendation());
-        when(recommendations.findByImpactActivityId(20L)).thenReturn(itsRecommendations);
 
         service.deleteActivity(20L);
 
-        InOrder order = inOrder(recommendations, activities);
-        order.verify(recommendations).deleteAll(itsRecommendations);
-        order.verify(activities).delete(activity);
+        verify(activities).delete(activity);
+        verify(recommendations, never()).deleteAll(any());
     }
 
     @Test
     @DisplayName("Should drop an activity's verdicts and judge it again when its address changes")
     void updateActivity_NewAddress_ClearsVerdictsAndJudgesAgain() {
-        savedActivity(20L, savedTrip(10L, owner));
-        List<Recommendation> itsRecommendations = List.of(new Recommendation());
-        List<Impact> itsImpacts = List.of(new Impact());
-        when(recommendations.findByImpactActivityId(20L)).thenReturn(itsRecommendations);
+        Activity activity = savedActivity(20L, savedTrip(10L, owner));
+        Impact unseen = impactOn(activity);
+        Impact rejected = impactOn(activity);
+        rejected.setRejected(true);
+        List<Impact> itsImpacts = List.of(unseen, rejected);
         when(impacts.findByActivityId(20L)).thenReturn(itsImpacts);
 
-        service.updateActivity(20L, new AdminActivityRequest("Ski at Niseko", "Hakuba", null, null, null));
+        AdminEdit<Activity> edit = service.updateActivity(20L,
+                new AdminActivityRequest("Ski at Niseko", "Hakuba", null, null, null));
 
-        InOrder order = inOrder(recommendations, impacts, events);
-        order.verify(recommendations).deleteAll(itsRecommendations);
+        InOrder order = inOrder(impacts, events);
         order.verify(impacts).deleteAll(itsImpacts);
         order.verify(events).publishEvent(new ActivityCreatedEvent(20L));
+        assertThat(edit.clearedVerdicts()).hasSize(2);
     }
 
     @Test
@@ -504,6 +550,20 @@ class AdminDataServiceImplTest {
     }
 
     @Test
+    @DisplayName("Should refuse to blank the reason of an impact whose alert has not been made yet")
+    void updateImpact_BlankReasonWhileAlertOnItsWay_Returns400() {
+        Impact impact = savedImpact(70L);
+        impact.setReason("Lifts are closed");
+        impact.setAlertEligible(true);
+
+        Throwable thrown = catchThrowable(() -> service.updateImpact(70L,
+                new AdminImpactUpdateRequest(true, "", false)));
+
+        assertBadRequest(thrown);
+        verify(impacts, never()).save(any());
+    }
+
+    @Test
     @DisplayName("Should allow a blank reason on an impact with no alert, so it is judged again")
     void updateImpact_BlankReasonWithoutAlert_IsAllowed() {
         Impact impact = savedImpact(70L);
@@ -529,17 +589,14 @@ class AdminDataServiceImplTest {
     }
 
     @Test
-    @DisplayName("Should delete an impact's recommendations before the impact")
-    void deleteImpact_RemovesRecommendationsFirst() {
+    @DisplayName("Should delete an impact and leave its alert and recommendations to the cascade")
+    void deleteImpact_DeletesTheImpact() {
         Impact impact = savedImpact(70L);
-        List<Recommendation> itsRecommendations = List.of(new Recommendation());
-        when(recommendations.findByImpactIdOrderByIdAsc(70L)).thenReturn(itsRecommendations);
 
         service.deleteImpact(70L);
 
-        InOrder order = inOrder(recommendations, impacts);
-        order.verify(recommendations).deleteAll(itsRecommendations);
-        order.verify(impacts).delete(impact);
+        verify(impacts).delete(impact);
+        verify(recommendations, never()).deleteAll(any());
     }
 
     // ---------- recommendations ----------
@@ -583,6 +640,23 @@ class AdminDataServiceImplTest {
 
         assertThat(existing.getDecidedAt()).isEqualTo(decided);
         assertThat(existing.getAction()).isEqualTo(Action.RESCHEDULE);
+    }
+
+    @Test
+    @DisplayName("Should keep the traveller's decision when an update leaves the status out")
+    void updateRecommendation_NoStatus_KeepsDecision() {
+        LocalDateTime decided = LocalDateTime.of(2026, 11, 1, 9, 0);
+        Recommendation existing = new Recommendation();
+        existing.setId(80L);
+        existing.setStatus(RecommendationStatus.ACCEPTED);
+        existing.setDecidedAt(decided);
+        when(recommendations.findById(80L)).thenReturn(Optional.of(existing));
+
+        service.updateRecommendation(80L,
+                new AdminRecommendationRequest(Severity.LOW, Action.MONITOR, "Fixed a typo", null, null));
+
+        assertThat(existing.getStatus()).isEqualTo(RecommendationStatus.ACCEPTED);
+        assertThat(existing.getDecidedAt()).isEqualTo(decided);
     }
 
     @Test

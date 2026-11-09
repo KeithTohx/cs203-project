@@ -23,6 +23,7 @@ export const AUDIT_ACTIONS = [
     { value: "IMPACT_CREATED", label: "Created impact" },
     { value: "IMPACT_UPDATED", label: "Updated impact" },
     { value: "IMPACT_DELETED", label: "Deleted impact" },
+    { value: "IMPACT_CLEARED", label: "Cleared out of date impact" },
     { value: "RECOMMENDATION_CREATED", label: "Created recommendation" },
     { value: "RECOMMENDATION_UPDATED", label: "Updated recommendation" },
     { value: "RECOMMENDATION_DELETED", label: "Deleted recommendation" },

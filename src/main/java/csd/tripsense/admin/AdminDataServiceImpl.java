@@ -16,6 +16,7 @@ import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityCreatedEvent;
 import csd.tripsense.activity.ActivityNotFoundException;
 import csd.tripsense.activity.ActivityRepository;
+import csd.tripsense.activity.ActivityService;
 import csd.tripsense.alert.ImpactEvaluatedEvent;
 import csd.tripsense.country.Country;
 import csd.tripsense.country.CountryRepository;
@@ -26,6 +27,7 @@ import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryCreatedEvent;
 import csd.tripsense.itinerary.ItineraryNotFoundException;
 import csd.tripsense.itinerary.ItineraryRepository;
+import csd.tripsense.itinerary.ItineraryService;
 import csd.tripsense.news.News;
 import csd.tripsense.news.NewsRepository;
 import csd.tripsense.recommendation.ActivityOption;
@@ -47,6 +49,8 @@ public class AdminDataServiceImpl implements AdminDataService {
 
     private final UserRepository users;
     private final UserService userService;
+    private final ItineraryService itineraryService;
+    private final ActivityService activityService;
     private final ItineraryRepository itineraries;
     private final ActivityRepository activities;
     private final ImpactRepository impacts;
@@ -58,6 +62,7 @@ public class AdminDataServiceImpl implements AdminDataService {
     private final ApplicationEventPublisher events;
 
     public AdminDataServiceImpl(UserRepository users, UserService userService,
+                                ItineraryService itineraryService, ActivityService activityService,
                                 ItineraryRepository itineraries, ActivityRepository activities,
                                 ImpactRepository impacts, RecommendationRepository recommendations,
                                 CountryRepository countries, NewsRepository news,
@@ -65,6 +70,8 @@ public class AdminDataServiceImpl implements AdminDataService {
                                 ApplicationEventPublisher events) {
         this.users = users;
         this.userService = userService;
+        this.itineraryService = itineraryService;
+        this.activityService = activityService;
         this.itineraries = itineraries;
         this.activities = activities;
         this.impacts = impacts;
@@ -113,17 +120,14 @@ public class AdminDataServiceImpl implements AdminDataService {
         Itinerary itinerary = new Itinerary();
         itinerary.setUser(owner);
         applyItinerary(itinerary, request);
-        Itinerary saved = itineraries.save(itinerary);
 
-        // judged against recent news like a traveller's new trip. the listener runs after commit,
-        // on its own thread, and gives up quietly when the model is down
-        events.publishEvent(new ItineraryCreatedEvent(saved.getId()));
-        return saved;
+        // the same path a traveller's new trip takes, so it is judged against recent news the same way
+        return itineraryService.addItinerary(itinerary);
     }
 
     @Override
     @Transactional
-    public Itinerary updateItinerary(Long itineraryId, AdminItineraryRequest request) {
+    public AdminEdit<Itinerary> updateItinerary(Long itineraryId, AdminItineraryRequest request) {
         Itinerary itinerary = findItinerary(itineraryId);
         Long oldCountryId = itinerary.getCountry() == null ? null : itinerary.getCountry().getId();
         LocalDateTime oldStart = itinerary.getDateStart();
@@ -139,20 +143,24 @@ public class AdminDataServiceImpl implements AdminDataService {
         }
         activities.saveAll(itsActivities);
 
-        // the verdicts were made for the old country and dates, and the evaluator reuses any stored
-        // verdict without asking again. so they go, and the trip is judged again like a new one
+        // the whole trip verdicts were made for the old country and dates, and the evaluator reuses
+        // any stored verdict without asking again, so those go and the trip is judged again.
+        // activity verdicts stay, since the model was only asked about the activity's own name,
+        // address and start
         boolean countryChanged = !Objects.equals(oldCountryId, request.countryId());
         boolean datesChanged = !Objects.equals(oldStart, saved.getDateStart())
                 || !Objects.equals(oldEnd, saved.getDateEnd());
+        List<ClearedVerdict> cleared = List.of();
         if (countryChanged || datesChanged) {
-            recommendations.deleteAll(recommendations.findByImpactItineraryId(itineraryId));
-            recommendations.flush();
-            impacts.deleteAll(impacts.findByItineraryId(itineraryId));   // cascades to their alerts
+            List<Impact> wholeTripImpacts = impacts.findByItineraryId(itineraryId).stream()
+                    .filter(impact -> impact.getActivity() == null)
+                    .toList();
+            cleared = clearStaleVerdicts(wholeTripImpacts);
 
             events.publishEvent(new ItineraryCreatedEvent(saved.getId()));
         }
 
-        return saved;
+        return new AdminEdit<>(saved, cleared);
     }
 
     @Override
@@ -160,11 +168,7 @@ public class AdminDataServiceImpl implements AdminDataService {
     public Itinerary deleteItinerary(Long itineraryId) {
         Itinerary itinerary = findItinerary(itineraryId);
 
-        // recommendations point at impacts but nothing cascades to them, so they go first.
-        // the itinerary itself cascades to its activities, impacts and their alerts
-        recommendations.deleteAll(recommendations.findByImpactItineraryId(itineraryId));
-        recommendations.flush();
-
+        // cascades to its activities and impacts, and from those to their alerts and recommendations
         itineraries.delete(itinerary);
         return itinerary;
     }
@@ -191,24 +195,28 @@ public class AdminDataServiceImpl implements AdminDataService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public List<Activity> listUserActivities(Long userId) {
+        findUser(userId);
+        return activities.findByItineraryUserIdOrderByDateStart(userId);
+    }
+
+    @Override
     @Transactional
     public Activity createActivity(Long itineraryId, AdminActivityRequest request) {
         Itinerary itinerary = findItinerary(itineraryId);
 
         Activity activity = new Activity();
         activity.setItinerary(itinerary);
-        activity.setCountry(itinerary.getCountry());
         applyActivity(activity, request);
-        Activity saved = activities.save(activity);
 
-        // same as for a new itinerary, see above
-        events.publishEvent(new ActivityCreatedEvent(saved.getId()));
-        return saved;
+        // same as for a new itinerary. this also copies the itinerary's country onto the activity
+        return activityService.addActivity(activity);
     }
 
     @Override
     @Transactional
-    public Activity updateActivity(Long activityId, AdminActivityRequest request) {
+    public AdminEdit<Activity> updateActivity(Long activityId, AdminActivityRequest request) {
         Activity activity = findActivity(activityId);
         String oldName = activity.getName();
         String oldAddress = activity.getAddress();
@@ -222,15 +230,13 @@ public class AdminDataServiceImpl implements AdminDataService {
         boolean judgedFieldsChanged = !Objects.equals(oldName, saved.getName())
                 || !Objects.equals(oldAddress, saved.getAddress())
                 || !Objects.equals(oldStart, saved.getDateStart());
+        List<ClearedVerdict> cleared = List.of();
         if (judgedFieldsChanged) {
-            recommendations.deleteAll(recommendations.findByImpactActivityId(activityId));
-            recommendations.flush();
-            impacts.deleteAll(impacts.findByActivityId(activityId));
-
+            cleared = clearStaleVerdicts(impacts.findByActivityId(activityId));
             events.publishEvent(new ActivityCreatedEvent(saved.getId()));
         }
 
-        return saved;
+        return new AdminEdit<>(saved, cleared);
     }
 
     @Override
@@ -238,11 +244,19 @@ public class AdminDataServiceImpl implements AdminDataService {
     public Activity deleteActivity(Long activityId) {
         Activity activity = findActivity(activityId);
 
-        recommendations.deleteAll(recommendations.findByImpactActivityId(activityId));
-        recommendations.flush();
-
-        activities.delete(activity);   // cascades to its impacts and their alerts
+        activities.delete(activity);   // cascades to its impacts, and their alerts and recommendations
         return activity;
+    }
+
+    // drops out of date verdicts, with their alerts and recommendations, so the evaluator asks
+    // again. each one is summed up first so the controller can keep it in the audit log: the news
+    // behind it may be too old for the re-evaluation to look at, so the log is all that is left
+    private List<ClearedVerdict> clearStaleVerdicts(List<Impact> outOfDate) {
+        List<ClearedVerdict> cleared = outOfDate.stream()
+                .map(ClearedVerdict::of)
+                .toList();
+        impacts.deleteAll(outOfDate);
+        return cleared;
     }
 
     private void applyActivity(Activity activity, AdminActivityRequest request) {
@@ -338,10 +352,13 @@ public class AdminDataServiceImpl implements AdminDataService {
         Impact impact = findImpact(impactId);
         String reason = blankToNull(request.reason());
 
-        // an alert shows the reason, in the app and in its email, which may still be waiting to go
+        // an alert shows the reason, in the app and in its email. alertEligible covers one that is
+        // still on its way, since the listener runs after commit. without a reason the row would also
+        // count as not evaluated, and the evaluator would quietly replace this verdict with its own
         boolean raisedAnAlert = impact.getAlerts() != null && !impact.getAlerts().isEmpty();
-        if (raisedAnAlert && reason == null) {
-            throw badRequest("this impact has raised an alert, so it needs a reason");
+        boolean alertOnItsWay = Boolean.TRUE.equals(impact.getAlertEligible());
+        if ((raisedAnAlert || alertOnItsWay) && reason == null) {
+            throw badRequest("this impact has or is about to raise an alert, so it needs a reason");
         }
 
         impact.setImpacted(request.impacted());
@@ -355,10 +372,7 @@ public class AdminDataServiceImpl implements AdminDataService {
     public Impact deleteImpact(Long impactId) {
         Impact impact = findImpact(impactId);
 
-        recommendations.deleteAll(recommendations.findByImpactIdOrderByIdAsc(impactId));
-        recommendations.flush();
-
-        impacts.delete(impact);   // cascades to its alert
+        impacts.delete(impact);   // cascades to its alert and recommendations
         return impact;
     }
 
@@ -425,8 +439,9 @@ public class AdminDataServiceImpl implements AdminDataService {
         recommendation.setSuggestedOption(option);
 
         // decidedAt follows the status the same way it does when a traveller decides,
-        // and is only touched when the status really changes
-        RecommendationStatus newStatus = request.status() == null ? RecommendationStatus.PENDING : request.status();
+        // and is only touched when the status really changes. a missing status keeps the current
+        // one, which is PENDING for a new recommendation, so a partial edit never undoes a decision
+        RecommendationStatus newStatus = request.status() == null ? recommendation.getStatus() : request.status();
         boolean statusChanged = newStatus != recommendation.getStatus();
         if (statusChanged) {
             recommendation.setStatus(newStatus);

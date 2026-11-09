@@ -36,6 +36,13 @@ const toDateTimeInput = dateTime => dateTime ? String(dateTime).slice(0, 16) : "
 const fromDateInput = value => value ? `${value}T00:00:00` : null;
 const fromDateTimeInput = value => value ? `${value}:00` : null;
 
+// the inputs cut off the time or the seconds, so an untouched input sends back the stored value.
+// otherwise the backend would see a new start and clear the verdicts on a rename
+const keepIfUntouched = (inputValue, original, toInput, fromInput) => {
+    const untouched = original != null && inputValue === toInput(original);
+    return untouched ? original : fromInput(inputValue);
+};
+
 const textOrNull = input => input.value.trim() || null;
 const numberOrNull = input => input.value === "" ? null : Number(input.value);
 
@@ -380,13 +387,13 @@ const itineraryConfig = (userId, lookups, view, getState) => ({
             ${createInput("dateEnd", "End date", `type="date" value="${toDateInput(itinerary?.dateEnd)}"`)}
         `;
     },
-    readForm: inputs => {
+    readForm: (inputs, itinerary) => {
         checkEndNotBeforeStart(inputs.dateStart.value, inputs.dateEnd.value);
         return {
             name: inputs.name.value.trim(),
             countryId: Number(inputs.countryId.value),
-            dateStart: fromDateInput(inputs.dateStart.value),
-            dateEnd: fromDateInput(inputs.dateEnd.value),
+            dateStart: keepIfUntouched(inputs.dateStart.value, itinerary?.dateStart, toDateInput, fromDateInput),
+            dateEnd: keepIfUntouched(inputs.dateEnd.value, itinerary?.dateEnd, toDateInput, fromDateInput),
         };
     },
     create: body => api.adminAddItinerary(userId, body),
@@ -416,13 +423,13 @@ const activityConfig = view => ({
         ${createInput("dateEnd", "Ends", `type="datetime-local" value="${toDateTimeInput(activity?.dateEnd)}"`)}
         ${createSelect("category", "Category", CATEGORIES, activity?.category, { emptyLabel: "None" })}
     `,
-    readForm: inputs => {
+    readForm: (inputs, activity) => {
         checkEndNotBeforeStart(inputs.dateStart.value, inputs.dateEnd.value);
         return {
             name: inputs.name.value.trim(),
             address: textOrNull(inputs.address),
-            dateStart: fromDateTimeInput(inputs.dateStart.value),
-            dateEnd: fromDateTimeInput(inputs.dateEnd.value),
+            dateStart: keepIfUntouched(inputs.dateStart.value, activity?.dateStart, toDateTimeInput, fromDateTimeInput),
+            dateEnd: keepIfUntouched(inputs.dateEnd.value, activity?.dateEnd, toDateTimeInput, fromDateTimeInput),
             category: inputs.category.value || null,
         };
     },
@@ -669,8 +676,9 @@ function mountTripDetail(card, { userId, lookups, view, getState, onChange, onAu
         </div>
     `;
 
-    // puts the open form back after a redraw, in the group it belongs to
-    const showOpenForm = trip => {
+    // puts the open form back after a redraw, in the group it belongs to. keptForm is the form from
+    // before the redraw, moved over as it is so what was typed into it survives
+    const showOpenForm = (trip, keptForm) => {
         if (!openForm) return;
 
         let config;
@@ -701,10 +709,17 @@ function mountTripDetail(card, { userId, lookups, view, getState, onChange, onAu
             return;
         }
 
+        slot.hidden = false;
+        if (keptForm) {
+            slot.append(keptForm);
+            return;
+        }
+
+        // the form may have moved to a newer slot by the time it is closed, so this redraws
+        // instead of emptying the slot it started in
         const closeThisForm = () => {
             openForm = null;
-            slot.innerHTML = "";
-            slot.hidden = true;
+            draw();
         };
 
         openRecordForm(slot, config, record, {
@@ -718,13 +733,19 @@ function mountTripDetail(card, { userId, lookups, view, getState, onChange, onAu
         });
     };
 
-    const draw = () => {
+    // freshForm is true when a form has just been opened, so the one from before is not carried over
+    const draw = ({ freshForm = false } = {}) => {
         const trip = selectedTrip();
         card.hidden = trip == null;
         if (!trip) {
             openForm = null;
             return;
         }
+
+        // taken out before the body is replaced, so the typing in it is not thrown away
+        const keepForm = openForm != null && !freshForm;
+        const keptForm = keepForm ? body.querySelector("[data-form-slot] > form") : null;
+        keptForm?.remove();
 
         title.textContent = trip.name;
 
@@ -746,14 +767,14 @@ function mountTripDetail(card, { userId, lookups, view, getState, onChange, onAu
         wireDeleteButtons(body, activities, deleteHooks);
         wireDeleteButtons(body, impactConfig(userId, lookups, null), deleteHooks);
 
-        showOpenForm(trip);
+        showOpenForm(trip, keptForm);
     };
 
     // one form at a time, so opening another one closes whatever was open
     const open = form => {
         openForm = form;
         sectionError.textContent = "";
-        draw();
+        draw({ freshForm: true });
     };
 
     card.querySelector("[data-add-activity]").addEventListener("click", () => {
@@ -788,16 +809,21 @@ function mountTripDetail(card, { userId, lookups, view, getState, onChange, onAu
 // ---------- loading ----------
 
 async function loadState(userId) {
-    const [itineraries, impacts, recommendations] = await Promise.all([
+    // every activity up front in one request, so the summaries can count them without opening each trip
+    const [itineraries, activities, impacts, recommendations] = await Promise.all([
         api.adminItineraries(userId),
+        api.adminUserActivities(userId),
         api.adminImpacts(userId),
         api.adminRecommendations(userId),
     ]);
 
-    // every itinerary's activities up front, so the summaries can count them without opening each trip
-    const activityLists = await Promise.all(itineraries.map(itinerary => api.adminActivities(itinerary.id)));
+    // they come back earliest first, and stay in that order within each trip
     const activitiesByItinerary = new Map();
-    itineraries.forEach((itinerary, index) => activitiesByItinerary.set(itinerary.id, activityLists[index]));
+    for (const activity of activities) {
+        const onTrip = activitiesByItinerary.get(activity.itineraryId) ?? [];
+        onTrip.push(activity);
+        activitiesByItinerary.set(activity.itineraryId, onTrip);
+    }
 
     return { itineraries, activitiesByItinerary, impacts, recommendations };
 }
@@ -811,6 +837,7 @@ export async function mountUserData(container, userId, onAuthLost, { onChange = 
             impacts on each one under it. Changes are recorded in the activity below, and new itineraries
             and activities are checked against recent news, like a traveller's. Changing a trip's country
             or dates, or an activity's name, address or start, clears the impacts on it and checks it again.
+            Each cleared impact, with its verdict and reason, is kept in the activity below.
         </p>
         ${createSectionCard("itineraries", "Itineraries", "Add itinerary")}
         ${createTripCard()}
@@ -845,16 +872,37 @@ export async function mountUserData(container, userId, onAuthLost, { onChange = 
         recommendationSection.draw();
     };
 
+    // only for the first load. once something is on screen a failed refresh just keeps it there
+    const showLoadFailed = error => {
+        const lists = container.querySelectorAll("#admin-itineraries [data-list], #admin-recommendations [data-list]");
+        for (const list of lists) {
+            list.innerHTML = `
+                <div class="msg err">
+                    Could not load this account's data: ${escapeHtml(error.message)}
+                    <button class="ghost small" type="button" data-retry>Try again</button>
+                </div>
+            `;
+        }
+    };
+
     const refresh = async () => {
         try {
             state = await loadState(userId);
         } catch (error) {
             if (error.status === 401) return onAuthLost();
-            showToast(error.message);
+            if (state == null) {
+                showLoadFailed(error);
+            } else {
+                showToast(error.message);
+            }
             return;
         }
         drawAll();
     };
+
+    container.addEventListener("click", event => {
+        if (event.target.closest("[data-retry]")) refresh();
+    });
 
     const afterChange = async () => {
         await refresh();

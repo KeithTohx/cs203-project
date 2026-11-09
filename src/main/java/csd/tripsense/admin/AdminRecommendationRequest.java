@@ -20,6 +20,6 @@ public record AdminRecommendationRequest(
         // an activity_option id, or null when there is nothing to swap to
         Long optionId,
 
-        // PENDING when left out
+        // PENDING when left out on create, unchanged when left out on update
         RecommendationStatus status) {
 }

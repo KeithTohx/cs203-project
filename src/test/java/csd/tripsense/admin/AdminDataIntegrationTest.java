@@ -29,7 +29,7 @@ import csd.tripsense.user.User;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 
-// the admin deletes against real sql. AdminDataServiceImplTest mocks the repositories, so it can
+// the admin deletes and edits against real sql. AdminDataServiceImplTest mocks the repositories, so it can
 // only check the calls happen in the right order, not that the cascades really remove the alerts
 // and impacts underneath, or that nothing is left pointing at a deleted row.
 //
@@ -231,23 +231,32 @@ class AdminDataIntegrationTest {
     }
 
     @Test
-    @DisplayName("Should clear a trip's old verdicts, alerts and recommendations when it moves country")
-    void updateItinerary_NewCountry_RemovesTheOldVerdicts() {
+    @DisplayName("Should clear a trip's whole trip verdict with its alert and advice when it moves country, and say what went")
+    void updateItinerary_NewCountry_ClearsWholeTripVerdicts() {
         Country france = new Country();
         france.setName("France");
         save(france);
         em.clear();
 
-        adminData.updateItinerary(trip.getId(), new AdminItineraryRequest("Japan Ski Trip", france.getId(), null, null));
+        AdminEdit<Itinerary> edit = adminData.updateItinerary(trip.getId(),
+                new AdminItineraryRequest("Japan Ski Trip", france.getId(), null, null));
 
-        assertThat(stillThere(Impact.class, activityImpact.getId())).isFalse();
         assertThat(stillThere(Impact.class, tripImpact.getId())).isFalse();
-        assertThat(stillThere(Alert.class, activityAlert.getId())).isFalse();
         assertThat(stillThere(Alert.class, tripAlert.getId())).isFalse();
-        assertThat(stillThere(Recommendation.class, activityRecommendation.getId())).isFalse();
         assertThat(stillThere(Recommendation.class, tripRecommendation.getId())).isFalse();
 
-        // the trip and its plans stay, only the verdicts about them go
+        // read from the real lazy collections before the row went, for the audit log
+        assertThat(edit.clearedVerdicts()).singleElement().satisfies(cleared -> {
+            assertThat(cleared.impactId()).isEqualTo(tripImpact.getId());
+            assertThat(cleared.alerted()).isTrue();
+            assertThat(cleared.recommendations()).isEqualTo(1);
+        });
+
+        // the activity verdict was judged on the activity alone, so it stays
+        assertThat(stillThere(Impact.class, activityImpact.getId())).isTrue();
+        assertThat(stillThere(Alert.class, activityAlert.getId())).isTrue();
+        assertThat(stillThere(Recommendation.class, activityRecommendation.getId())).isTrue();
+
         assertThat(stillThere(Itinerary.class, trip.getId())).isTrue();
         assertThat(stillThere(Activity.class, activity.getId())).isTrue();
         assertOtherUserUntouched();

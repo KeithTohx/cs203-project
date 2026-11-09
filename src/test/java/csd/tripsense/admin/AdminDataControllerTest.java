@@ -227,6 +227,27 @@ class AdminDataControllerTest {
     }
 
     @Test
+    @DisplayName("Should record each verdict an itinerary edit cleared, against the trip's owner")
+    void updateItinerary_ClearedVerdicts_AreRecorded() throws Exception {
+        Itinerary updated = trip(10L, account(4L, "bob"));
+        ClearedVerdict cleared = new ClearedVerdict(70L, 4L, 30L, "Rail strike", true,
+                "Trains are not running", true, true, 1);
+        when(adminData.updateItinerary(eq(10L), any())).thenReturn(new AdminEdit<>(updated, List.of(cleared)));
+
+        mockMvc.perform(put("/api/admin/itineraries/10")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name": "Japan Ski Trip", "countryId": 2}
+                                """))
+                .andExpect(status().isOk());
+
+        verify(auditService).record(eq(AuditService.ITINERARY_UPDATED), eq(3L), eq("admin@example.com"),
+                eq(4L), contains("itinerary 10"));
+        verify(auditService).record(eq(AuditService.IMPACT_CLEARED), eq(3L), eq("admin@example.com"),
+                eq(4L), contains("impact 70 on news 30 'Rail strike': impacted, rejected by the traveller, had an alert"));
+    }
+
+    @Test
     @DisplayName("Should 404 when the itinerary to change does not exist, and record nothing")
     void updateItinerary_Missing_Returns404() throws Exception {
         when(adminData.updateItinerary(eq(99L), any())).thenThrow(new ItineraryNotFoundException(99L));
@@ -242,6 +263,20 @@ class AdminDataControllerTest {
     }
 
     // ---------- activities ----------
+
+    @Test
+    @DisplayName("Should list every activity on an account's trips in one response")
+    void listUserActivities_ReturnsAllOfThem() throws Exception {
+        User bob = account(4L, "bob");
+        Activity first = activityOn(20L, trip(10L, bob));
+        Activity second = activityOn(21L, trip(11L, bob));
+        when(adminData.listUserActivities(4L)).thenReturn(List.of(first, second));
+
+        mockMvc.perform(get("/api/admin/users/4/activities"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].itineraryId").value(10))
+                .andExpect(jsonPath("$[1].itineraryId").value(11));
+    }
 
     @Test
     @DisplayName("Should add an activity, return 201 and record it against the trip's owner")
@@ -266,7 +301,7 @@ class AdminDataControllerTest {
     @DisplayName("Should replace an activity and record it as updated by an admin")
     void updateActivity_Returns200_AndRecordsIt() throws Exception {
         Activity updated = activityOn(20L, trip(10L, account(4L, "bob")));
-        when(adminData.updateActivity(eq(20L), any())).thenReturn(updated);
+        when(adminData.updateActivity(eq(20L), any())).thenReturn(new AdminEdit<>(updated, List.of()));
 
         mockMvc.perform(put("/api/admin/activities/20")
                         .contentType(MediaType.APPLICATION_JSON)

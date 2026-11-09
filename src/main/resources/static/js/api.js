@@ -110,6 +110,7 @@ const realApi = {
   adminUpdateItinerary:(id, itinerary) => request(`/api/admin/itineraries/${id}`, "PUT", itinerary),
   adminDeleteItinerary:id => request(`/api/admin/itineraries/${id}`, "DELETE"),        // its activities, impacts, alerts and recommendations go too
   adminActivities:itineraryId => request(`/api/admin/itineraries/${itineraryId}/activities`),
+  adminUserActivities:userId => request(`/api/admin/users/${userId}/activities`),      // every activity on all their trips, earliest first
   adminAddActivity:(itineraryId, activity) => request(`/api/admin/itineraries/${itineraryId}/activities`, "POST", activity),   // {name, address, dateStart, dateEnd, category}
   adminUpdateActivity:(id, activity) => request(`/api/admin/activities/${id}`, "PUT", activity),
   adminDeleteActivity:id => request(`/api/admin/activities/${id}`, "DELETE"),

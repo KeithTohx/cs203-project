@@ -44,6 +44,9 @@ public class AuditService {
     public static final String IMPACT_CREATED = "IMPACT_CREATED";
     public static final String IMPACT_UPDATED = "IMPACT_UPDATED";
     public static final String IMPACT_DELETED = "IMPACT_DELETED";
+    // an out of date verdict an edit removed, kept apart from IMPACT_DELETED so the log shows
+    // which verdicts went because the trip changed rather than because someone deleted them
+    public static final String IMPACT_CLEARED = "IMPACT_CLEARED";
     public static final String RECOMMENDATION_CREATED = "RECOMMENDATION_CREATED";
     public static final String RECOMMENDATION_UPDATED = "RECOMMENDATION_UPDATED";
     public static final String RECOMMENDATION_DELETED = "RECOMMENDATION_DELETED";

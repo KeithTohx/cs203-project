@@ -322,11 +322,34 @@ const removeImpact = (itineraryId, impact) => {
     }
 };
 
-// like the backend, verdicts made for an old country, date, place or name are dropped on an edit.
-// the real one then judges the trip again, the mock has no model so it just leaves them gone
-const clearImpacts = (itineraryId, belongs) => {
+// like the backend's ClearedVerdict.auditDetails, so the log reads the same in both
+const clearedDetails = (itineraryId, impact, cause) => {
+    const parts = [impact.impacted ? "impacted" : "not impacted"];
+    if (impact.rejected) parts.push("rejected by the traveller");
+    if (ALERTS.some(alert => alert.impactId === impact.id)) parts.push("had an alert");
+
+    const recommendationCount = (RECOMMENDATIONS[itineraryId] ?? [])
+        .filter(recommendation => recommendation.impactId === impact.id).length;
+    if (recommendationCount) parts.push(`${recommendationCount} ${recommendationCount === 1 ? "recommendation" : "recommendations"}`);
+
+    const title = NEWS[impact.newsId]?.title;
+    const onNews = title ? `news ${impact.newsId} '${title}'` : `news ${impact.newsId}`;
+    const reason = impact.reason ? `. reason: ${impact.reason}` : "";
+    return `impact ${impact.id} on ${onNews}: ${parts.join(", ")}. cleared because ${cause} (by admin)${reason}`;
+};
+
+// like the backend, verdicts made for an old country, date, place or name are dropped on an edit,
+// and each one is written to the log first. the real one then judges the trip again, the mock has
+// no model so it just leaves them gone
+const clearImpacts = (itineraryId, belongs, cause) => {
     const stale = (IMPACTS[itineraryId] ?? []).filter(belongs);
-    for (const impact of stale) removeImpact(itineraryId, impact);
+    const ownerId = ownerOfItinerary(itineraryId);
+
+    for (const impact of stale) {
+        // not recordByAdmin, the details already say "(by admin)" before the reason
+        record("IMPACT_CLEARED", me.id, me.email, ownerId, clearedDetails(itineraryId, impact, cause));
+        removeImpact(itineraryId, impact);
+    }
 };
 
 // like the backend's checks on dates sent to the admin console
@@ -586,7 +609,11 @@ export const mockApi = {
         const judgedFieldsChanged = country.id !== itinerary.countryId
             || dateStart !== itinerary.dateStart
             || dateEnd !== itinerary.dateEnd;
-        if (judgedFieldsChanged) clearImpacts(itinerary.id, () => true);
+        // activity verdicts were judged on the activity alone, so only the whole trip ones go
+        if (judgedFieldsChanged) {
+            const cause = `itinerary ${itinerary.id} '${name}' changed country or dates`;
+            clearImpacts(itinerary.id, impact => impact.activityId == null, cause);
+        }
 
         Object.assign(itinerary, { name, dateStart, dateEnd, countryId: country.id, countryName: country.name });
         recordByAdmin("ITINERARY_UPDATED", itinerary.userId, `itinerary ${itinerary.id} '${itinerary.name}'`);
@@ -610,6 +637,14 @@ export const mockApi = {
 
         const onTrip = ACTIVITIES.filter(activity => activity.itineraryId === Number(itineraryId));
         return respondWith([...onTrip].sort((first, second) => String(first.dateStart).localeCompare(String(second.dateStart))));
+    },
+    adminUserActivities: userId => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+        if (!findUser(userId)) return userNotFound(userId);
+
+        const theirs = ACTIVITIES.filter(activity => ownerOfItinerary(activity.itineraryId) === Number(userId));
+        return respondWith([...theirs].sort((first, second) => String(first.dateStart).localeCompare(String(second.dateStart))));
     },
     adminAddActivity: (itineraryId, { name, address, dateStart, dateEnd, category }) => {
         const notAdmin = requireAdmin();
@@ -636,7 +671,10 @@ export const mockApi = {
         const judgedFieldsChanged = name !== activity.name
             || (address || null) !== (activity.address || null)
             || dateStart !== activity.dateStart;
-        if (judgedFieldsChanged) clearImpacts(activity.itineraryId, impact => impact.activityId === activity.id);
+        if (judgedFieldsChanged) {
+            const cause = `activity ${activity.id} '${name}' changed name, address or start`;
+            clearImpacts(activity.itineraryId, impact => impact.activityId === activity.id, cause);
+        }
 
         Object.assign(activity, { name, address, dateStart, dateEnd, category });
         recordByAdmin("ACTIVITY_UPDATED", ownerOfItinerary(activity.itineraryId), `activity ${activity.id} '${activity.name}'`);
@@ -716,7 +754,7 @@ export const mockApi = {
         if (!entry) return fail(404, `Could not find impact ${id}`);
 
         const raisedAnAlert = ALERTS.some(alert => alert.impactId === entry.impact.id);
-        if (raisedAnAlert && !reason?.trim()) return fail(400, "this impact has raised an alert, so it needs a reason");
+        if (raisedAnAlert && !reason?.trim()) return fail(400, "this impact has or is about to raise an alert, so it needs a reason");
 
         Object.assign(entry.impact, { impacted, reason, rejected: Boolean(rejected) });
         recordByAdmin("IMPACT_UPDATED", ownerOfItinerary(entry.itineraryId), `impact ${entry.impact.id} (${impacted ? "impacted" : "not impacted"})`);
@@ -774,8 +812,9 @@ export const mockApi = {
         if (optionId != null && !option) return fail(400, `no activity option with id ${optionId}`);
 
         const recommendation = entry.recommendation;
-        const newStatus = status ?? "PENDING";
-        // like the backend, the decision time only moves when the status really changes
+        // like the backend, a missing status keeps the current one, and the decision time only
+        // moves when the status really changes
+        const newStatus = status ?? recommendation.status ?? "PENDING";
         if (newStatus !== (recommendation.status ?? "PENDING")) {
             recommendation.decidedAt = newStatus === "PENDING" ? null : new Date().toISOString();
         }

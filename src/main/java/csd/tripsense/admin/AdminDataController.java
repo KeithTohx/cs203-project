@@ -86,9 +86,11 @@ public class AdminDataController {
                                              @Valid @RequestBody AdminItineraryRequest request,
                                              @AuthenticationPrincipal CurrentUser admin) {
         requireLoggedIn(admin);
-        Itinerary updated = adminData.updateItinerary(id, request);
+        AdminEdit<Itinerary> edit = adminData.updateItinerary(id, request);
+        Itinerary updated = edit.updated();
 
         recordByAdmin(AuditService.ITINERARY_UPDATED, admin, ownerOf(updated), describe(updated));
+        recordCleared(edit.clearedVerdicts(), admin, describe(updated) + " changed country or dates");
         return ItineraryResponse.from(updated);
     }
 
@@ -111,6 +113,12 @@ public class AdminDataController {
         return adminData.listActivities(itineraryId).stream().map(ActivityResponse::from).toList();
     }
 
+    @Operation(summary = "List every activity on an account's itineraries", description = "Earliest first.")
+    @GetMapping("/users/{userId}/activities")
+    public List<ActivityResponse> listUserActivities(@PathVariable("userId") Long userId) {
+        return adminData.listUserActivities(userId).stream().map(ActivityResponse::from).toList();
+    }
+
     @Operation(summary = "Add an activity to an itinerary")
     @PostMapping("/itineraries/{itineraryId}/activities")
     public ResponseEntity<ActivityResponse> createActivity(@PathVariable("itineraryId") Long itineraryId,
@@ -129,9 +137,11 @@ public class AdminDataController {
                                            @Valid @RequestBody AdminActivityRequest request,
                                            @AuthenticationPrincipal CurrentUser admin) {
         requireLoggedIn(admin);
-        Activity updated = adminData.updateActivity(id, request);
+        AdminEdit<Activity> edit = adminData.updateActivity(id, request);
+        Activity updated = edit.updated();
 
         recordByAdmin(AuditService.ACTIVITY_UPDATED, admin, ownerOf(updated.getItinerary()), describe(updated));
+        recordCleared(edit.clearedVerdicts(), admin, describe(updated) + " changed name, address or start");
         return ActivityResponse.from(updated);
     }
 
@@ -244,6 +254,15 @@ public class AdminDataController {
     // recorded against the owner of the data, so it shows up on their admin page
     private void recordByAdmin(String action, CurrentUser admin, Long ownerId, String details) {
         auditService.record(action, admin.getId(), admin.getEmail(), ownerId, details + " (by admin)");
+    }
+
+    // one entry per cleared verdict, against the traveller it was about, so their admin page still
+    // shows what they had been told after the row itself is gone
+    private void recordCleared(List<ClearedVerdict> cleared, CurrentUser admin, String cause) {
+        for (ClearedVerdict verdict : cleared) {
+            auditService.record(AuditService.IMPACT_CLEARED, admin.getId(), admin.getEmail(),
+                    verdict.ownerId(), verdict.auditDetails(cause));
+        }
     }
 
     private static Long ownerOf(Itinerary itinerary) {
