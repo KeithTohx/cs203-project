@@ -51,6 +51,10 @@ public class GkgParser {
     private static final Pattern NOT_LETTER_OR_DIGIT = Pattern.compile("[^\\p{L}\\p{N}]+");
     private static final String COUNTRY_NAMES_FILE = "/gdelt-country-names.txt";
     private static final int MIN_PLACE_NAME_LENGTH = 3;     // ignores two-letter names that match by accident
+    // " | ", " – ", " — ", " · ", " :: " or " - " with spaces around it: where an outlet name usually starts
+    private static final Pattern OUTLET_SEPARATOR =
+            Pattern.compile("\\s+(?:\\||\\u2013|\\u2014|\\u00b7|::|-)\\s+");
+    private static final int MAX_OUTLET_WORDS = 6;
 
     private final Set<String> countryCodes;
     private final int minMentions;
@@ -112,8 +116,8 @@ public class GkgParser {
     private Optional<String> tagCountry(String title, String locations) {
         List<String[]> blocks = locationBlocks(locations);
 
-        // 1. the headline names a place
-        Set<String> inHeadline = countriesNamedInHeadline(title, blocks);
+        // 1. the headline names a place (the outlet name at the end of the title does not count)
+        Set<String> inHeadline = countriesNamedInHeadline(withoutOutletName(title, blocks), blocks);
         if (inHeadline.size() == 1) {
             String code = inHeadline.iterator().next();
             return countryCodes.contains(code) ? Optional.of(code) : Optional.empty();
@@ -132,6 +136,37 @@ public class GkgParser {
             if (p.length > 2 && !p[2].isBlank()) blocks.add(p);
         }
         return blocks;
+    }
+
+    // Many titles end with the outlet's name: "Floods hit Bangkok | Tokyo Daily News", "... – NBC Los Angeles".
+    // The outlet is not part of the story and its name can contain a place ("Bridport and Lyme Regis
+    // News"), so it is cut off before looking for places. Only the last separator is used, and only when
+    //   - what follows is short (at most MAX_OUTLET_WORDS words) and shorter than the headline before it,
+    //   - and it is not itself the name of a place or country in the article ("Storm damage - Bangkok").
+    // The stored title is not changed, this only affects where places are looked for.
+    private String withoutOutletName(String title, List<String[]> blocks) {
+        Matcher m = OUTLET_SEPARATOR.matcher(title);
+        int start = -1;
+        int end = -1;
+        while (m.find()) {
+            start = m.start();
+            end = m.end();
+        }
+        if (start < 0) return title;
+
+        String headline = title.substring(0, start).strip();
+        String tail = title.substring(end).strip();
+        if (headline.isEmpty() || tail.isEmpty()) return title;
+        if (tail.split("\\s+").length > MAX_OUTLET_WORDS || tail.length() >= headline.length()) return title;
+
+        String tailKey = tail.toLowerCase(Locale.ROOT);
+        if (countryNames.contains(tailKey)) return title;                     // "Floods - Thailand"
+        for (String[] p : blocks) {
+            for (String place : placeNames(p[1].strip())) {
+                if (place.toLowerCase(Locale.ROOT).equals(tailKey)) return title;   // "Storm damage - Bangkok"
+            }
+        }
+        return headline;
     }
 
     // Country codes of every location whose name appears in the headline.
