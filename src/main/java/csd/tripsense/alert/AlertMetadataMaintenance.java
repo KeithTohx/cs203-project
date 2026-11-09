@@ -26,7 +26,8 @@ public class AlertMetadataMaintenance {
         sql.update("update alert_email_group set delivered=1, sent_at=coalesce(sent_at,"
                 + "(select max(a.email_sent_at) from alert a join impact i on i.id=a.impact_id "
                 + "where i.itinerary_id=alert_email_group.itinerary_id and i.news_id=alert_email_group.news_id)) "
-                + "where exists (select 1 from alert a join impact i on i.id=a.impact_id "
+                + "where (delivered is null or delivered=0) and exists "
+                + "(select 1 from alert a join impact i on i.id=a.impact_id "
                 + "where i.itinerary_id=alert_email_group.itinerary_id and i.news_id=alert_email_group.news_id "
                 + "and (a.email_status='SENT' or a.email_suppressed=1))");
         for (String table:new String[]{"alert_email_group","evaluation_batch","evaluation_target"}) {

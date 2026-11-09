@@ -39,7 +39,10 @@
  * <p>SMTP retries use a two-minute claim lease, at most three attempts, and a stable
  * Message-ID. SENT means accepted by the configured SMTP transport, not confirmed inbox
  * delivery. SMTP cannot guarantee exactly-once delivery if acceptance succeeds but the
- * acknowledgement is lost. The saved in-app alert remains available if email fails.
+ * acknowledgement is lost. After SMTP acceptance, a database confirmation failure pauses new
+ * sends and retries only confirmation on this worker; it does not mark the email failed or resend
+ * it. That pending confirmation is held in memory, so a process crash before it is persisted can
+ * still cause a duplicate after lease recovery. The saved in-app alert remains available if email fails.
  *
  * <p>Email groups wait at most 120 seconds from the first saved alert for missing assessments,
  * then send the available impacts with a partial-assessment notice. Incomplete groups are

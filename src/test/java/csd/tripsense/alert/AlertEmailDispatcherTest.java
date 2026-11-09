@@ -3,6 +3,9 @@ package csd.tripsense.alert;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -12,6 +15,11 @@ import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.mockito.ArgumentCaptor;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,7 +33,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mail.MailSendException;
 
 // unit tests for AlertEmailDispatcher, which claims an alert email, sends it and records the result
-// deliver is called directly, so none of these tests go through the background worker thread
+// SMTP is mocked. The confirmation-recovery test also exercises the background worker queue.
 @ExtendWith(MockitoExtension.class)
 @DisplayName("AlertEmailDispatcher Unit Tests")
 class AlertEmailDispatcherTest {
@@ -102,6 +110,43 @@ class AlertEmailDispatcherTest {
 
         // Assert
         verifyNoInteractions(emailStore);
+    }
+
+    @Test
+    void acceptedEmailRetriesOnlyDatabaseConfirmationAndPausesFurtherSends() throws Exception {
+        when(emailSender.enabled()).thenReturn(true);
+        when(emailStore.claim(eq(ALERT_ID), any(Instant.class))).thenReturn(Optional.of(delivery));
+        var attempts = new AtomicInteger();
+        var resumed = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            if (attempts.incrementAndGet() == 1) throw new DataAccessResourceFailureException("database locked");
+            return null;
+        }).when(emailStore).sent(eq(delivery), any(Instant.class));
+        when(emailStore.claim(eq(2L), any(Instant.class))).thenAnswer(invocation -> {
+            resumed.countDown();
+            return Optional.empty();
+        });
+
+        dispatcher.deliver(ALERT_ID);
+        dispatcher.deliver(ALERT_ID);
+        dispatcher.deliver(2L);
+        verify(emailStore, times(1)).claim(eq(ALERT_ID), any(Instant.class));
+        verify(emailStore, never()).claim(eq(2L), any(Instant.class));
+        verify(emailStore, never()).failed(any(), any());
+
+        // No due-row lookup is needed: confirmation has its own retry path.
+        dispatcher.retryPending();
+        var nextAlert = mock(AlertResponse.class);
+        when(nextAlert.id()).thenReturn(2L);
+        dispatcher.onCreated(new AlertCreatedEvent(10L, nextAlert));
+        assertThat(resumed.await(2, TimeUnit.SECONDS)).isTrue();
+
+        verify(emailSender, times(1)).send(delivery);
+        verify(emailStore, never()).failed(any(), any());
+        verifyNoInteractions(alertRepository);
+        var acceptedTimes = ArgumentCaptor.forClass(Instant.class);
+        verify(emailStore, times(2)).sent(eq(delivery), acceptedTimes.capture());
+        assertThat(acceptedTimes.getAllValues().get(1)).isEqualTo(acceptedTimes.getAllValues().get(0));
     }
 
     // ===== RETRY PENDING TESTS =====

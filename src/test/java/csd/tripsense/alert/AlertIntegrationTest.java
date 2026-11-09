@@ -38,6 +38,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContext;
@@ -1239,6 +1240,35 @@ class AlertIntegrationTest {
         progress.resolved(skiTrip.getId(),earthquake.getId(),activity.getId());
         var alert=alertService.list(traveller.getId(),false,null,20).content().getFirst();
         assertThat(emailStore.claim(alert.id(),java.time.Instant.now().plusSeconds(1)).orElseThrow().partialAssessment()).isFalse();
+    }
+
+    @Autowired private JdbcTemplate sql;
+
+    @Test void deliveredGroupBackfillDoesNotRewriteAlreadyDeliveredRows() {
+        evaluate();
+        var alert=alertService.list(traveller.getId(),false,null,20).content().getFirst();
+        var now=Instant.now().truncatedTo(ChronoUnit.MILLIS).plusSeconds(1);
+        emailStore.sent(emailStore.claim(alert.id(),now).orElseThrow(),now);
+        String groupKey=AlertEmailGroup.key(skiTrip.getId(),earthquake.getId());
+        // Count real SQLite writes to this group, rather than asserting the SQL's wording.
+        sql.execute("create temporary table alert_backfill_writes (group_id text)");
+        try {
+            sql.execute("create temporary trigger count_alert_backfill after update on alert_email_group "
+                    + "when new.id='"+groupKey+"' begin insert into alert_backfill_writes values(new.id); end");
+            metadata.clean();
+            assertThat(sql.queryForObject("select count(*) from alert_backfill_writes",Integer.class)).isZero();
+
+            sql.update("update alert_email_group set delivered=null,sent_at=null where id=?",groupKey);
+            sql.update("delete from alert_backfill_writes");
+            metadata.clean();
+            assertThat(sql.queryForObject("select count(*) from alert_backfill_writes",Integer.class)).isEqualTo(1);
+            assertThat(emailGroups.findById(groupKey)).hasValueSatisfying(g -> assertThat(g.isDelivered()).isTrue());
+            metadata.clean();
+            assertThat(sql.queryForObject("select count(*) from alert_backfill_writes",Integer.class)).isEqualTo(1);
+        } finally {
+            sql.execute("drop trigger if exists count_alert_backfill");
+            sql.execute("drop table if exists alert_backfill_writes");
+        }
     }
 
     @Test void deletingATripRemovesItsAlertOwnedMetadata() {

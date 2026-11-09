@@ -17,6 +17,9 @@ public class AlertEmailDispatcher {
     private final AlertRepository alerts;
     private final AlertEmailStore store;
     private final AlertEmailSender sender;
+    // Only the single email worker changes this; the scheduler reads it to retry confirmation.
+    private record AcceptedEmail(AlertEmailStore.Delivery delivery, Instant acceptedAt) {}
+    private volatile AcceptedEmail awaitingConfirmation;
     private final ExecutorService worker = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(100), task -> {
                 Thread thread = new Thread(task, "alert-email"); thread.setDaemon(true); return thread;
@@ -32,6 +35,11 @@ public class AlertEmailDispatcher {
     @Scheduled(scheduler = "alertTaskScheduler", fixedDelayString = "${alerts.email.retry-interval-ms:15000}", initialDelay = 15000)
     public void retryPending() {
         if (!sender.enabled()) return;
+        if (awaitingConfirmation != null) {
+            try { worker.execute(this::confirmAcceptedEmail); }
+            catch (RejectedExecutionException exception) { log.warn("Email confirmation queue busy; will retry"); }
+            return;
+        }
         for (Long id : alerts.findEmailReady(AlertEmailStore.RETRYABLE, Instant.now(), PageRequest.of(0, 50))) enqueue(id);
     }
 
@@ -42,22 +50,38 @@ public class AlertEmailDispatcher {
     }
 
     void deliver(Long id) {
-        if (!sender.enabled()) return;
+        if (!sender.enabled() || awaitingConfirmation != null) return;
         try {
             var claimed = store.claim(id, Instant.now());
             if (claimed.isEmpty()) return;
             var delivery = claimed.get();
             try {
                 sender.send(delivery);
-                store.sent(delivery, Instant.now());
             } catch (Exception exception) {
                 if (exception instanceof InterruptedException) Thread.currentThread().interrupt();
                 store.failed(delivery, Instant.now());
                 // Do not log SMTP credentials, recipient details, provider responses or message content.
                 log.warn("Email delivery attempt {} failed for alert {}", delivery.attempt(), id);
+                return;
             }
+            // SMTP has accepted the message. A database failure is not a send failure.
+            awaitingConfirmation = new AcceptedEmail(delivery, Instant.now());
+            confirmAcceptedEmail();
         } catch (RuntimeException exception) {
             log.warn("Email delivery deferred for alert {}", id);
+        }
+    }
+
+    private void confirmAcceptedEmail() {
+        var accepted = awaitingConfirmation;
+        if (accepted == null) return;
+        try {
+            store.sent(accepted.delivery(), accepted.acceptedAt());
+            awaitingConfirmation = null;
+        } catch (RuntimeException exception) {
+            // Pause new sends until the accepted email is recorded, even if its lease expires.
+            // Retrying this database operation must never repeat the SMTP call.
+            log.warn("Email accepted for alert {}; database confirmation deferred", accepted.delivery().alertId());
         }
     }
 
