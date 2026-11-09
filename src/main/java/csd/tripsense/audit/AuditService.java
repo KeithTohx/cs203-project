@@ -34,6 +34,7 @@ public class AuditService {
     public static final String ITINERARY_CREATED = "ITINERARY_CREATED";
     public static final String ITINERARY_UPDATED = "ITINERARY_UPDATED";
     public static final String ITINERARY_DELETED = "ITINERARY_DELETED";
+    public static final String SQL_QUERY = "SQL_QUERY";
 
     private static final Logger log = LoggerFactory.getLogger(AuditService.class);
 

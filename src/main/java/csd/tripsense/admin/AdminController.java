@@ -144,7 +144,7 @@ public class AdminController {
 
     @Operation(summary = "Review user actions",
             description = "Audit trail, newest first. Filter with 'email' (part of the actor's email) and/or 'action' "
-                    + "(LOGIN, LOGIN_FAILED, LOGOUT, REGISTER, PROFILE_UPDATED, PASSWORD_CHANGED, ACCOUNT_DISABLED, ACCOUNT_ENABLED, ACCOUNT_DELETED, ROLE_CHANGED, ITINERARY_CREATED, ITINERARY_UPDATED, ITINERARY_DELETED).")
+                    + "(LOGIN, LOGIN_FAILED, LOGOUT, REGISTER, PROFILE_UPDATED, PASSWORD_CHANGED, ACCOUNT_DISABLED, ACCOUNT_ENABLED, ACCOUNT_DELETED, ROLE_CHANGED, ITINERARY_CREATED, ITINERARY_UPDATED, ITINERARY_DELETED, SQL_QUERY).")
     @ApiResponse(responseCode = "200", description = "One page of audit entries")
     @ApiResponse(responseCode = "403", description = "Not an admin")
     @GetMapping("/audit")
