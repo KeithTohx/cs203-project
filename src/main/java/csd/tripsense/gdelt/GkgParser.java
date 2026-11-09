@@ -34,8 +34,9 @@ import org.springframework.web.util.HtmlUtils;
  * <ol>
  *   <li>the headline names a place (from GDELT's location column) in exactly one country, and that
  *       country is in gdelt.country-codes: use it;</li>
- *   <li>the headline names no place, and exactly one configured country is mentioned at least
- *       min-location-mentions times in the article: use it;</li>
+ *   <li>the headline names no place, and one configured country is mentioned at least
+ *       min-location-mentions times in the article and at least twice as often as any other
+ *       country (configured or not): use it;</li>
  *   <li>anything else (several countries in the headline, a country we do not support, no clear
  *       country) is dropped.</li>
  * </ol>
@@ -55,12 +56,19 @@ public class GkgParser {
     private static final Pattern OUTLET_SEPARATOR =
             Pattern.compile("\\s+(?:\\||\\u2013|\\u2014|\\u00b7|::|-)\\s+");
     private static final int MAX_OUTLET_WORDS = 6;
+    // small words that stay lower case inside a Title Case outlet name ("The Times of India")
+    private static final Set<String> TITLE_CASE_SMALL_WORDS = Set.of(
+            "a", "an", "and", "at", "de", "del", "der", "des", "du", "for", "in", "la", "le",
+            "of", "on", "the", "to", "van", "von", "y", "e", "&");
+    // step 2 only tags a country that is mentioned at least this many times more than any other country
+    private static final int MIN_MARGIN = 2;
 
     private final Set<String> countryCodes;
     private final int minMentions;
     private final Pattern keywords;
     private final List<String> themePrefixes;
     private final Set<String> countryNames;                  // lower case, from gdelt-country-names.txt
+    private final List<String> countryNeedles;               // the same names, normalised for matching
 
     public GkgParser(@Value("${gdelt.country-codes}") String countryCodes,
                      @Value("${gdelt.min-location-mentions}") int minMentions,
@@ -75,6 +83,10 @@ public class GkgParser {
                 ? List.of()
                 : Arrays.asList(themePrefixes.split("\\s*,\\s*"));
         this.countryNames = loadCountryNames();
+        this.countryNeedles = countryNames.stream()
+                .filter(n -> n.length() >= MIN_PLACE_NAME_LENGTH)
+                .map(GkgParser::normalise)
+                .toList();
     }
 
     /** Returns an article if this GKG row is a titled, English web article about one supported country. */
@@ -142,6 +154,8 @@ public class GkgParser {
     // The outlet is not part of the story and its name can contain a place ("Bridport and Lyme Regis
     // News"), so it is cut off before looking for places. Only the last separator is used, and only when
     //   - what follows is short (at most MAX_OUTLET_WORDS words) and shorter than the headline before it,
+    //   - it is written in Title Case like a name ("Tokyo Daily News"), not a descriptor
+    //     ("what we know", "live updates"), which is part of the headline,
     //   - and it is not itself the name of a place or country in the article ("Storm damage - Bangkok").
     // The stored title is not changed, this only affects where places are looked for.
     private String withoutOutletName(String title, List<String[]> blocks) {
@@ -158,6 +172,7 @@ public class GkgParser {
         String tail = title.substring(end).strip();
         if (headline.isEmpty() || tail.isEmpty()) return title;
         if (tail.split("\\s+").length > MAX_OUTLET_WORDS || tail.length() >= headline.length()) return title;
+        if (!looksLikeName(tail)) return title;
 
         String tailKey = tail.toLowerCase(Locale.ROOT);
         if (countryNames.contains(tailKey)) return title;                     // "Floods - Thailand"
@@ -169,10 +184,31 @@ public class GkgParser {
         return headline;
     }
 
+    // True if every word that starts with a letter is capitalised, apart from small words such as "of".
+    private static boolean looksLikeName(String text) {
+        for (String word : text.split("\\s+")) {
+            int i = 0;
+            while (i < word.length() && !Character.isLetter(word.charAt(i))) i++;
+            if (i == word.length()) continue;                              // "2024", "&": nothing to check
+            if (Character.isUpperCase(word.charAt(i))) continue;
+            if (!TITLE_CASE_SMALL_WORDS.contains(word.toLowerCase(Locale.ROOT))) return false;
+        }
+        return true;
+    }
+
     // Country codes of every location whose name appears in the headline.
+    // Longer names are matched first and removed from the headline once matched, so "South Sudan" does not
+    // also count as "Sudan", nor "New York" as "York", "Northern Ireland" as "Ireland", "New Mexico" as
+    // "Mexico" or "North Korea" as "Korea". Country names from gdelt-country-names.txt take part in the
+    // removal even when the article has no location row for them.
     private Set<String> countriesNamedInHeadline(String title, List<String[]> blocks) {
         String headline = normalise(title);
-        Set<String> codes = new HashSet<>();
+
+        // needle -> country codes of the locations with that name (empty for a list-only name)
+        Map<String, Set<String>> found = new HashMap<>();
+        for (String needle : countryNeedles) {
+            if (headline.contains(needle)) found.computeIfAbsent(needle, k -> new HashSet<>());
+        }
         for (String[] p : blocks) {
             String name = p[1].strip();
             if (name.isEmpty()) continue;
@@ -183,9 +219,19 @@ public class GkgParser {
                 String needle = normalise(candidate);
                 if (candidate.length() >= MIN_PLACE_NAME_LENGTH && needle.length() > 2
                         && headline.contains(needle)) {
-                    codes.add(p[2]);
+                    found.computeIfAbsent(needle, k -> new HashSet<>()).add(p[2]);
                 }
             }
+        }
+
+        List<String> longestFirst = new ArrayList<>(found.keySet());
+        longestFirst.sort((x, y) -> y.length() - x.length());
+
+        Set<String> codes = new HashSet<>();
+        for (String needle : longestFirst) {
+            if (!headline.contains(needle)) continue;          // already used up by a longer name
+            codes.addAll(found.get(needle));
+            headline = headline.replace(needle, " ");          // the needle starts and ends with a space
         }
         return codes;
     }
@@ -202,17 +248,29 @@ public class GkgParser {
         return names;
     }
 
-    // Exactly one configured country with at least min-location-mentions mentions, else empty.
+    // The country the article keeps mentioning, or empty if there is not one clear winner. Every country
+    // is counted, supported or not, so an article that mentions the US ten times and Japan three times
+    // is not tagged Japan. The winner must be configured, have at least min-location-mentions
+    // mentions and at least MIN_MARGIN times as many as the runner-up.
     private Optional<String> onlyCountryMentionedOften(List<String[]> blocks) {
         Map<String, Integer> counts = new HashMap<>();
-        for (String[] p : blocks) {
-            if (countryCodes.contains(p[2])) counts.merge(p[2], 1, Integer::sum);
+        for (String[] p : blocks) counts.merge(p[2], 1, Integer::sum);
+
+        String top = null;
+        int topCount = 0;
+        int second = 0;
+        for (Map.Entry<String, Integer> e : counts.entrySet()) {
+            if (e.getValue() > topCount) {
+                second = topCount;
+                topCount = e.getValue();
+                top = e.getKey();
+            } else if (e.getValue() > second) {
+                second = e.getValue();
+            }
         }
-        List<String> often = counts.entrySet().stream()
-                .filter(e -> e.getValue() >= minMentions)
-                .map(Map.Entry::getKey)
-                .toList();
-        return often.size() == 1 ? Optional.of(often.get(0)) : Optional.empty();
+        if (top == null || !countryCodes.contains(top)) return Optional.empty();
+        if (topCount < minMentions || topCount < MIN_MARGIN * second) return Optional.empty();
+        return Optional.of(top);
     }
 
     // lower case, punctuation turned into spaces, padded with spaces, so "Poland's" contains " poland "

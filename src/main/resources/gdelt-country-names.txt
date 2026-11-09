@@ -6,8 +6,10 @@ Afghanistan
 Albania
 Algeria
 America
+American Samoa
 Andorra
 Angola
+Anguilla
 Antigua and Barbuda
 Argentina
 Armenia
@@ -62,6 +64,7 @@ Denmark
 Djibouti
 Dominica
 Dominican Republic
+East Timor
 Ecuador
 Egypt
 El Salvador
@@ -80,6 +83,7 @@ French Polynesia
 Gabon
 Gambia
 Gaza
+Gaza Strip
 Georgia
 Germany
 Ghana
@@ -206,6 +210,7 @@ Spain
 Sri Lanka
 Sudan
 Suriname
+Swaziland
 Sweden
 Switzerland
 Syria
@@ -237,6 +242,7 @@ Vatican City
 Venezuela
 Vietnam
 Wales
+Wallis and Futuna
 West Bank
 Yemen
 Zambia
