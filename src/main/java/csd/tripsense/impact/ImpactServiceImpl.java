@@ -235,16 +235,22 @@ public class ImpactServiceImpl implements ImpactService {
 
             Activity: %s
             Location: %s
+            Country: %s
             Planned for: %s
 
             Decide whether this activity is affected. The headline is the evidence for where the
             event happened. Only say it is affected if the news is about the same place and around
             the same time. Being in a different city or country means it is not affected. If the
-            headline names no city or area, only say it is affected if the event would affect the
-            whole country. Give one short sentence of reasoning that refers to the activity.
+            headline names no city or area, assume the story is about the activity's country and
+            say it is affected only if the event could plausibly reach this location, such as a
+            nationwide measure, or an event in the capital when the activity is in the capital.
+            Give one short sentence of reasoning that refers to the activity.
             """
             .formatted(news.getTitle(), details, news.getPublishedAt(),
-                    activity.getName(), activity.getAddress(), activity.getDateStart());
+                    activity.getName(), activity.getAddress(),
+                    activity.getItinerary() == null || activity.getItinerary().getCountry() == null
+                            ? "unknown" : activity.getItinerary().getCountry().getName(),
+                    activity.getDateStart());
     }
 
     // updates the row we found, or the blank one we made, so a pair is never stored twice.

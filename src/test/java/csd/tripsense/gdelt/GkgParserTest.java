@@ -305,6 +305,16 @@ class GkgParserTest {
         assertEquals(Set.of("TH"), country.orElseThrow().countryCodes());
     }
 
+    // TESTS: a tail made only of place names ("Bangkok, Thailand") is part of the headline
+    @Test
+    @DisplayName("Should not strip a tail that is a list of places")
+    void parse_ShouldNotStripTail_WhenTailIsAListOfPlaces() {
+        Optional<GkgArticle> result = parse("Storm damage across the region - Bangkok, Thailand",
+                block("4", "Bangkok, Krung Thep Mahanakhon, Thailand", "TH", 10));
+
+        assertEquals(Set.of("TH"), result.orElseThrow().countryCodes());
+    }
+
     // ===== NAMES THAT CONTAIN OTHER PLACE NAMES =====
 
     // TESTS: "South Sudan" is not also "Sudan" (the article lists both, as GDELT often does)
@@ -431,6 +441,84 @@ class GkgParserTest {
                 repeat("4", "Bangkok, Thailand", "TH", 3));
 
         assertTrue(parse("Flights cancelled after storm", locations).isEmpty());
+    }
+
+    // ===== ABBREVIATIONS AND DIFFERENT SPELLINGS =====
+
+    // TESTS: "US" in the headline is a country, so US + Japan is two countries
+    @Test
+    @DisplayName("Should drop a row when the headline names the US and Japan")
+    void parse_ShouldDropRow_WhenHeadlineSaysUsAndJapan() {
+        String locations = block("1", "Japan", "JA", 30);
+
+        assertTrue(parse("US imposes new tariffs on Japan", locations).isEmpty());
+        assertTrue(parse("U.S. imposes new tariffs on Japan", locations).isEmpty());
+        assertTrue(parse("UK and Japan sign trade deal", locations).isEmpty());
+    }
+
+    // TESTS: "us" the pronoun is not the US, and an all-capitals headline is not searched for abbreviations
+    @Test
+    @DisplayName("Should not read the word us as the US")
+    void parse_ShouldNotReadPronounAsUs() {
+        String locations = block("4", "Tokyo, Japan", "JA", 10);
+
+        assertEquals(Set.of("JA"), parse("Tell us what Tokyo airport did", locations).orElseThrow().countryCodes());
+        assertEquals(Set.of("JA"), parse("TELL US WHAT TOKYO AIRPORT DID", locations).orElseThrow().countryCodes());
+    }
+
+    // TESTS: a headline that says "US" and nothing else names an unsupported country
+    @Test
+    @DisplayName("Should drop a row about the US when only Japan is configured, even if Japan is mentioned often")
+    void parse_ShouldDropRow_WhenHeadlineSaysUsAndJapanIsMentionedOften() {
+        assertTrue(parse("US airlines cancel flights", JAPAN_3X).isEmpty());
+    }
+
+    // TESTS: the headline says "Myanmar", the rows say "Burma": the code comes from the names file
+    @Test
+    @DisplayName("Should tag the country when the headline spells it differently from the location rows")
+    void parse_ShouldTagCountry_WhenHeadlineSpellsItDifferentlyFromTheRows() {
+        // Thailand is mentioned three times, but the story is about Myanmar
+        String locations = blocks(
+                block("1", "Burma", "BM", 5),
+                repeat("4", "Bangkok, Thailand", "TH", 3));
+
+        assertEquals(Set.of("BM"), parseWith("BM,TH", "Myanmar junta closes border", locations)
+                .orElseThrow().countryCodes());
+        assertTrue(parseWith("TH", "Myanmar junta closes border", locations).isEmpty());
+    }
+
+    // TESTS: a country in the headline counts even when the article has no location row for it
+    @Test
+    @DisplayName("Should tag the country named in the headline when the rows have no entry for it")
+    void parse_ShouldTagCountry_WhenRowsHaveNoEntryForIt() {
+        // the rows mention Japan three times, which must not win over France
+        assertEquals(Set.of("FR"), parseWith("FR,JA", "Toy maker confirms site closures across France", JAPAN_3X)
+                .orElseThrow().countryCodes());
+    }
+
+    // TESTS: England, Scotland and Wales are the UK
+    @Test
+    @DisplayName("Should read England as the United Kingdom")
+    void parse_ShouldReadEnglandAsUk() {
+        assertEquals(Set.of("UK"), parseWith("UK", "Castle Combe named among England's friendliest towns",
+                block("4", "Castle Combe, Wiltshire, United Kingdom", "UK", 10)).orElseThrow().countryCodes());
+    }
+
+    // TESTS: "South America" is not "America", so it is not the US
+    @Test
+    @DisplayName("Should not read South America as the United States")
+    void parse_ShouldNotReadSouthAmericaAsUs() {
+        Optional<GkgArticle> result = parseWith("UK,US", "Tarantulas native to South America arrive in Cotswolds",
+                block("4", "Cotswolds, Gloucestershire, United Kingdom", "UK", 10));
+
+        assertEquals(Set.of("UK"), result.orElseThrow().countryCodes());
+    }
+
+    // TESTS: a name shared by two countries with no row to say which: dropped, not guessed from the counts
+    @Test
+    @DisplayName("Should drop a row when the headline says Congo and nothing says which Congo")
+    void parse_ShouldDropRow_WhenHeadlineNameIsSharedByTwoCountries() {
+        assertTrue(parseWith("JA", "Flooding displaces thousands in Congo", JAPAN_3X).isEmpty());
     }
 
     // ===== TITLE KEYWORD / THEME FILTER =====
