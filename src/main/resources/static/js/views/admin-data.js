@@ -809,7 +809,8 @@ export async function mountUserData(container, userId, onAuthLost, { onChange = 
         <p class="meta hint">
             Everything this account owns, for testing. Open an itinerary to see its activities, with the
             impacts on each one under it. Changes are recorded in the activity below, and new itineraries
-            and activities are checked against recent news, like a traveller's.
+            and activities are checked against recent news, like a traveller's. Changing a trip's country
+            or dates, or an activity's name, address or start, clears the impacts on it and checks it again.
         </p>
         ${createSectionCard("itineraries", "Itineraries", "Add itinerary")}
         ${createTripCard()}

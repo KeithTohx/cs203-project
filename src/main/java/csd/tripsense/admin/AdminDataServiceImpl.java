@@ -125,6 +125,10 @@ public class AdminDataServiceImpl implements AdminDataService {
     @Transactional
     public Itinerary updateItinerary(Long itineraryId, AdminItineraryRequest request) {
         Itinerary itinerary = findItinerary(itineraryId);
+        Long oldCountryId = itinerary.getCountry() == null ? null : itinerary.getCountry().getId();
+        LocalDateTime oldStart = itinerary.getDateStart();
+        LocalDateTime oldEnd = itinerary.getDateEnd();
+
         applyItinerary(itinerary, request);
         Itinerary saved = itineraries.save(itinerary);
 
@@ -134,6 +138,19 @@ public class AdminDataServiceImpl implements AdminDataService {
             activity.setCountry(saved.getCountry());
         }
         activities.saveAll(itsActivities);
+
+        // the verdicts were made for the old country and dates, and the evaluator reuses any stored
+        // verdict without asking again. so they go, and the trip is judged again like a new one
+        boolean countryChanged = !Objects.equals(oldCountryId, request.countryId());
+        boolean datesChanged = !Objects.equals(oldStart, saved.getDateStart())
+                || !Objects.equals(oldEnd, saved.getDateEnd());
+        if (countryChanged || datesChanged) {
+            recommendations.deleteAll(recommendations.findByImpactItineraryId(itineraryId));
+            recommendations.flush();
+            impacts.deleteAll(impacts.findByItineraryId(itineraryId));   // cascades to their alerts
+
+            events.publishEvent(new ItineraryCreatedEvent(saved.getId()));
+        }
 
         return saved;
     }
@@ -193,8 +210,27 @@ public class AdminDataServiceImpl implements AdminDataService {
     @Transactional
     public Activity updateActivity(Long activityId, AdminActivityRequest request) {
         Activity activity = findActivity(activityId);
+        String oldName = activity.getName();
+        String oldAddress = activity.getAddress();
+        LocalDateTime oldStart = activity.getDateStart();
+
         applyActivity(activity, request);
-        return activities.save(activity);
+        Activity saved = activities.save(activity);
+
+        // same as for an itinerary. the model was asked about the name, address and start time,
+        // so a change to any of them makes the stored verdicts out of date
+        boolean judgedFieldsChanged = !Objects.equals(oldName, saved.getName())
+                || !Objects.equals(oldAddress, saved.getAddress())
+                || !Objects.equals(oldStart, saved.getDateStart());
+        if (judgedFieldsChanged) {
+            recommendations.deleteAll(recommendations.findByImpactActivityId(activityId));
+            recommendations.flush();
+            impacts.deleteAll(impacts.findByActivityId(activityId));
+
+            events.publishEvent(new ActivityCreatedEvent(saved.getId()));
+        }
+
+        return saved;
     }
 
     @Override
@@ -257,6 +293,17 @@ public class AdminDataServiceImpl implements AdminDataService {
         News article = news.findById(request.newsId())
                 .orElseThrow(() -> badRequest("no news with id " + request.newsId()));
 
+        // the evaluator only ever reads the first verdict for a pair, so a second one would be
+        // ignored and the two could disagree. edit the existing one instead
+        Optional<Impact> existing = activity == null
+                ? impacts.findFirstByNewsIdAndItineraryIdAndActivityIsNull(article.getId(), itinerary.getId())
+                : impacts.findFirstByNewsIdAndActivityId(article.getId(), activity.getId());
+        if (existing.isPresent()) {
+            String on = activity == null ? "this trip" : "this activity";
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "impact " + existing.get().getId() + " already covers this news on " + on + ", edit that one instead");
+        }
+
         boolean impacted = request.impacted();
         boolean rejected = Boolean.TRUE.equals(request.rejected());
         String reason = blankToNull(request.reason());
@@ -289,9 +336,16 @@ public class AdminDataServiceImpl implements AdminDataService {
     @Transactional
     public Impact updateImpact(Long impactId, AdminImpactUpdateRequest request) {
         Impact impact = findImpact(impactId);
+        String reason = blankToNull(request.reason());
+
+        // an alert shows the reason, in the app and in its email, which may still be waiting to go
+        boolean raisedAnAlert = impact.getAlerts() != null && !impact.getAlerts().isEmpty();
+        if (raisedAnAlert && reason == null) {
+            throw badRequest("this impact has raised an alert, so it needs a reason");
+        }
 
         impact.setImpacted(request.impacted());
-        impact.setReason(blankToNull(request.reason()));
+        impact.setReason(reason);
         impact.setRejected(Boolean.TRUE.equals(request.rejected()));
         return impacts.save(impact);
     }

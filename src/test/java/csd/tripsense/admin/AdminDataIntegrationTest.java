@@ -231,6 +231,29 @@ class AdminDataIntegrationTest {
     }
 
     @Test
+    @DisplayName("Should clear a trip's old verdicts, alerts and recommendations when it moves country")
+    void updateItinerary_NewCountry_RemovesTheOldVerdicts() {
+        Country france = new Country();
+        france.setName("France");
+        save(france);
+        em.clear();
+
+        adminData.updateItinerary(trip.getId(), new AdminItineraryRequest("Japan Ski Trip", france.getId(), null, null));
+
+        assertThat(stillThere(Impact.class, activityImpact.getId())).isFalse();
+        assertThat(stillThere(Impact.class, tripImpact.getId())).isFalse();
+        assertThat(stillThere(Alert.class, activityAlert.getId())).isFalse();
+        assertThat(stillThere(Alert.class, tripAlert.getId())).isFalse();
+        assertThat(stillThere(Recommendation.class, activityRecommendation.getId())).isFalse();
+        assertThat(stillThere(Recommendation.class, tripRecommendation.getId())).isFalse();
+
+        // the trip and its plans stay, only the verdicts about them go
+        assertThat(stillThere(Itinerary.class, trip.getId())).isTrue();
+        assertThat(stillThere(Activity.class, activity.getId())).isTrue();
+        assertOtherUserUntouched();
+    }
+
+    @Test
     @DisplayName("Should remove just the one recommendation")
     void deleteRecommendation_RemovesOnlyThatRow() {
         adminData.deleteRecommendation(activityRecommendation.getId());

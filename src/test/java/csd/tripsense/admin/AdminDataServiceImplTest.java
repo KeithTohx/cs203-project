@@ -27,6 +27,7 @@ import org.springframework.web.server.ResponseStatusException;
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityCreatedEvent;
 import csd.tripsense.activity.ActivityRepository;
+import csd.tripsense.alert.Alert;
 import csd.tripsense.alert.ImpactEvaluatedEvent;
 import csd.tripsense.country.Country;
 import csd.tripsense.country.CountryRepository;
@@ -262,6 +263,39 @@ class AdminDataServiceImplTest {
     }
 
     @Test
+    @DisplayName("Should drop the verdicts made for the old country and judge the trip again")
+    void updateItinerary_NewCountry_ClearsVerdictsAndJudgesAgain() {
+        savedTrip(10L, owner);
+        List<Recommendation> itsRecommendations = List.of(new Recommendation());
+        List<Impact> itsImpacts = List.of(new Impact());
+        when(recommendations.findByImpactItineraryId(10L)).thenReturn(itsRecommendations);
+        when(impacts.findByItineraryId(10L)).thenReturn(itsImpacts);
+
+        Country france = new Country();
+        france.setId(2L);
+        when(countries.findById(2L)).thenReturn(Optional.of(france));
+
+        service.updateItinerary(10L, new AdminItineraryRequest("Japan Ski Trip", 2L, null, null));
+
+        // recommendations point at the impacts, so they go first
+        InOrder order = inOrder(recommendations, impacts, events);
+        order.verify(recommendations).deleteAll(itsRecommendations);
+        order.verify(impacts).deleteAll(itsImpacts);
+        order.verify(events).publishEvent(new ItineraryCreatedEvent(10L));
+    }
+
+    @Test
+    @DisplayName("Should keep the verdicts when only the itinerary's name changes")
+    void updateItinerary_OnlyName_KeepsVerdicts() {
+        savedTrip(10L, owner);
+
+        service.updateItinerary(10L, new AdminItineraryRequest("Renamed Trip", 1L, null, null));
+
+        verify(impacts, never()).deleteAll(any());
+        verify(events, never()).publishEvent(any(Object.class));
+    }
+
+    @Test
     @DisplayName("Should delete an itinerary's recommendations before the itinerary itself")
     void deleteItinerary_RemovesRecommendationsFirst() {
         Itinerary trip = savedTrip(10L, owner);
@@ -313,6 +347,35 @@ class AdminDataServiceImplTest {
         InOrder order = inOrder(recommendations, activities);
         order.verify(recommendations).deleteAll(itsRecommendations);
         order.verify(activities).delete(activity);
+    }
+
+    @Test
+    @DisplayName("Should drop an activity's verdicts and judge it again when its address changes")
+    void updateActivity_NewAddress_ClearsVerdictsAndJudgesAgain() {
+        savedActivity(20L, savedTrip(10L, owner));
+        List<Recommendation> itsRecommendations = List.of(new Recommendation());
+        List<Impact> itsImpacts = List.of(new Impact());
+        when(recommendations.findByImpactActivityId(20L)).thenReturn(itsRecommendations);
+        when(impacts.findByActivityId(20L)).thenReturn(itsImpacts);
+
+        service.updateActivity(20L, new AdminActivityRequest("Ski at Niseko", "Hakuba", null, null, null));
+
+        InOrder order = inOrder(recommendations, impacts, events);
+        order.verify(recommendations).deleteAll(itsRecommendations);
+        order.verify(impacts).deleteAll(itsImpacts);
+        order.verify(events).publishEvent(new ActivityCreatedEvent(20L));
+    }
+
+    @Test
+    @DisplayName("Should keep an activity's verdicts when nothing the model was asked about changes")
+    void updateActivity_OnlyEndTime_KeepsVerdicts() {
+        savedActivity(20L, savedTrip(10L, owner));
+
+        service.updateActivity(20L, new AdminActivityRequest("Ski at Niseko", null, null,
+                LocalDateTime.of(2026, 12, 16, 17, 0), null));
+
+        verify(impacts, never()).deleteAll(any());
+        verify(events, never()).publishEvent(any(Object.class));
     }
 
     // ---------- impacts ----------
@@ -389,6 +452,66 @@ class AdminDataServiceImplTest {
         assertBadRequest(thrown);
         verify(impacts, never()).save(any());
         verify(events, never()).publishEvent(any(Object.class));
+    }
+
+    @Test
+    @DisplayName("Should refuse a second impact for the same news on the same activity")
+    void createImpact_SameNewsOnSameActivity_Returns409() {
+        savedActivity(20L, savedTrip(10L, owner));
+        savedNews(30L);
+        Impact existing = savedImpact(71L);
+        when(impacts.findFirstByNewsIdAndActivityId(30L, 20L)).thenReturn(Optional.of(existing));
+
+        Throwable thrown = catchThrowable(() -> service.createImpact(4L,
+                new AdminImpactRequest(30L, 10L, 20L, false, "not affected", false, false)));
+
+        assertThat(thrown).isInstanceOfSatisfying(ResponseStatusException.class, exception -> {
+            assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+            assertThat(exception.getReason()).contains("impact 71");
+        });
+        verify(impacts, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Should refuse a second whole trip impact for the same news")
+    void createImpact_SameNewsOnWholeTrip_Returns409() {
+        savedTrip(10L, owner);
+        savedNews(30L);
+        Impact existing = savedImpact(71L);
+        when(impacts.findFirstByNewsIdAndItineraryIdAndActivityIsNull(30L, 10L)).thenReturn(Optional.of(existing));
+
+        Throwable thrown = catchThrowable(() -> service.createImpact(4L,
+                new AdminImpactRequest(30L, 10L, null, true, "rail strike", false, false)));
+
+        assertThat(thrown).isInstanceOfSatisfying(ResponseStatusException.class,
+                exception -> assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
+        verify(impacts, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Should refuse to blank the reason of an impact that raised an alert")
+    void updateImpact_BlankReasonAfterAlert_Returns400() {
+        Impact impact = savedImpact(70L);
+        impact.setReason("Lifts are closed");
+        impact.setAlerts(List.of(new Alert(impact)));
+
+        Throwable thrown = catchThrowable(() -> service.updateImpact(70L,
+                new AdminImpactUpdateRequest(true, "  ", false)));
+
+        assertBadRequest(thrown);
+        assertThat(impact.getReason()).isEqualTo("Lifts are closed");
+        verify(impacts, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Should allow a blank reason on an impact with no alert, so it is judged again")
+    void updateImpact_BlankReasonWithoutAlert_IsAllowed() {
+        Impact impact = savedImpact(70L);
+        impact.setReason("Lifts are closed");
+
+        Impact updated = service.updateImpact(70L, new AdminImpactUpdateRequest(true, "  ", false));
+
+        assertThat(updated.getReason()).isNull();
     }
 
     @Test

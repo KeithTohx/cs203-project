@@ -322,6 +322,13 @@ const removeImpact = (itineraryId, impact) => {
     }
 };
 
+// like the backend, verdicts made for an old country, date, place or name are dropped on an edit.
+// the real one then judges the trip again, the mock has no model so it just leaves them gone
+const clearImpacts = (itineraryId, belongs) => {
+    const stale = (IMPACTS[itineraryId] ?? []).filter(belongs);
+    for (const impact of stale) removeImpact(itineraryId, impact);
+};
+
 // like the backend's checks on dates sent to the admin console
 const endsBeforeItStarts = ({ dateStart, dateEnd }) => dateStart && dateEnd && dateEnd < dateStart;
 
@@ -576,6 +583,11 @@ export const mockApi = {
         if (!country) return fail(400, `no country with id ${countryId}`);
         if (endsBeforeItStarts({ dateStart, dateEnd })) return fail(400, "the end cannot be before the start");
 
+        const judgedFieldsChanged = country.id !== itinerary.countryId
+            || dateStart !== itinerary.dateStart
+            || dateEnd !== itinerary.dateEnd;
+        if (judgedFieldsChanged) clearImpacts(itinerary.id, () => true);
+
         Object.assign(itinerary, { name, dateStart, dateEnd, countryId: country.id, countryName: country.name });
         recordByAdmin("ITINERARY_UPDATED", itinerary.userId, `itinerary ${itinerary.id} '${itinerary.name}'`);
         return respondWith(itinerary);
@@ -620,6 +632,11 @@ export const mockApi = {
         const activity = ACTIVITIES.find(candidate => candidate.id === Number(id));
         if (!activity) return fail(404, `Activity with ID: ${id} not found`);
         if (endsBeforeItStarts({ dateStart, dateEnd })) return fail(400, "the end cannot be before the start");
+
+        const judgedFieldsChanged = name !== activity.name
+            || (address || null) !== (activity.address || null)
+            || dateStart !== activity.dateStart;
+        if (judgedFieldsChanged) clearImpacts(activity.itineraryId, impact => impact.activityId === activity.id);
 
         Object.assign(activity, { name, address, dateStart, dateEnd, category });
         recordByAdmin("ACTIVITY_UPDATED", ownerOfItinerary(activity.itineraryId), `activity ${activity.id} '${activity.name}'`);
@@ -671,6 +688,13 @@ export const mockApi = {
             return fail(400, "an alert needs an impacted, not rejected impact with a reason");
         }
 
+        const onSamePair = impact => impact.newsId === Number(newsId) && impact.activityId === (activity?.id ?? null);
+        const existing = (IMPACTS[itineraryId] ?? []).find(onSamePair);
+        if (existing) {
+            const on = activity ? "this activity" : "this trip";
+            return fail(409, `impact ${existing.id} already covers this news on ${on}, edit that one instead`);
+        }
+
         const allIds = Object.values(IMPACTS).flat().map(impact => impact.id);
         const impact = makeImpact(Math.max(0, ...allIds) + 1, impacted, Number(newsId), activity?.id ?? null, activity?.name ?? null, reason);
         impact.rejected = Boolean(rejected);
@@ -690,6 +714,9 @@ export const mockApi = {
 
         const entry = findImpactEntry(id);
         if (!entry) return fail(404, `Could not find impact ${id}`);
+
+        const raisedAnAlert = ALERTS.some(alert => alert.impactId === entry.impact.id);
+        if (raisedAnAlert && !reason?.trim()) return fail(400, "this impact has raised an alert, so it needs a reason");
 
         Object.assign(entry.impact, { impacted, reason, rejected: Boolean(rejected) });
         recordByAdmin("IMPACT_UPDATED", ownerOfItinerary(entry.itineraryId), `impact ${entry.impact.id} (${impacted ? "impacted" : "not impacted"})`);
