@@ -15,6 +15,7 @@ export const AUDIT_ACTIONS = [
     { value: "ACCOUNT_ENABLED", label: "Enabled account" },
     { value: "ACCOUNT_DELETED", label: "Deleted account" },
     { value: "ROLE_CHANGED", label: "Changed role" },
+    { value: "SQL_QUERY", label: "Query database" },
 ];
 
 // the text for an action, or the raw value if the backend sends one this file does not know yet
