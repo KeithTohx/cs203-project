@@ -113,12 +113,13 @@ const useMock = isLocalhost && new URLSearchParams(location.search).has("mock");
 if (useMock) showMockBanner();
 const selectedApi = useMock ? mockApi : realApi;
 export const api = { ...selectedApi };
-// Successful changes invalidate alert history in this tab and other open tabs.
+// Invalidate other tabs; queued alert reads handle their own local refresh on completion.
 for (const method of ["markAlertRead", "markAlertGroupRead", "markAllAlertsRead", "setImpactRejected",
     "deleteActivity", "deleteItinerary"]) {
   api[method] = async (...args) => {
     const result = await selectedApi[method](...args);
-    invalidateAlerts();
+    // The alert save queue already refreshes these reads in the originating tab.
+    invalidateAlerts({ local: !["markAlertGroupRead", "markAllAlertsRead"].includes(method) });
     return result;
   };
 }

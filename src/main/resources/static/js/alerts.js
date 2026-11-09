@@ -149,7 +149,7 @@ function tellListeners(change) {
 let saveQueue = Promise.resolve();
 let savesRunning = 0;
 
-// goes up on logout, so saves still finishing for the old account leave the next one alone
+// Session generation advances on logout, isolating pending requests and saves from the next login.
 let saveSession = 0;
 
 const queueSave = save => {
@@ -173,7 +173,7 @@ const queueSave = save => {
     return queued;
 };
 
-// whether a save that just finished was for an account that has since logged out
+// Whether an asynchronous result belongs to a session that has since ended.
 const isFromOldSession = session => session !== saveSession;
 
 // for the alerts page, so its own loads also wait until the server has every read
@@ -186,13 +186,14 @@ async function refresh() {
 
     latestRefresh += 1;
     const thisRefresh = latestRefresh;
+    const session = saveSession;
 
     try {
         const page = await api.alerts({ size: 20 });
         const switchedAccount = state.userId !== userId;   // logged out or switched account while waiting
         const isOutdated = thisRefresh !== latestRefresh;   // a newer refresh has started since
         const savingStarted = savesRunning > 0;             // this may be from before the save, the reload after it is not
-        if (switchedAccount || isOutdated || savingStarted) return;
+        if (isFromOldSession(session) || switchedAccount || isOutdated || savingStarted) return;
 
         const countBefore = state.unreadCount;
         const isFirstLoad = state.seenIds == null;
@@ -218,6 +219,7 @@ async function refresh() {
         const outOfStep = !isFirstLoad && (state.unreadCount !== expectedCount || listChanged && !newAlerts.length);
         if (newAlerts.length || countChanged || outOfStep) tellListeners({ newAlerts, outOfStep });
     } catch (error) {
+        if (isFromOldSession(session)) return;
         // a failed load keeps the last alerts and tries again on the next event or check
         if (error.status === 401) sessionEnded();
     }
@@ -239,7 +241,7 @@ const canStream = () => Boolean(api.alertStreamUrl) && typeof EventSource !== "u
 // While disconnected, recover saved alerts and reconnect a closed stream.
 function checkAgain() {
     const canReconnect = canStream() && !state.stream;
-    if (canReconnect) connectStream();
+    if (canReconnect) return connectStream();
     refresh();
 }
 
@@ -263,8 +265,10 @@ function connectStream() {
     if (!canStream()) return startPolling();
 
     const stream = new EventSource(api.alertStreamUrl);
+    let recovering = false;
     stream.addEventListener("ready", () => {
         if (state.stream !== stream) return;
+        recovering = false;
         stopPolling();
         refresh();
     });
@@ -276,9 +280,9 @@ function connectStream() {
         if (stream.readyState === EventSource.CLOSED) state.stream = null;
         // Only the first failure in an outage triggers an immediate history check.
         // Further EventSource retries share the existing polling interval.
-        const alreadyPolling = state.pollTimer != null;
         startPolling();
-        if (!alreadyPolling) refresh();   // also detects an ended session
+        if (!recovering) refresh();   // also detects an ended session before the first ready event
+        recovering = true;
     });
     state.stream = stream;
     startPolling();
@@ -311,10 +315,10 @@ export async function markAlertsRead(alerts) {
     // Mark the persisted group, including members outside the loaded page. Bound each
     // request by the newest displayed member so later arrivals remain unread.
     const saveEach = async () => {
-        for (const group of groupAlerts(unread)) {
+        for (const group of coveredGroups) {
+            // The session can change while the previous group's request is in flight.
             if (isFromOldSession(session)) return;
-            const newestId = Math.max(...group.alerts.map(alert => alert.id));
-            await api.markAlertGroupRead(newestId);
+            await api.markAlertGroupRead(group.upToId);
         }
     };
 

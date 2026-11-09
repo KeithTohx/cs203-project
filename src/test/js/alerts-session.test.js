@@ -6,16 +6,16 @@
     const moduleSource = source.replace(/^import .*;\s*$/gm, "").replace(/\bexport\s+/g, "");
     const assert = (condition, message) => { if (!condition) throw new Error(message); };
     const deferred = () => {
-        let resolve;
-        const promise = new Promise(done => { resolve = done; });
-        return { promise, resolve };
+        let resolve, reject;
+        const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
+        return { promise, resolve, reject };
     };
-    const fixture = (firstRead = null) => {
+    const fixture = (firstRead = null, history = null) => {
         let account = "A";
         const calls = [];
         let refreshCalls = 0;
         const api = {
-            alerts: async () => { refreshCalls++; return { content: [], unreadCount: 0 }; },
+            alerts: async () => { refreshCalls++; return history ? history.promise : { content: [], unreadCount: 0 }; },
             markAllAlertsRead: async upToId => {
                 calls.push({ account, kind: "all", upToId });
                 return { unreadCount: 0 };
@@ -38,10 +38,15 @@
             const onAlertsInvalidated=()=>()=>{};
             const escapeHtml=x=>x, findToastShelf=()=>null, newsTitleOf=x=>x, timeTag=x=>x, icon=()=>'';
             ${moduleSource}
-            return { markAllAlertsRead, markAlertsRead, stopAlerts,
+            let authLosses=0;
+            state.onAuthLost=()=>{authLosses++;};
+            return { markAllAlertsRead, markAlertsRead, stopAlerts, refresh,
+                snapshot: () => ({ userId: state.userId, alerts: state.alerts, unreadCount: state.unreadCount, authLosses }),
                 connect: () => { api.alertStreamUrl='/api/alerts/stream'; connectStream(); },
                 ready: () => state.stream.listeners.ready(), polling: () => intervals,
                 disconnect: () => { state.stream.readyState=0; state.stream.listeners.error(); },
+                closeStream: () => { state.stream.readyState=2; state.stream.listeners.error(); },
+                checkAgain,
                 hold: promise => queueSave(() => promise), setUser: id => { state.userId=id; } };
         `);
         const alerts = createModule(api, document);
@@ -113,6 +118,56 @@
         assert(f.calls.length === 1 && f.calls[0].id === 20,
             "A group read must use one group request bounded by its newest member");
         passed.push("mark persisted group through its newest displayed member");
+    }
+    for (const nextUser of [1, 2]) {
+        const history = deferred(), f = fixture(null, history);
+        const oldRefresh = f.alerts.refresh();
+        f.alerts.stopAlerts(); f.alerts.setUser(nextUser);
+        history.reject(Object.assign(new Error("expired session"), { status: 401 }));
+        await oldRefresh;
+        assert(f.alerts.snapshot().userId === nextUser && f.alerts.snapshot().authLosses === 0,
+            "A previous login's 401 must not log out the current session");
+        passed.push(`ignore previous-session 401 after login as user ${nextUser}`);
+    }
+    {
+        const history = deferred(), f = fixture(null, history);
+        const oldRefresh = f.alerts.refresh();
+        f.alerts.stopAlerts(); f.alerts.setUser(1);
+        history.resolve({ content: [{ id: 17, readAt: null }], unreadCount: 1 });
+        await oldRefresh;
+        const current = f.alerts.snapshot();
+        assert(current.alerts.length === 0 && current.unreadCount === 0,
+            "History from before logout must not populate a new login to the same account");
+        passed.push("ignore previous-session history after same-account login");
+    }
+    {
+        const history = deferred(), f = fixture(null, history);
+        const refresh = f.alerts.refresh();
+        history.reject(Object.assign(new Error("expired session"), { status: 401 }));
+        await refresh;
+        assert(f.alerts.snapshot().userId == null && f.alerts.snapshot().authLosses === 1,
+            "A current-session 401 must still end the session");
+        passed.push("handle current-session authentication failures");
+    }
+    {
+        const f = fixture();
+        f.alerts.connect();
+        f.alerts.disconnect();
+        assert(f.refreshCalls() === 1, "The first pre-ready failure must check the session immediately");
+        f.alerts.disconnect();
+        assert(f.refreshCalls() === 1, "Repeated failures must wait for the polling interval");
+        passed.push("check authentication on the first stream failure before ready");
+    }
+    {
+        const f = fixture();
+        f.alerts.connect();
+        f.alerts.closeStream();
+        const before = f.refreshCalls();
+        f.alerts.checkAgain();
+        assert(f.refreshCalls() === before, "A reconnect attempt must leave history loading to ready or error");
+        f.alerts.ready();
+        assert(f.refreshCalls() === before + 1, "A successful reconnect must reload history exactly once");
+        passed.push("avoid duplicate history loads when reconnecting");
     }
     globalThis.alertSessionTestResults = { ok: true, passed };
     globalThis.console?.log(`${passed.length} alert session tests passed`);

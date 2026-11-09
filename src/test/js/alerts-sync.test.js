@@ -35,7 +35,7 @@
         passed.push("mock group read enforces ownership and login");
     }
     {
-        let notifications = 0;
+        let notifications = 0, lastOptions;
         const createApi = new Function("mockApi", "showMockBanner", "invalidateAlerts", "location", "URLSearchParams", `
             ${plain(read("api"))}
             return api;
@@ -43,9 +43,10 @@
         const api = createApi({
             markAlertGroupRead: async () => ({ unreadCount: 0 }),
             setImpactRejected: async () => { throw new Error("save failed"); },
-        }, () => {}, () => { notifications++; }, { hostname: "localhost", search: "?mock" }, class { has() { return true; } });
+        }, () => {}, options => { notifications++; lastOptions=options; }, { hostname: "localhost", search: "?mock" }, class { has() { return true; } });
         await api.markAlertGroupRead(3);
         assert(notifications === 1, "Successful mock writes must invalidate other tabs");
+        assert(lastOptions.local === false, "Queued alert reads must not trigger a second local reload");
         await api.setImpactRejected(1, true).catch(() => {});
         assert(notifications === 1, "Failed writes must not broadcast a saved change");
         passed.push("API invalidates alert history only after a successful change");
@@ -63,8 +64,10 @@
         const stop = second.onAlertsInvalidated(() => { remote++; });
         first.invalidateAlerts();
         assert(local === 1 && remote === 1, "Notify the current tab and another tab");
+        first.invalidateAlerts({ local: false });
+        assert(local === 1 && remote === 2, "Suppressing local invalidation must still notify other tabs");
         stop(); first.invalidateAlerts();
-        assert(local === 2 && remote === 1, "Unsubscribed tabs must stop receiving changes");
+        assert(local === 2 && remote === 2, "Unsubscribed tabs must stop receiving changes");
         passed.push("broadcast alert invalidations across tabs and unsubscribe cleanly");
     }
     globalThis.alertSyncTestResults = { ok: true, passed };

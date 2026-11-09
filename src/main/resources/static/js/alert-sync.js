@@ -21,8 +21,8 @@ export function onAlertsInvalidated(listener) {
     return () => listeners.delete(listener);
 }
 
-export function invalidateAlerts() {
-    notify();
+export function invalidateAlerts({ local = true } = {}) {
+    if (local) notify();
     if (channel) {
         try { channel.postMessage("changed"); } catch { /* A closed tab must not fail a saved read. */ }
     }
