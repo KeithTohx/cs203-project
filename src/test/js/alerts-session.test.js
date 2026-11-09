@@ -13,8 +13,9 @@
     const fixture = (firstRead = null) => {
         let account = "A";
         const calls = [];
+        let refreshCalls = 0;
         const api = {
-            alerts: async () => ({ content: [], unreadCount: 0 }),
+            alerts: async () => { refreshCalls++; return { content: [], unreadCount: 0 }; },
             markAllAlertsRead: async upToId => {
                 calls.push({ account, kind: "all", upToId });
                 return { unreadCount: 0 };
@@ -45,7 +46,7 @@
         `);
         const alerts = createModule(api, document);
         alerts.setUser(1);
-        return { alerts, calls, switchAccount() { alerts.stopAlerts(); account = "B"; alerts.setUser(2); } };
+        return { alerts, calls, refreshCalls: () => refreshCalls, switchAccount() { alerts.stopAlerts(); account = "B"; alerts.setUser(2); } };
     };
     const passed = [];
     {
@@ -95,6 +96,10 @@
         assert(f.alerts.polling() === 0, "A live stream must stop fallback polling");
         f.alerts.disconnect();
         assert(f.alerts.polling() === 1, "A reconnecting stream must resume polling");
+        const firstFailureCalls = f.refreshCalls();
+        f.alerts.disconnect();
+        f.alerts.disconnect();
+        assert(f.refreshCalls() === firstFailureCalls, "Repeated reconnect failures must wait for the polling interval");
         f.alerts.ready();
         assert(f.alerts.polling() === 0, "A recovered stream must stop polling again");
         passed.push("poll only while the live stream is unavailable");

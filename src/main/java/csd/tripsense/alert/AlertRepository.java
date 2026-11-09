@@ -22,7 +22,8 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
     @Modifying
     @Query("update Alert a set a.emailStatus = csd.tripsense.alert.EmailStatus.SUPPRESSED, a.emailSentAt = null "
             + "where a.id = :id and a.emailAttempts = :attempts and a.emailStatus in :states")
-    int suppressEmail(Long id, int attempts, java.util.List<EmailStatus> states);
+    int suppressEmail(@Param("id") Long id, @Param("attempts") int attempts,
+                      @Param("states") java.util.List<EmailStatus> states);
 
     // Suppress notifications the traveller rejected, including notifications created before rejection.
     String VISIBLE = "a.impact.itinerary.user.id = :userId and a.impact.impacted = true "
@@ -54,7 +55,8 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
             + " and v.impact.impacted = true "
             + "and (v.impact.rejected = false or v.impact.rejected is null)"
             + " and v.impact.itinerary.id = :tripId and v.impact.news.id = :newsId)")
-    int markGroupRead(Long userId, Long tripId, Long newsId, Long upToId, Instant now);
+    int markGroupRead(@Param("userId") Long userId, @Param("tripId") Long tripId, @Param("newsId") Long newsId,
+                      @Param("upToId") Long upToId, @Param("now") Instant now);
 
     @Query("select a from Alert a where a.id = :id and " + VISIBLE)
     Optional<Alert> findOwned(@Param("id") Long id, @Param("userId") Long userId);

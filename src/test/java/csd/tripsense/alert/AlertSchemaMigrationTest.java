@@ -8,6 +8,14 @@ import org.springframework.transaction.support.TransactionTemplate;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class AlertSchemaMigrationTest {
+    @Test void missingAlertTableIsSkippedWithoutRecordingAMigration() {
+        try (var data = new SingleConnectionDataSource("jdbc:sqlite::memory:", true)) {
+            var sql = new JdbcTemplate(data);
+            AlertSchemaMigration.migrate(sql);
+            assertThat(sql.queryForList("select name from sqlite_master where type='table'")).isEmpty();
+        }
+    }
+
     @Test void repeatedMigrationPreservesRowsIndexesAndTheIdentitySequence() {
         try (var data = new SingleConnectionDataSource("jdbc:sqlite::memory:", true)) {
             var sql = new JdbcTemplate(data);

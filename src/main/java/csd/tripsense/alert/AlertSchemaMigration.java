@@ -17,8 +17,10 @@ public class AlertSchemaMigration {
     }
 
     static void migrate(JdbcTemplate sql) {
+        var tables = sql.queryForList("select sql from sqlite_master where type='table' and name='alert'", String.class);
+        if (tables.isEmpty()) return;
+        String ddl = tables.getFirst();
         sql.execute("create table if not exists alert_schema_history (version integer primary key)");
-        String ddl = sql.queryForObject("select sql from sqlite_master where type='table' and name='alert'", String.class);
         var status = Pattern.compile("(?i)(email_status\\s+in\\s*\\()([^)]*)(\\))").matcher(ddl);
         if (status.find() && !status.group(2).contains("SUPPRESSED")) {
             String upgraded = status.replaceFirst("$1$2,'SUPPRESSED'$3");

@@ -55,6 +55,17 @@ public class AlertEmailStore {
         return claim(id, now, java.util.Set.of());
     }
 
+    private enum ClaimDecision { DEFER, SUPPRESS, FAIL, PROCEED }
+
+    private record EmailGroup(Long tripId, Long newsId, String recipient,
+                              List<Alert> members, Optional<AlertEmailGroup> state) {
+        String key() { return AlertEmailGroup.key(tripId, newsId); }
+        List<Alert> retryable() {
+            return members.stream().filter(a -> RETRYABLE.contains(a.getEmailStatus())).toList();
+        }
+    }
+    private record AssessmentGate(ClaimDecision decision, boolean incomplete) {}
+
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Optional<Delivery> claim(Long id, Instant now, java.util.Set<String> confirmingGroups) {
         Alert requested = alerts.findById(id).orElse(null);
@@ -63,59 +74,84 @@ public class AlertEmailStore {
         var impact = requested.getImpact();
         var recipient = impact.getItinerary().getUser();
         if (!recipient.isEnabled()) return Optional.empty();
-        var group = alerts.findEmailGroup(impact.getItinerary().getId(), impact.getNews().getId());
-        Long tripId=impact.getItinerary().getId();
-        Long newsId=impact.getNews().getId();
-        if (confirmingGroups.contains(AlertEmailGroup.key(tripId, newsId))) {
-            deferRetryable(group, now.plusSeconds(groupRecheckSeconds));
-            return Optional.empty();
-        }
-        var deliveryGroup=emailGroups.findById(AlertEmailGroup.key(tripId,newsId));
-        // The group retains its terminal state even if a sent impact/alert is subsequently deleted.
-        var sent=group.stream().filter(a -> a.getEmailStatus()==EmailStatus.SENT).findFirst();
-        boolean previouslyDelivered=deliveryGroup.map(AlertEmailGroup::isDelivered).orElse(false)
-                || sent.isPresent() || group.stream().anyMatch(a -> a.getEmailStatus()==EmailStatus.SUPPRESSED);
-        if (previouslyDelivered && !deliveryGroup.map(AlertEmailGroup::isPartial).orElse(false)) {
-            var state=deliveryGroup.orElseGet(() -> emailGroups.saveAndFlush(new AlertEmailGroup(
-                    tripId,newsId,group.getFirst().getEmailDeliveryKey())));
-            state.markDelivered(sent.map(Alert::getEmailSentAt).orElse(null));
-            for (Alert member:group) if (RETRYABLE.contains(member.getEmailStatus()))
-                alerts.suppressEmail(member.getId(),member.getEmailAttempts(),RETRYABLE);
-            return Optional.empty();
-        }
-        // A new member must not bypass an active SMTP lease or another member's retry backoff.
-        Instant nextReady = group.stream().filter(a -> RETRYABLE.contains(a.getEmailStatus()))
-                .map(Alert::getEmailNextAttemptAt).max(Comparator.naturalOrder()).orElse(now);
-        if (nextReady.isAfter(now)) {
-            deferRetryable(group, nextReady);
-            return Optional.empty();
-        }
-        // Failure belongs to the news/trip group. Late members inherit it rather than waiting forever.
-        if (group.stream().anyMatch(a -> a.getEmailStatus() == EmailStatus.FAILED
-                || RETRYABLE.contains(a.getEmailStatus()) && a.getEmailAttempts() >= MAX_ATTEMPTS)) {
-            for (Alert member : group) alerts.finishEmail(member.getId(), member.getEmailAttempts(), RETRYABLE,
-                    EmailStatus.FAILED, null, now);
-            return Optional.empty();
-        }
-        Instant firstCreatedAt = group.stream().filter(a -> RETRYABLE.contains(a.getEmailStatus()))
-                .map(Alert::getCreatedAt).min(Comparator.naturalOrder()).orElse(now);
-        Instant deadline = firstCreatedAt.plusSeconds(maxGroupWaitSeconds);
+        Long tripId = impact.getItinerary().getId();
+        Long newsId = impact.getNews().getId();
+        var group = new EmailGroup(tripId, newsId, recipient.getEmail(),
+                alerts.findEmailGroup(tripId, newsId), emailGroups.findById(AlertEmailGroup.key(tripId, newsId)));
+
+        if (prepareGroup(group, confirmingGroups, now) != ClaimDecision.PROCEED) return Optional.empty();
+        AssessmentGate assessment = waitForAssessments(group, now);
+        if (assessment.decision() != ClaimDecision.PROCEED) return Optional.empty();
+        return claimReadyMembers(group, assessment.incomplete(), now);
+    }
+
+    // Order matters: confirmation and prior delivery precede lease/backoff, then attempt limits.
+    private ClaimDecision prepareGroup(EmailGroup group, java.util.Set<String> confirmingGroups, Instant now) {
+        if (checkConfirmation(group, confirmingGroups, now) != ClaimDecision.PROCEED) return ClaimDecision.DEFER;
+        if (checkDeliveryHistory(group) != ClaimDecision.PROCEED) return ClaimDecision.SUPPRESS;
+        if (checkBackoff(group, now) != ClaimDecision.PROCEED) return ClaimDecision.DEFER;
+        return checkAttemptLimit(group, now);
+    }
+
+    private ClaimDecision checkConfirmation(EmailGroup group, java.util.Set<String> confirmingGroups, Instant now) {
+        if (!confirmingGroups.contains(group.key())) return ClaimDecision.PROCEED;
+        deferRetryable(group.members(), now.plusSeconds(groupRecheckSeconds));
+        return ClaimDecision.DEFER;
+    }
+
+    private ClaimDecision checkDeliveryHistory(EmailGroup group) {
+        var sent = group.members().stream().filter(a -> a.getEmailStatus() == EmailStatus.SENT).findFirst();
+        boolean delivered = group.state().map(AlertEmailGroup::isDelivered).orElse(false)
+                || sent.isPresent() || group.members().stream().anyMatch(a -> a.getEmailStatus() == EmailStatus.SUPPRESSED);
+        if (!delivered || group.state().map(AlertEmailGroup::isPartial).orElse(false)) return ClaimDecision.PROCEED;
+        var state = group.state().orElseGet(() -> emailGroups.saveAndFlush(new AlertEmailGroup(
+                group.tripId(), group.newsId(), group.members().getFirst().getEmailDeliveryKey())));
+        state.markDelivered(sent.map(Alert::getEmailSentAt).orElse(null));
+        for (Alert member : group.retryable()) alerts.suppressEmail(member.getId(), member.getEmailAttempts(), RETRYABLE);
+        return ClaimDecision.SUPPRESS;
+    }
+
+    private ClaimDecision checkBackoff(EmailGroup group, Instant now) {
+        // A new member cannot bypass an active SMTP lease or another member's retry backoff.
+        Instant nextReady = group.retryable().stream().map(Alert::getEmailNextAttemptAt)
+                .max(Comparator.naturalOrder()).orElse(now);
+        if (!nextReady.isAfter(now)) return ClaimDecision.PROCEED;
+        deferRetryable(group.members(), nextReady);
+        return ClaimDecision.DEFER;
+    }
+
+    private ClaimDecision checkAttemptLimit(EmailGroup group, Instant now) {
+        boolean exhausted = group.members().stream().anyMatch(a -> a.getEmailStatus() == EmailStatus.FAILED
+                || RETRYABLE.contains(a.getEmailStatus()) && a.getEmailAttempts() >= MAX_ATTEMPTS);
+        if (!exhausted) return ClaimDecision.PROCEED;
+        // Failure belongs to the news/trip group, including late members.
+        for (Alert member : group.members()) alerts.finishEmail(member.getId(), member.getEmailAttempts(), RETRYABLE,
+                EmailStatus.FAILED, null, now);
+        return ClaimDecision.FAIL;
+    }
+
+    private AssessmentGate waitForAssessments(EmailGroup group, Instant now) {
+        List<Alert> retryable = group.retryable();
+        Instant firstCreatedAt = retryable.stream().map(Alert::getCreatedAt).min(Comparator.naturalOrder()).orElse(now);
         Instant settleUntil = firstCreatedAt.plusSeconds(initialGroupWaitSeconds);
-        if (group.stream().filter(a -> RETRYABLE.contains(a.getEmailStatus())).allMatch(a -> a.getEmailAttempts() == 0) && now.isBefore(settleUntil)) {
-            deferRetryable(group, settleUntil);
-            return Optional.empty();
+        if (retryable.stream().allMatch(a -> a.getEmailAttempts() == 0) && now.isBefore(settleUntil)) {
+            deferRetryable(group.members(), settleUntil);
+            return new AssessmentGate(ClaimDecision.DEFER, false);
         }
-        boolean incomplete = evaluations.countRunning(tripId, newsId, now) != 0;
+        boolean incomplete = evaluations.countRunning(group.tripId(), group.newsId(), now) != 0;
+        Instant deadline = firstCreatedAt.plusSeconds(maxGroupWaitSeconds);
         if (incomplete && now.isBefore(deadline)) {
             Instant recheck = now.plusSeconds(groupRecheckSeconds);
-            deferRetryable(group, recheck.isBefore(deadline) ? recheck : deadline);
-            return Optional.empty();
+            deferRetryable(group.members(), recheck.isBefore(deadline) ? recheck : deadline);
+            return new AssessmentGate(ClaimDecision.DEFER, true);
         }
-        var members = group.stream().filter(a -> RETRYABLE.contains(a.getEmailStatus()))
-                .filter(a -> Boolean.TRUE.equals(a.getImpact().getImpacted())
+        return new AssessmentGate(ClaimDecision.PROCEED, incomplete);
+    }
+
+    private Optional<Delivery> claimReadyMembers(EmailGroup group, boolean incomplete, Instant now) {
+        var members = group.retryable().stream().filter(a -> Boolean.TRUE.equals(a.getImpact().getImpacted())
                 && !Boolean.TRUE.equals(a.getImpact().getRejected())).toList();
-        if (members.isEmpty() || members.stream().anyMatch(a -> !RETRYABLE.contains(a.getEmailStatus())
-                || a.getEmailNextAttemptAt().isAfter(now))) return Optional.empty();
+        if (members.isEmpty()) return Optional.empty();
         var claims = new ArrayList<ClaimedAlert>();
         for (Alert member : members) {
             int attempt = member.getEmailAttempts() + 1;
@@ -127,19 +163,20 @@ public class AlertEmailStore {
             claims.add(new ClaimedAlert(member.getId(), attempt));
         }
         Alert leader = members.getFirst();
-        // Anchor the first attempt to the full group, including rejected members. Persist the
-        // key before SMTP so a retry never derives its identity from the current visible leader.
-        String deliveryKey = deliveryGroup.orElseGet(() -> emailGroups.saveAndFlush(new AlertEmailGroup(tripId, newsId,
-                        group.getFirst().getEmailDeliveryKey()))).getDeliveryKey();
-        if (deliveryGroup.isPresent() && deliveryGroup.get().isDelivered()) {
-            deliveryKey = leader.getEmailDeliveryKey();
-            deliveryGroup.get().beginDelivery(deliveryKey);
-        }
-        boolean partial=incomplete || targets.countUnresolved(tripId,newsId)>0
-                || evaluations.countLegacyIncomplete(tripId,newsId)>0;
+        String deliveryKey = deliveryIdentity(group, leader);
+        boolean partial = incomplete || targets.countUnresolved(group.tripId(), group.newsId()) > 0
+                || evaluations.countLegacyIncomplete(group.tripId(), group.newsId()) > 0;
         return Optional.of(new Delivery(leader.getId(), claims.getFirst().attempt(), deliveryKey,
-                recipient.getEmail(), AlertResponse.from(leader),
+                group.recipient(), AlertResponse.from(leader),
                 members.stream().map(AlertResponse::from).toList(), List.copyOf(claims), partial));
+    }
+
+    private String deliveryIdentity(EmailGroup group, Alert leader) {
+        // Keep retries stable even when the original visible leader is rejected/deleted.
+        var state = group.state().orElseGet(() -> emailGroups.saveAndFlush(new AlertEmailGroup(
+                group.tripId(), group.newsId(), group.members().getFirst().getEmailDeliveryKey())));
+        if (state.isDelivered()) state.beginDelivery(leader.getEmailDeliveryKey());
+        return state.getDeliveryKey();
     }
 
     private void deferRetryable(List<Alert> group, Instant next) {

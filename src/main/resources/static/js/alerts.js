@@ -274,8 +274,11 @@ function connectStream() {
     stream.addEventListener("error", () => {
         if (state.stream !== stream) return;
         if (stream.readyState === EventSource.CLOSED) state.stream = null;
+        // Only the first failure in an outage triggers an immediate history check.
+        // Further EventSource retries share the existing polling interval.
+        const alreadyPolling = state.pollTimer != null;
         startPolling();
-        refresh();   // finds out whether the session ended, and if so sends the user to log in
+        if (!alreadyPolling) refresh();   // also detects an ended session
     });
     state.stream = stream;
     startPolling();
