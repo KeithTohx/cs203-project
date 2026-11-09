@@ -98,29 +98,86 @@ public class AlertEmailSender {
                 + "\n\nThis is an automated assessment. Verify important changes with your travel provider."
                 + "\nAlert reference: " + alert.id();
         String html = """
-                <!doctype html><html lang="en"><head><meta charset="UTF-8"></head>
-                <body style="margin:0;background:#f1f4f9;color:#16252b;font-family:Arial,sans-serif;line-height:1.6">
-                <table role="presentation" width="100%%" cellspacing="0" cellpadding="0"><tr><td style="padding:24px 12px">
-                <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="max-width:600px;margin:auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:8px">
-                <tr><td style="padding:18px 28px;border-bottom:1px solid #e2e8f0">
-                <span style="display:inline-block;padding:2px 9px;border-radius:6px;background:#2878d0;color:#ffffff;font-weight:bold">T</span>
-                <span style="margin-left:8px;font-size:20px;font-weight:bold;color:#16252b">TripSense</span></td></tr>
-                <tr><td style="padding:24px 28px 0">
-                <span style="display:inline-block;padding:3px 10px;border-radius:4px;background:#e7f0fc;color:#245e9d;font-size:12px;font-weight:bold">%s</span>
-                <h1 style="margin:12px 0 0;font-size:26px;line-height:1.3;color:#16252b">%s</h1></td></tr>
-                <tr><td style="padding:24px 28px">
-                <p style="margin:0 0 20px;color:#5d6f76">%s</p>
-                <p><strong>Itinerary:</strong> %s%s</p>
-                <div style="margin-top:24px;padding:16px;background:#fbeceb;border-left:4px solid #d7312f;border-radius:4px">
-                <span style="display:inline-block;padding:2px 7px;background:#ffffff;color:#b42318;border-radius:4px;font-size:12px;font-weight:bold">Disruption detected</span>
-                <h2 style="font-size:16px;margin:12px 0 6px">What happened</h2><p style="margin:0">%s</p>
-                <h2 style="font-size:16px;margin:20px 0 6px">How this may affect you</h2>%s</div>
-                <p style="font-size:14px;color:#5d6f76">Source: %s%s</p>
-                <div style="padding:16px;background:#e7f0fc;border-left:4px solid #2878d0;border-radius:4px;margin-top:24px">
-                <strong>Next step</strong><br>Log in to TripSense to review this %s and decide what to do.</div>
-                <p style="font-size:12px;color:#5d6f76;margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0">This is an automated assessment.
-                Verify important changes with your travel provider.<br>Alert reference: %s</p>
-                </td></tr></table></td></tr></table></body></html>
+                <!doctype html>
+                <html lang="en">
+                    <head>
+                        <meta charset="UTF-8">
+                    </head>
+                    <body style="margin:0;background:#f1f4f9;color:#16252b;font-family:Arial,sans-serif;line-height:1.6">
+                        <table role="presentation" width="100%%" cellspacing="0" cellpadding="0">
+                            <tr>
+                                <td style="padding:24px 12px">
+                                    <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="max-width:600px;margin:auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:8px">
+                                        <tr>
+                                            <td style="padding:18px 28px;border-bottom:1px solid #e2e8f0">
+                                                <span style="display:inline-block;padding:2px 9px;border-radius:6px;background:#2878d0;color:#ffffff;font-weight:bold">
+                                                    T
+                                                </span>
+                                                <span style="margin-left:8px;font-size:20px;font-weight:bold;color:#16252b">
+                                                    TripSense
+                                                </span>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding:24px 28px 0">
+                                                <span style="display:inline-block;padding:3px 10px;border-radius:4px;background:#e7f0fc;color:#245e9d;font-size:12px;font-weight:bold">
+                                                    %s
+                                                </span>
+                                                <h1 style="margin:12px 0 0;font-size:26px;line-height:1.3;color:#16252b">
+                                                    %s
+                                                </h1>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding:24px 28px">
+                                                <p style="margin:0 0 20px;color:#5d6f76">
+                                                    %s
+                                                </p>
+                                                <p>
+                                                    <strong>
+                                                        Itinerary:
+                                                    </strong>
+                                                    %s%s
+                                                </p>
+                                                <div style="margin-top:24px;padding:16px;background:#fbeceb;border-left:4px solid #d7312f;border-radius:4px">
+                                                    <span style="display:inline-block;padding:2px 7px;background:#ffffff;color:#b42318;border-radius:4px;font-size:12px;font-weight:bold">
+                                                        Disruption detected
+                                                    </span>
+                                                    <h2 style="font-size:16px;margin:12px 0 6px">
+                                                        What happened
+                                                    </h2>
+                                                    <p style="margin:0">
+                                                        %s
+                                                    </p>
+                                                    <h2 style="font-size:16px;margin:20px 0 6px">
+                                                        How this may affect you
+                                                    </h2>
+                                                    %s
+                                                </div>
+                                                <p style="font-size:14px;color:#5d6f76">
+                                                    Source: %s%s
+                                                </p>
+                                                <div style="padding:16px;background:#e7f0fc;border-left:4px solid #2878d0;border-radius:4px;margin-top:24px">
+                                                    <strong>
+                                                        Next step
+                                                    </strong>
+                                                    <br>
+                                                    Log in to TripSense to review this %s and decide what to do.
+                                                </div>
+                                                <p style="font-size:12px;color:#5d6f76;margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0">
+                                                    This is an automated assessment.
+                Verify important changes with your travel provider.
+                                                    <br>
+                                                    Alert reference: %s
+                                                </p>
+                                            </td>
+                                        </tr>
+                                    </table>
+                                </td>
+                            </tr>
+                        </table>
+                    </body>
+                </html>
                 """.formatted(escape(scope), escape(target), escape(explanation),
                         escape(alert.itineraryName()), activityAlert ? "<br><strong>Activity:</strong> " + escape(target) : "",
                         escape(alert.newsTitle()), htmlAssessment, escape(alert.newsSource()),

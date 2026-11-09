@@ -979,7 +979,9 @@ class AlertIntegrationTest {
         emailStore.sent(partial, alert.createdAt().plusSeconds(121));
         verdict(true); impactService.evaluateActivityForNews(activity, earthquake);
         var late = alertService.list(traveller.getId(), false, null, 20).content().getFirst();
-        assertThat(emailStore.claim(late.id(), alert.createdAt().plusSeconds(122))).isEmpty();
+        var followUp = emailStore.claim(late.id(), alert.createdAt().plusSeconds(240)).orElseThrow();
+        assertThat(followUp.relatedAlerts()).extracting(AlertResponse::id).containsExactly(late.id());
+        assertThat(followUp.key()).isNotEqualTo(partial.key());
         assertThat(alertService.list(traveller.getId(), false, null, 20).content()).hasSize(2);
     }
 
@@ -1486,5 +1488,32 @@ class AlertIntegrationTest {
             assertThat(firstBatch).isNotEqualTo(secondBatch);
             assertThat(targets.countByItineraryId(skiTrip.getId())).isEqualTo(1);
         } finally { executor.shutdownNow(); }
+    }
+
+    @Test void deletingAnImpactBeforeConfirmationStillRecordsItsAcceptedEmail() {
+        Impact original=evaluate();
+        var alert=alertService.list(traveller.getId(),false,null,20).content().getFirst();
+        var now=Instant.now().plusSeconds(1);
+        var accepted=emailStore.claim(alert.id(),now).orElseThrow();
+        impactService.deleteImpact(original.getId());
+        emailStore.sent(accepted,now);
+        assertThat(emailGroups.findById(AlertEmailGroup.key(skiTrip.getId(),earthquake.getId())))
+                .hasValueSatisfying(g -> assertThat(g.isDelivered()).isTrue());
+    }
+
+    @Test void groupReadIncludesOlderPagesAndLeavesLaterArrivalsUnread() {
+        Activity activity=new Activity(); activity.setName("Group activity"); activity.setItinerary(skiTrip);
+        activity.setCountry(skiTrip.getCountry()); activity=activityRepository.saveAndFlush(activity);
+        evaluate(); impactService.evaluateActivityForNews(activity,earthquake);
+        var page=alertService.list(traveller.getId(),false,null,1);
+        assertThat(page.hasMore()).isTrue();
+        Long anchor=page.content().getFirst().id();
+        assertThat(alertService.markGroupRead(anchor,traveller.getId()).unreadCount()).isZero();
+        Activity later=new Activity(); later.setName("Later group member"); later.setItinerary(skiTrip);
+        later.setCountry(skiTrip.getCountry()); later=activityRepository.saveAndFlush(later);
+        impactService.evaluateActivityForNews(later,earthquake);
+        assertThat(alertService.markGroupRead(anchor,traveller.getId()).unreadCount()).isEqualTo(1);
+        assertThatThrownBy(() -> alertService.markGroupRead(anchor,traveller.getId()+100000))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
     }
 }

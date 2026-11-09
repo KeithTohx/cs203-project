@@ -20,7 +20,7 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
     java.util.List<Alert> findEmailGroup(@Param("tripId") Long tripId, @Param("newsId") Long newsId);
 
     @Modifying
-    @Query("update Alert a set a.emailSuppressed = true, a.emailSentAt = null "
+    @Query("update Alert a set a.emailStatus = csd.tripsense.alert.EmailStatus.SUPPRESSED, a.emailSentAt = null "
             + "where a.id = :id and a.emailAttempts = :attempts and a.emailStatus in :states")
     int suppressEmail(Long id, int attempts, java.util.List<EmailStatus> states);
 
@@ -48,11 +48,18 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
             + " and v.impact.impacted = true and (v.impact.rejected = false or v.impact.rejected is null))")
     int markAllReadForUser(@Param("userId") Long userId, @Param("upToId") Long upToId, @Param("now") Instant now);
 
+    @Modifying
+    @Query("update Alert a set a.readAt = :now where a.readAt is null and a.id <= :upToId"
+            + " and a.id in (select v.id from Alert v where " + "v.impact.itinerary.user.id = :userId and v.impact.impacted = true "
+            + "and (v.impact.rejected = false or v.impact.rejected is null)"
+            + " and v.impact.itinerary.id = :tripId and v.impact.news.id = :newsId)")
+    int markGroupRead(Long userId, Long tripId, Long newsId, Long upToId, Instant now);
+
     @Query("select a from Alert a where a.id = :id and " + VISIBLE)
     Optional<Alert> findOwned(@Param("id") Long id, @Param("userId") Long userId);
 
     @Query("""
-            select a.id from Alert a where a.emailStatus in :states and (a.emailSuppressed = false or a.emailSuppressed is null) and a.emailNextAttemptAt <= :now
+            select a.id from Alert a where a.emailStatus in :states and a.emailNextAttemptAt <= :now
               and a.impact.impacted = true and (a.impact.rejected = false or a.impact.rejected is null)
               and (a.impact.itinerary.user.enabled = true or a.impact.itinerary.user.enabled is null)
             order by a.emailNextAttemptAt, a.id
@@ -65,7 +72,6 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
             update Alert a set a.emailNextAttemptAt = :next
             where a.id = :id and a.emailStatus = :state and a.emailAttempts = :attempts
               and a.emailNextAttemptAt < :next
-              and (a.emailSuppressed = false or a.emailSuppressed is null)
             """)
     int deferEmail(@Param("id") Long id, @Param("attempts") int attempts,
                    @Param("state") EmailStatus state, @Param("next") java.time.Instant next);
@@ -75,7 +81,6 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
             update Alert a set a.emailStatus = :sending, a.emailAttempts = a.emailAttempts + 1,
                                a.emailNextAttemptAt = :leaseUntil
             where a.id = :id and a.emailAttempts = :attempts and a.emailStatus in :states
-              and (a.emailSuppressed = false or a.emailSuppressed is null)
               and a.emailNextAttemptAt <= :now
             """)
     int claimEmail(@Param("id") Long id, @Param("attempts") int attempts,
@@ -87,7 +92,6 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
     @Query("""
             update Alert a set a.emailStatus = :state, a.emailSentAt = :sentAt, a.emailNextAttemptAt = :next
             where a.id = :id and a.emailAttempts = :attempts and a.emailStatus in :states
-              and (a.emailSuppressed = false or a.emailSuppressed is null)
             """)
     int finishEmail(@Param("id") Long id, @Param("attempts") int attempts,
                     @Param("states") java.util.List<EmailStatus> states, @Param("state") EmailStatus state,

@@ -346,6 +346,8 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
         if (change.newAlerts) addAlerts(change.newAlerts, { atTop: true });
 
         if (change.readIds) markLoadedRead(alert => change.readIds.has(alert.id));
+        if (change.readGroups) markLoadedRead(alert => change.readGroups.some(group =>
+            alert.itineraryId === group.itineraryId && alert.newsId === group.newsId && alert.id <= group.upToId));
 
         if (change.readUpToId !== undefined) {
             const upToId = change.readUpToId;

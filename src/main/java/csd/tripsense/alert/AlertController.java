@@ -58,6 +58,12 @@ public class AlertController {
         return alerts.markRead(id, userId(me));
     }
 
+    @PatchMapping("/{id}/group")
+    public AlertService.UnreadCount updateGroup(@PathVariable Long id,
+            @Valid @RequestBody AlertUpdateRequest request, @AuthenticationPrincipal CurrentUser me) {
+        return alerts.markGroupRead(id, userId(me));
+    }
+
     @Operation(summary = "Update all of your alerts",
             description = "Send {\"read\": true} to mark every alert as read, not just the loaded ones. "
                     + "Pass upToId (the newest alert id the user has seen) so alerts arriving meanwhile stay unread. "

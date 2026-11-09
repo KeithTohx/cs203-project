@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /** Short database transactions; no transaction or SQLite write lock spans an SMTP request. */
 @Service
+@org.springframework.context.annotation.DependsOn("alertSchemaMigration")
 public class AlertEmailStore {
     static final int MAX_ATTEMPTS = 3;
     static final List<EmailStatus> RETRYABLE = List.of(EmailStatus.PENDING, EmailStatus.SENDING);
@@ -51,6 +52,11 @@ public class AlertEmailStore {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Optional<Delivery> claim(Long id, Instant now) {
+        return claim(id, now, java.util.Set.of());
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Optional<Delivery> claim(Long id, Instant now, java.util.Set<String> confirmingGroups) {
         Alert requested = alerts.findById(id).orElse(null);
         if (requested == null || !RETRYABLE.contains(requested.getEmailStatus())
                 || requested.getEmailNextAttemptAt().isAfter(now)) return Optional.empty();
@@ -60,12 +66,16 @@ public class AlertEmailStore {
         var group = alerts.findEmailGroup(impact.getItinerary().getId(), impact.getNews().getId());
         Long tripId=impact.getItinerary().getId();
         Long newsId=impact.getNews().getId();
+        if (confirmingGroups.contains(AlertEmailGroup.key(tripId, newsId))) {
+            deferRetryable(group, now.plusSeconds(groupRecheckSeconds));
+            return Optional.empty();
+        }
         var deliveryGroup=emailGroups.findById(AlertEmailGroup.key(tripId,newsId));
         // The group retains its terminal state even if a sent impact/alert is subsequently deleted.
         var sent=group.stream().filter(a -> a.getEmailStatus()==EmailStatus.SENT).findFirst();
         boolean previouslyDelivered=deliveryGroup.map(AlertEmailGroup::isDelivered).orElse(false)
                 || sent.isPresent() || group.stream().anyMatch(a -> a.getEmailStatus()==EmailStatus.SUPPRESSED);
-        if (previouslyDelivered) {
+        if (previouslyDelivered && !deliveryGroup.map(AlertEmailGroup::isPartial).orElse(false)) {
             var state=deliveryGroup.orElseGet(() -> emailGroups.saveAndFlush(new AlertEmailGroup(
                     tripId,newsId,group.getFirst().getEmailDeliveryKey())));
             state.markDelivered(sent.map(Alert::getEmailSentAt).orElse(null));
@@ -82,12 +92,12 @@ public class AlertEmailStore {
         }
         // Failure belongs to the news/trip group. Late members inherit it rather than waiting forever.
         if (group.stream().anyMatch(a -> a.getEmailStatus() == EmailStatus.FAILED
-                || a.getEmailAttempts() >= MAX_ATTEMPTS)) {
+                || RETRYABLE.contains(a.getEmailStatus()) && a.getEmailAttempts() >= MAX_ATTEMPTS)) {
             for (Alert member : group) alerts.finishEmail(member.getId(), member.getEmailAttempts(), RETRYABLE,
                     EmailStatus.FAILED, null, now);
             return Optional.empty();
         }
-        Instant firstCreatedAt = group.stream().map(Alert::getCreatedAt).min(Comparator.naturalOrder()).orElse(now);
+        Instant firstCreatedAt = group.stream().filter(a -> RETRYABLE.contains(a.getEmailStatus())).map(Alert::getCreatedAt).min(Comparator.naturalOrder()).orElse(now);
         Instant deadline = firstCreatedAt.plusSeconds(maxGroupWaitSeconds);
         Instant settleUntil = firstCreatedAt.plusSeconds(initialGroupWaitSeconds);
         if (group.stream().allMatch(a -> a.getEmailAttempts() == 0) && now.isBefore(settleUntil)) {
@@ -100,7 +110,7 @@ public class AlertEmailStore {
             deferRetryable(group, recheck.isBefore(deadline) ? recheck : deadline);
             return Optional.empty();
         }
-        var members = group.stream().filter(a -> Boolean.TRUE.equals(a.getImpact().getImpacted())
+        var members = group.stream().filter(a -> RETRYABLE.contains(a.getEmailStatus())).filter(a -> Boolean.TRUE.equals(a.getImpact().getImpacted())
                 && !Boolean.TRUE.equals(a.getImpact().getRejected())).toList();
         if (members.isEmpty() || members.stream().anyMatch(a -> !RETRYABLE.contains(a.getEmailStatus())
                 || a.getEmailNextAttemptAt().isAfter(now))) return Optional.empty();
@@ -119,6 +129,10 @@ public class AlertEmailStore {
         // key before SMTP so a retry never derives its identity from the current visible leader.
         String deliveryKey = deliveryGroup.orElseGet(() -> emailGroups.saveAndFlush(new AlertEmailGroup(tripId, newsId,
                         group.getFirst().getEmailDeliveryKey()))).getDeliveryKey();
+        if (deliveryGroup.isPresent() && deliveryGroup.get().isDelivered()) {
+            deliveryKey = leader.getEmailDeliveryKey();
+            deliveryGroup.get().beginDelivery(deliveryKey);
+        }
         boolean partial=incomplete || targets.countUnresolved(tripId,newsId)>0
                 || evaluations.countLegacyIncomplete(tripId,newsId)>0;
         return Optional.of(new Delivery(leader.getId(), claims.getFirst().attempt(), deliveryKey,
@@ -143,12 +157,16 @@ public class AlertEmailStore {
             completed+=alerts.finishEmail(claim.id(),claim.attempt(),List.of(EmailStatus.SENDING),EmailStatus.SENT,now,now);
         }
         // An obsolete worker must not mark a newer replay/group delivered.
-        if (completed>0) {
+        boolean removed = delivery.claims().stream().allMatch(c -> !alerts.existsById(c.id()));
+        if (completed>0 || removed) {
             var summary=delivery.alert();
             var group=emailGroups.findById(AlertEmailGroup.key(summary.itineraryId(),summary.newsId()))
                     .orElseGet(() -> emailGroups.saveAndFlush(new AlertEmailGroup(
                             summary.itineraryId(),summary.newsId(),delivery.key())));
-            group.markDelivered(now);
+            if (group.getDeliveryKey().equals(delivery.key())) {
+                group.markDelivered(now);
+                group.setPartial(delivery.partialAssessment());
+            }
         }
     }
 

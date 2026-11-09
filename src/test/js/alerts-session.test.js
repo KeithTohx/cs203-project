@@ -19,17 +19,26 @@
                 calls.push({ account, kind: "all", upToId });
                 return { unreadCount: 0 };
             },
-            markAlertRead: async id => {
+            markAlertGroupRead: async id => {
                 calls.push({ account, kind: "one", id });
                 if (id === 1 && firstRead) await firstRead.promise;
             },
         };
         const document = { addEventListener() {}, querySelectorAll: () => [] };
         const createModule = new Function("api", "document", `
-            const clearInterval=()=>{}, clearTimeout=()=>{}, setInterval=()=>0, setTimeout=()=>0;
+            let intervals=0;
+            const clearInterval=()=>{intervals=0;}, clearTimeout=()=>{}, setInterval=()=>{intervals++; return 1;}, setTimeout=()=>0;
+            class EventSource {
+                static CLOSED=2;
+                constructor() { this.listeners={}; }
+                addEventListener(name, listener) { this.listeners[name]=listener; }
+                close() {}
+            }
             const escapeHtml=x=>x, findToastShelf=()=>null, newsTitleOf=x=>x, timeTag=x=>x, icon=()=>'';
             ${moduleSource}
             return { markAllAlertsRead, markAlertsRead, stopAlerts,
+                connect: () => { api.alertStreamUrl='/api/alerts/stream'; connectStream(); },
+                ready: () => state.stream.listeners.ready(), polling: () => intervals,
                 hold: promise => queueSave(() => promise), setUser: id => { state.userId=id; } };
         `);
         const alerts = createModule(api, document);
@@ -49,7 +58,7 @@
     }
     {
         const held = deferred(), f = fixture(held);
-        const groupSave = f.alerts.markAlertsRead([{ id: 1, readAt: null }, { id: 2, readAt: null }]);
+        const groupSave = f.alerts.markAlertsRead([{ id: 1, newsId: 1, readAt: null }, { id: 2, newsId: 2, readAt: null }]);
         await Promise.resolve();
         assert(f.calls.length === 1 && f.calls[0].account === "A", "First read should start as A");
         f.switchAccount(); held.resolve();
@@ -75,6 +84,24 @@
         held.resolve(); await oldSave;
         assert(f.calls.length === 1, "A's queued save must remain cancelled");
         passed.push("allow the next account's own saves immediately");
+    }
+    {
+        const f = fixture();
+        f.alerts.connect();
+        assert(f.alerts.polling() === 1, "Polling must start while SSE connects");
+        f.alerts.ready();
+        assert(f.alerts.polling() === 1, "A live stream must retain periodic history recovery");
+        passed.push("retain polling alongside SSE");
+    }
+    {
+        const f = fixture();
+        await f.alerts.markAlertsRead([
+            { id: 20, itineraryId: 1, newsId: 2, readAt: null },
+            { id: 19, itineraryId: 1, newsId: 2, readAt: null },
+        ]);
+        assert(f.calls.length === 1 && f.calls[0].id === 20,
+            "A group read must use one group request bounded by its newest member");
+        passed.push("mark persisted group through its newest displayed member");
     }
     globalThis.alertSessionTestResults = { ok: true, passed };
     globalThis.console?.log(`${passed.length} alert session tests passed`);

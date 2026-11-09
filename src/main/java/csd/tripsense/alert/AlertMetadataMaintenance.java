@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /** Cleans alert-owned metadata only; does not modify trips, assessments, or evaluation queue tasks. */
 @Component
+@org.springframework.context.annotation.DependsOn("alertSchemaMigration")
 public class AlertMetadataMaintenance {
     private final JdbcTemplate sql;
     public AlertMetadataMaintenance(JdbcTemplate sql) { this.sql=sql; }
@@ -29,7 +30,7 @@ public class AlertMetadataMaintenance {
                 + "where (delivered is null or delivered=0) and exists "
                 + "(select 1 from alert a join impact i on i.id=a.impact_id "
                 + "where i.itinerary_id=alert_email_group.itinerary_id and i.news_id=alert_email_group.news_id "
-                + "and (a.email_status='SENT' or a.email_suppressed=1))");
+                + "and (a.email_status='SENT' or a.email_status='SUPPRESSED'))");
         for (String table:new String[]{"alert_email_group","evaluation_batch","evaluation_target"}) {
             sql.update("delete from "+table+" where not exists (select 1 from itinerary i where i.id="+table+".itinerary_id)"
                     + " or not exists (select 1 from news n where n.id="+table+".news_id)");

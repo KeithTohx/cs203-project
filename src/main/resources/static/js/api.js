@@ -80,6 +80,7 @@ const realApi = {
     if (beforeId != null) params.set("beforeId", beforeId);
     return request(`/api/alerts?${params}`);
   },
+  markAlertGroupRead:id => request(`/api/alerts/${id}/group`, "PATCH", {read: true}),
   markAlertRead:id => request(`/api/alerts/${id}`, "PATCH", {read: true}),            // -> the alert. marking twice is fine
   // every unread alert up to upToId (the newest one shown), not just the ones loaded, so one arriving meanwhile stays unread.
   // null means no limit -> {unreadCount} left afterwards

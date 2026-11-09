@@ -16,6 +16,8 @@
  * and clients can reconnect; heartbeats are sent every 15 seconds.</li>
  * <li>PATCH /api/alerts/{id} with {"read": true}: marks one alert as read. Idempotent, owner-only,
  * requires the normal CSRF token.</li>
+ * <li>PATCH /api/alerts/{id}/group with {"read": true}: marks visible members of the same
+ * news/trip group read through the anchor id, including members on older pages.</li>
  * <li>PATCH /api/alerts?upToId= with {"read": true}: marks every alert of the user as read. Pass the
  * newest alert id shown so alerts that arrive meanwhile stay unread. Returns the unreadCount left
  * afterwards. Idempotent, requires the normal CSRF token.</li>
@@ -39,9 +41,9 @@
  * <p>SMTP retries use a two-minute claim lease, at most three attempts, and a stable
  * Message-ID. SENT means accepted by the configured SMTP transport, not confirmed inbox
  * delivery. SMTP cannot guarantee exactly-once delivery if acceptance succeeds but the
- * acknowledgement is lost. After SMTP acceptance, a database confirmation failure pauses new
- * sends and retries only confirmation on this worker; it does not mark the email failed or resend
- * it. That pending confirmation is held in memory, so a process crash before it is persisted can
+ * acknowledgement is lost. After SMTP acceptance, a database confirmation failure pauses only that group
+ * and retries its confirmation independently while other groups continue sending. It does not
+ * mark the accepted email failed or resend it. That pending confirmation is held in memory, so a process crash before it is persisted can
  * still cause a duplicate after lease recovery. The saved in-app alert remains available if email fails.
  *
  * <p>Email groups wait at most 120 seconds from the first saved alert for missing assessments,
@@ -49,9 +51,10 @@
  * deferred for 30 seconds between checks, and due work is ordered by its next-attempt time.
  * Override with alerts.email.max-group-wait-seconds and alerts.email.group-recheck-seconds.
  * A terminally failed group marks late members FAILED too; it is not retried automatically.
- * Later assessments remain available in-app without sending a second email for the same group.
- * Their API status is SUPPRESSED, stored as a separate marker for compatibility with deployed
- * SQLite email_status constraints that only allow PENDING, SENDING, SENT and FAILED.
+ * Later assessments from a partial summary receive a follow-up email containing only unsent
+ * impacts, with a fresh delivery identity. Additions after a complete summary are SUPPRESSED.
+ * Suppression is a real email status; a transactional SQLite schema upgrade preserves existing
+ * rows and converts the former compatibility marker on startup.
  * A first email also waits 30 seconds (alerts.email.initial-group-wait-seconds) so activities
  * created just after the itinerary can join the initial summary. This does not wait indefinitely
  * for activities a traveller might add later.

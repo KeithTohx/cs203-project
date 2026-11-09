@@ -54,6 +54,15 @@ public class AlertService {
         return AlertResponse.from(alerts.save(alert));
     }
 
+    @Transactional
+    public UnreadCount markGroupRead(Long id, Long userId) {
+        requireActiveAccount(userId);
+        Alert anchor = alerts.findOwned(id, userId).orElseThrow(() -> new AlertNotFoundException(id));
+        alerts.markGroupRead(userId, anchor.getImpact().getItinerary().getId(),
+                anchor.getImpact().getNews().getId(), id, Instant.now());
+        return new UnreadCount(alerts.countUnread(userId));
+    }
+
     // what is left unread after marking all as read. not always 0, since alerts newer than upToId are skipped
     public record UnreadCount(long unreadCount) {}
 

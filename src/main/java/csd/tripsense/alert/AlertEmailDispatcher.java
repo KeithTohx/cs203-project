@@ -17,9 +17,9 @@ public class AlertEmailDispatcher {
     private final AlertRepository alerts;
     private final AlertEmailStore store;
     private final AlertEmailSender sender;
-    // Only the single email worker changes this; the scheduler reads it to retry confirmation.
+    // Accepted messages retry confirmation independently; other groups can continue sending.
     private record AcceptedEmail(AlertEmailStore.Delivery delivery, Instant acceptedAt) {}
-    private volatile AcceptedEmail awaitingConfirmation;
+    private final ConcurrentMap<String, AcceptedEmail> awaitingConfirmation = new ConcurrentHashMap<>();
     private final ExecutorService worker = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(100), task -> {
                 Thread thread = new Thread(task, "alert-email"); thread.setDaemon(true); return thread;
@@ -35,10 +35,9 @@ public class AlertEmailDispatcher {
     @Scheduled(scheduler = "alertTaskScheduler", fixedDelayString = "${alerts.email.retry-interval-ms:15000}", initialDelay = 15000)
     public void retryPending() {
         if (!sender.enabled()) return;
-        if (awaitingConfirmation != null) {
-            try { worker.execute(this::confirmAcceptedEmail); }
+        if (!awaitingConfirmation.isEmpty()) {
+            try { worker.execute(this::confirmAcceptedEmails); }
             catch (RejectedExecutionException exception) { log.warn("Email confirmation queue busy; will retry"); }
-            return;
         }
         for (Long id : alerts.findEmailReady(AlertEmailStore.RETRYABLE, Instant.now(), PageRequest.of(0, 50))) enqueue(id);
     }
@@ -50,9 +49,10 @@ public class AlertEmailDispatcher {
     }
 
     void deliver(Long id) {
-        if (!sender.enabled() || awaitingConfirmation != null) return;
+        if (!sender.enabled()) return;
         try {
-            var claimed = store.claim(id, Instant.now());
+            var claimed = awaitingConfirmation.isEmpty() ? store.claim(id, Instant.now())
+                    : store.claim(id, Instant.now(), java.util.Set.copyOf(awaitingConfirmation.keySet()));
             if (claimed.isEmpty()) return;
             var delivery = claimed.get();
             try {
@@ -65,22 +65,31 @@ public class AlertEmailDispatcher {
                 return;
             }
             // SMTP has accepted the message. A database failure is not a send failure.
-            awaitingConfirmation = new AcceptedEmail(delivery, Instant.now());
-            confirmAcceptedEmail();
+            String group = groupKey(delivery);
+            awaitingConfirmation.put(group, new AcceptedEmail(delivery, Instant.now()));
+            confirmAcceptedEmail(group);
         } catch (RuntimeException exception) {
             log.warn("Email delivery deferred for alert {}", id);
         }
     }
 
-    private void confirmAcceptedEmail() {
-        var accepted = awaitingConfirmation;
+    private static String groupKey(AlertEmailStore.Delivery delivery) {
+        var alert = delivery.alert();
+        return alert == null ? delivery.key() : AlertEmailGroup.key(alert.itineraryId(), alert.newsId());
+    }
+
+    private void confirmAcceptedEmails() {
+        for (String group : awaitingConfirmation.keySet()) confirmAcceptedEmail(group);
+    }
+
+    private void confirmAcceptedEmail(String group) {
+        var accepted = awaitingConfirmation.get(group);
         if (accepted == null) return;
         try {
             store.sent(accepted.delivery(), accepted.acceptedAt());
-            awaitingConfirmation = null;
+            awaitingConfirmation.remove(group, accepted);
         } catch (RuntimeException exception) {
-            // Pause new sends until the accepted email is recorded, even if its lease expires.
-            // Retrying this database operation must never repeat the SMTP call.
+            // Retain only this group's confirmation; never repeat its accepted SMTP request.
             log.warn("Email accepted for alert {}; database confirmation deferred", accepted.delivery().alertId());
         }
     }

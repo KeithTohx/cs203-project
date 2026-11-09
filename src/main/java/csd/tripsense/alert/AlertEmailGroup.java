@@ -9,6 +9,7 @@ public class AlertEmailGroup {
     @Id private String id;
     private String deliveryKey;
     private Boolean delivered;
+    private Boolean partial;
     private java.time.Instant sentAt;
     @jakarta.persistence.Column(name="itinerary_id")
     private Long itineraryId;
@@ -27,5 +28,8 @@ public class AlertEmailGroup {
         delivered=true;
         if (sentAt==null) sentAt=when;
     }
+    public boolean isPartial() { return Boolean.TRUE.equals(partial); }
+    public void beginDelivery(String key) { deliveryKey=key; delivered=false; sentAt=null; }
+    public void setPartial(boolean partial) { this.partial=partial; }
     public String getDeliveryKey() { return deliveryKey; }
 }

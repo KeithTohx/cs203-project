@@ -202,6 +202,7 @@ async function refresh() {
         const sameCount = loadedCount === countBefore;
         const nothingChanged = !isFirstLoad && sameCount && isSameList(state.alerts, loadedAlerts);
 
+        const listChanged = !isSameList(state.alerts, loadedAlerts);
         state.alerts = loadedAlerts;
         state.unreadCount = loadedCount;
         if (!nothingChanged) draw();
@@ -213,8 +214,8 @@ async function refresh() {
         // eg reads in another tab. the first load has nothing to compare with, so it never counts
         const countChanged = state.unreadCount !== countBefore;
         const expectedCount = countBefore + newAlerts.length;
-        const outOfStep = !isFirstLoad && state.unreadCount !== expectedCount;
-        if (newAlerts.length || countChanged) tellListeners({ newAlerts, outOfStep });
+        const outOfStep = !isFirstLoad && (state.unreadCount !== expectedCount || listChanged && !newAlerts.length);
+        if (newAlerts.length || countChanged || outOfStep) tellListeners({ newAlerts, outOfStep });
     } catch (error) {
         // a failed load keeps the last alerts and tries again on the next event or check
         if (error.status === 401) sessionEnded();
@@ -257,7 +258,7 @@ function connectStream() {
 
     const stream = new EventSource(api.alertStreamUrl);
     stream.addEventListener("ready", () => {
-        stopPolling();   // live again, so the checks are not needed
+        startPolling();   // recover missed events and read/reject changes from other tabs
         refresh();
     });
     stream.addEventListener("alert", refreshAfterBurst);
@@ -268,6 +269,7 @@ function connectStream() {
         refresh();   // finds out whether the session ended, and if so sends the user to log in
     });
     state.stream = stream;
+    startPolling();
 }
 
 // ---------------------------------------------------------------- marking read, used by the bell and the alerts page
@@ -287,13 +289,20 @@ export async function markAlertsRead(alerts) {
     }
     state.unreadCount = Math.max(0, state.unreadCount - unread.length);
     draw();
-    tellListeners({ readIds: unreadIds });
+    const coveredGroups = groupAlerts(unread).map(group => ({
+        itineraryId: group.itineraryId, newsId: group.alerts[0].newsId,
+        upToId: Math.max(...group.alerts.map(alert => alert.id)),
+    }));
+    tellListeners({ readIds: unreadIds, readGroups: coveredGroups });
 
     // queued as one save, so nothing reloads between two alerts of the same group
+    // Mark the persisted group, including members outside the loaded page. Bound each
+    // request by the newest displayed member so later arrivals remain unread.
     const saveEach = async () => {
-        for (const alert of unread) {
+        for (const group of groupAlerts(unread)) {
             if (isFromOldSession(session)) return;
-            await api.markAlertRead(alert.id);
+            const newestId = Math.max(...group.alerts.map(alert => alert.id));
+            await api.markAlertGroupRead(newestId);
         }
     };
 

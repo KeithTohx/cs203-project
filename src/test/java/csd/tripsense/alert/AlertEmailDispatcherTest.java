@@ -113,7 +113,7 @@ class AlertEmailDispatcherTest {
     }
 
     @Test
-    void acceptedEmailRetriesOnlyDatabaseConfirmationAndPausesFurtherSends() throws Exception {
+    void acceptedEmailRetriesConfirmationWithoutBlockingOtherGroups() throws Exception {
         when(emailSender.enabled()).thenReturn(true);
         when(emailStore.claim(eq(ALERT_ID), any(Instant.class))).thenReturn(Optional.of(delivery));
         var attempts = new AtomicInteger();
@@ -128,13 +128,12 @@ class AlertEmailDispatcherTest {
         });
 
         dispatcher.deliver(ALERT_ID);
-        dispatcher.deliver(ALERT_ID);
         dispatcher.deliver(2L);
         verify(emailStore, times(1)).claim(eq(ALERT_ID), any(Instant.class));
-        verify(emailStore, never()).claim(eq(2L), any(Instant.class));
+        verify(emailStore).claim(eq(2L), any(Instant.class), any());
         verify(emailStore, never()).failed(any(), any());
 
-        // No due-row lookup is needed: confirmation has its own retry path.
+        // Confirmation retries run before queued sends.
         dispatcher.retryPending();
         var nextAlert = mock(AlertResponse.class);
         when(nextAlert.id()).thenReturn(2L);
@@ -143,10 +142,25 @@ class AlertEmailDispatcherTest {
 
         verify(emailSender, times(1)).send(delivery);
         verify(emailStore, never()).failed(any(), any());
-        verifyNoInteractions(alertRepository);
+
         var acceptedTimes = ArgumentCaptor.forClass(Instant.class);
         verify(emailStore, times(2)).sent(eq(delivery), acceptedTimes.capture());
         assertThat(acceptedTimes.getAllValues().get(1)).isEqualTo(acceptedTimes.getAllValues().get(0));
+    }
+
+    @Test void permanentConfirmationFailureDoesNotStopAnotherDelivery() throws Exception {
+        when(emailSender.enabled()).thenReturn(true);
+        when(emailStore.claim(eq(ALERT_ID), any(Instant.class))).thenReturn(Optional.of(delivery));
+        doThrow(new DataAccessResourceFailureException("unavailable confirmation"))
+                .when(emailStore).sent(eq(delivery), any(Instant.class));
+        var other = new AlertEmailStore.Delivery(2L, 1, "other-group", "other@example.com", null);
+        when(emailStore.claim(eq(2L), any(Instant.class), any())).thenReturn(Optional.of(other));
+        dispatcher.deliver(ALERT_ID);
+        dispatcher.deliver(2L);
+        verify(emailSender).send(delivery);
+        verify(emailSender).send(other);
+        verify(emailStore).sent(eq(other), any(Instant.class));
+        verify(emailStore, never()).failed(any(), any());
     }
 
     // ===== RETRY PENDING TESTS =====
