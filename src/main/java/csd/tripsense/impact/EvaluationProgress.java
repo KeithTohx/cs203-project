@@ -16,10 +16,6 @@ public class EvaluationProgress {
         this.batches=batches; this.targets=targets;
     }
     @Transactional(propagation=Propagation.REQUIRES_NEW)
-    public String begin(Long tripId,Long newsId) {
-        return batches.save(new EvaluationBatch(tripId,newsId,Instant.now())).getId();
-    }
-    @Transactional(propagation=Propagation.REQUIRES_NEW)
     public String begin(Long tripId,Long newsId,boolean overall,List<Long> activities) {
         List<String> keys=new ArrayList<>();
         if (overall) register(tripId,newsId,null,keys);

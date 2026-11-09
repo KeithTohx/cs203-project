@@ -63,11 +63,12 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
     @org.springframework.data.jpa.repository.Modifying
     @Query("""
             update Alert a set a.emailNextAttemptAt = :next
-            where a.id = :id and a.emailStatus = :pending and a.emailAttempts = :attempts
+            where a.id = :id and a.emailStatus = :state and a.emailAttempts = :attempts
               and a.emailNextAttemptAt < :next
+              and (a.emailSuppressed = false or a.emailSuppressed is null)
             """)
     int deferEmail(@Param("id") Long id, @Param("attempts") int attempts,
-                   @Param("pending") EmailStatus pending, @Param("next") java.time.Instant next);
+                   @Param("state") EmailStatus state, @Param("next") java.time.Instant next);
 
     @org.springframework.data.jpa.repository.Modifying
     @Query("""

@@ -25,6 +25,7 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 import org.junit.jupiter.api.AfterEach;
@@ -872,10 +873,15 @@ class AlertIntegrationTest {
         assertThat(alertService.list(traveller.getId(), false, null, 20).content()).hasSize(1);
     }
 
+    // Explicitly simulate rows persisted before per-target completion tracking was introduced.
+    private String legacyBatch(Long tripId, Long newsId) {
+        return batches.saveAndFlush(new csd.tripsense.impact.EvaluationBatch(tripId, newsId, Instant.now())).getId();
+    }
+
     @Test void itineraryAndActivitiesAreClaimedTogetherOnlyAfterAssessmentCompletes() {
         Activity activity = new Activity(); activity.setItinerary(skiTrip); activity.setCountry(skiTrip.getCountry());
         activity.setName("Mount Batur trek"); activity = activityRepository.saveAndFlush(activity);
-        String batch = progress.begin(skiTrip.getId(), earthquake.getId());
+        String batch = legacyBatch(skiTrip.getId(), earthquake.getId());
         evaluate();
         Long tripAlert = alertService.list(traveller.getId(), false, null, 20).content().getFirst().id();
         assertThat(emailStore.claim(tripAlert, java.time.Instant.now().plusSeconds(1))).isEmpty();
@@ -943,7 +949,7 @@ class AlertIntegrationTest {
     }
 
     @Test void completedPartialEvaluationSendsAvailableResultsWithoutWaitingForMissingVerdicts() {
-        String batch = progress.begin(skiTrip.getId(), earthquake.getId());
+        String batch = legacyBatch(skiTrip.getId(), earthquake.getId());
         evaluate(); progress.finish(batch, true);
         var alert = alertService.list(traveller.getId(), false, null, 20).content().getFirst();
         var delivery = emailStore.claim(alert.id(), alert.createdAt().plusSeconds(1)).orElseThrow();
@@ -954,7 +960,7 @@ class AlertIntegrationTest {
         Activity activity = new Activity(); activity.setItinerary(skiTrip); activity.setCountry(skiTrip.getCountry());
         activity.setName("Not yet assessed"); activity = activityRepository.saveAndFlush(activity);
         evaluate();
-        progress.begin(skiTrip.getId(), earthquake.getId());
+        legacyBatch(skiTrip.getId(), earthquake.getId());
         AlertResponse alert = alertService.list(traveller.getId(), false, null, 20).content().getFirst();
         var now = alert.createdAt().plusSeconds(1);
         assertThat(emailStore.claim(alert.id(), now)).isEmpty();
@@ -1015,7 +1021,7 @@ class AlertIntegrationTest {
             other.setName("Waiting trip " + i); other = itineraryRepository.saveAndFlush(other);
             Activity missing = new Activity(); missing.setItinerary(other); missing.setCountry(skiTrip.getCountry());
             missing.setName("Missing assessment"); activityRepository.saveAndFlush(missing);
-            progress.begin(other.getId(), earthquake.getId());
+            legacyBatch(other.getId(), earthquake.getId());
             blocked.add(pendingAt(other, java.time.Instant.EPOCH, now).getId());
         }
         Alert healthy = pendingAt(skiTrip, java.time.Instant.EPOCH.plusMillis(1), now);
@@ -1084,6 +1090,57 @@ class AlertIntegrationTest {
         var saved = alertRepository.findById(id).orElseThrow();
         assertThat(saved.getEmailStatus()).isEqualTo(EmailStatus.SENT);
         assertThat(saved.getEmailSentAt()).isNotNull();
+    }
+
+    @Test void expiredSendingMemberIsDeferredUntilItsOtherGroupMemberIsReady() {
+        Activity activity = new Activity(); activity.setItinerary(skiTrip); activity.setCountry(skiTrip.getCountry());
+        activity.setName("Trek"); activity = activityRepository.saveAndFlush(activity);
+        evaluate(); impactService.evaluateActivityForNews(activity, earthquake);
+        var group = alertRepository.findEmailGroup(skiTrip.getId(), earthquake.getId());
+        Long firstId = group.getFirst().getId();
+        Long secondId = group.getLast().getId();
+        var now = Instant.now().truncatedTo(ChronoUnit.MILLIS).plusSeconds(1);
+        var original = emailStore.claim(firstId, now).orElseThrow();
+        // Simulate persisted members with different recovery deadlines after a stopped worker.
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            alertRepository.finishEmail(firstId, 1, AlertEmailStore.RETRYABLE,
+                    EmailStatus.SENDING, null, now.plusSeconds(1));
+            alertRepository.finishEmail(secondId, 1, AlertEmailStore.RETRYABLE,
+                    EmailStatus.SENDING, null, now.plusSeconds(60));
+        });
+
+        assertThat(emailStore.claim(firstId, now.plusSeconds(2))).isEmpty();
+
+        var deferred = alertRepository.findById(firstId).orElseThrow();
+        assertThat(deferred.getEmailNextAttemptAt()).isEqualTo(now.plusSeconds(60));
+        assertThat(deferred.getEmailStatus()).isEqualTo(EmailStatus.SENDING);
+        assertThat(deferred.getEmailAttempts()).isEqualTo(1);
+        assertThat(alertRepository.findEmailReady(AlertEmailStore.RETRYABLE, now.plusSeconds(17),
+                org.springframework.data.domain.PageRequest.of(0, 10000))).doesNotContain(firstId, secondId);
+        var recovered = emailStore.claim(firstId, now.plusSeconds(60)).orElseThrow();
+        assertThat(recovered.claims()).hasSize(2).allSatisfy(c -> assertThat(c.attempt()).isEqualTo(2));
+        assertThat(recovered.key()).isEqualTo(original.key());
+        emailStore.sent(original, now.plusSeconds(61));
+        assertThat(alertRepository.findById(firstId).orElseThrow().getEmailStatus()).isEqualTo(EmailStatus.SENDING);
+    }
+
+    @Test void expiredSendingMemberIsDeferredWhileItsAssessmentBatchStillRuns() {
+        evaluate();
+        Long id = newestAlertId(traveller);
+        var now = Instant.now().truncatedTo(ChronoUnit.MILLIS).plusSeconds(1);
+        emailStore.claim(id, now).orElseThrow();
+        new TransactionTemplate(transactionManager).executeWithoutResult(status ->
+                alertRepository.finishEmail(id, 1, AlertEmailStore.RETRYABLE,
+                        EmailStatus.SENDING, null, now.plusSeconds(1)));
+        String batch = progress.begin(skiTrip.getId(), earthquake.getId(), true, java.util.List.of());
+
+        assertThat(emailStore.claim(id, now.plusSeconds(2))).isEmpty();
+
+        assertThat(alertRepository.findById(id).orElseThrow().getEmailNextAttemptAt()).isEqualTo(now.plusSeconds(32));
+        assertThat(alertRepository.findEmailReady(AlertEmailStore.RETRYABLE, now.plusSeconds(17),
+                org.springframework.data.domain.PageRequest.of(0, 10000))).doesNotContain(id);
+        progress.finish(batch, false);
+        assertThat(emailStore.claim(id, now.plusSeconds(32))).isPresent();
     }
 
     @Test void expiredEmailLeaseCanBeRecoveredAfterAWorkerRestart() {

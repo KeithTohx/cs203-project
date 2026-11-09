@@ -77,7 +77,7 @@ public class AlertEmailStore {
         Instant nextReady = group.stream().filter(a -> RETRYABLE.contains(a.getEmailStatus()))
                 .map(Alert::getEmailNextAttemptAt).max(Comparator.naturalOrder()).orElse(now);
         if (nextReady.isAfter(now)) {
-            deferPending(group, nextReady);
+            deferRetryable(group, nextReady);
             return Optional.empty();
         }
         // Failure belongs to the news/trip group. Late members inherit it rather than waiting forever.
@@ -91,13 +91,13 @@ public class AlertEmailStore {
         Instant deadline = firstCreatedAt.plusSeconds(maxGroupWaitSeconds);
         Instant settleUntil = firstCreatedAt.plusSeconds(initialGroupWaitSeconds);
         if (group.stream().allMatch(a -> a.getEmailAttempts() == 0) && now.isBefore(settleUntil)) {
-            deferPending(group, settleUntil);
+            deferRetryable(group, settleUntil);
             return Optional.empty();
         }
         boolean incomplete = evaluations.countRunning(tripId, newsId, now) != 0;
         if (incomplete && now.isBefore(deadline)) {
             Instant recheck = now.plusSeconds(groupRecheckSeconds);
-            deferPending(group, recheck.isBefore(deadline) ? recheck : deadline);
+            deferRetryable(group, recheck.isBefore(deadline) ? recheck : deadline);
             return Optional.empty();
         }
         var members = group.stream().filter(a -> Boolean.TRUE.equals(a.getImpact().getImpacted())
@@ -117,8 +117,7 @@ public class AlertEmailStore {
         Alert leader = members.getFirst();
         // Anchor the first attempt to the full group, including rejected members. Persist the
         // key before SMTP so a retry never derives its identity from the current visible leader.
-        String deliveryKey = emailGroups.findById(AlertEmailGroup.key(tripId, newsId))
-                .orElseGet(() -> emailGroups.saveAndFlush(new AlertEmailGroup(tripId, newsId,
+        String deliveryKey = deliveryGroup.orElseGet(() -> emailGroups.saveAndFlush(new AlertEmailGroup(tripId, newsId,
                         group.getFirst().getEmailDeliveryKey()))).getDeliveryKey();
         boolean partial=incomplete || targets.countUnresolved(tripId,newsId)>0
                 || evaluations.countLegacyIncomplete(tripId,newsId)>0;
@@ -127,9 +126,13 @@ public class AlertEmailStore {
                 members.stream().map(AlertResponse::from).toList(), List.copyOf(claims), partial));
     }
 
-    private void deferPending(List<Alert> group, Instant next) {
+    private void deferRetryable(List<Alert> group, Instant next) {
         for (Alert member : group) {
-            alerts.deferEmail(member.getId(), member.getEmailAttempts(), EmailStatus.PENDING, next);
+            if (RETRYABLE.contains(member.getEmailStatus())) {
+                // Keep an expired SENDING member out of the due queue while its group waits.
+                // Match state and attempt so a newer worker's claim cannot be overwritten.
+                alerts.deferEmail(member.getId(), member.getEmailAttempts(), member.getEmailStatus(), next);
+            }
         }
     }
 
