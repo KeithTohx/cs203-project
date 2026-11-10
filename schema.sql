@@ -154,6 +154,7 @@ create table audit_log {
     action varchar not null,   -- LOGIN, LOGIN_FAILED, LOGOUT, REGISTER, PROFILE_UPDATED,
                                -- ACCOUNT_DISABLED, ACCOUNT_ENABLED, ACCOUNT_DELETED,
                                -- ITINERARY_CREATED, ITINERARY_UPDATED, ITINERARY_DELETED
+                               -- SQL_QUERY
     target_id integer,         -- the ACCOUNT it was done to / about (no foreign key: the record must outlive it)
     details varchar(500)
 }

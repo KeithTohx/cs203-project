@@ -15,6 +15,7 @@ export const AUDIT_ACTIONS = [
     { value: "ACCOUNT_ENABLED", label: "Enabled account" },
     { value: "ACCOUNT_DELETED", label: "Deleted account" },
     { value: "ROLE_CHANGED", label: "Changed role" },
+    { value: "SQL_QUERY", label: "Query database" },
     { value: "ACCOUNT_CREATED", label: "Created account" },
     // only the admin console makes these for now
     { value: "ACTIVITY_CREATED", label: "Created activity" },

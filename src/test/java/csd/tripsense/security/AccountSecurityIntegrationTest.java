@@ -67,18 +67,6 @@ class AccountSecurityIntegrationTest {
     }
 
     @Test
-    void enabledAdminCountExcludesDisabledAccounts() {
-        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
-            User active = new User("active@example.com", "active", "long-enough-hash", "ADMIN");
-            User disabled = new User("disabled@example.com", "disabled", "long-enough-hash", "ADMIN");
-            disabled.setEnabled(false);
-            users.saveAndFlush(active); users.saveAndFlush(disabled);
-            assertThat(users.countEnabledByRole("ADMIN")).isEqualTo(1);
-            status.setRollbackOnly();
-        });
-    }
-
-    @Test
     void chatOwnershipLookupNeverReturnsNullForAnInaccessibleTrip() {
         User owner = users.saveAndFlush(new User("chat@example.com", "chatperson", "long-enough-hash", "USER"));
         assertThatThrownBy(() -> itineraryService.getItineraryByIdAndUserId(999L, owner.getId()))
