@@ -99,6 +99,7 @@ const realApi = {
   generateRecommendations:itineraryId => request("/api/recommendation/generate", "POST", {itineraryId}),   // slow: asks the model once per impact without one -> every current one, worst first
   chat:       (itineraryId, message) => request(`/api/itinerary/${itineraryId}/chat`, "POST", {message}),   // -> {role: "assistant", content}
   chatHistory:itineraryId => request(`/api/itinerary/${itineraryId}/chat/history`),   // -> [{role: "user" | "assistant", content}], oldest first
+  chatStatus: itineraryId => request(`/api/itinerary/${itineraryId}/chat/status`),    // -> {answering}, true while an answer is still being written
   resetChat:  itineraryId => request(`/api/itinerary/${itineraryId}/chat`, "DELETE"),
   // admin only, one page at a time -> {content, page, size, totalElements, totalPages}
   adminUsers: ({search = "", page = 0, size = 20} = {}) => request(`/api/admin/users?${new URLSearchParams({search, page, size})}`),   // search matches part of the email or username

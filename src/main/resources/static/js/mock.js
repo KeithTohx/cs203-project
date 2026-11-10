@@ -196,6 +196,8 @@ const visibleAlert = alert => {
 };
 
 // itinerary id -> [{ role, content }], oldest first. john's ski trip starts with a short conversation
+// the itineraries whose chat is still waiting on an answer, like ChatbotServiceImpl.answering
+const ANSWERING = new Set();
 const CHATS = {
     1: [
         { role: "user", content: "Is my ski trip affected by anything?" },
@@ -1062,10 +1064,23 @@ export const mockApi = {
             role: "assistant",
             content: `(mock reply) You asked about itinerary ${itineraryId}: "${message}". I would check the affected activities and suggest alternatives.`,
         };
+        // like the backend: one question at a time, and the answer is saved even if the page has gone
+        if (ANSWERING.has(Number(itineraryId))) {
+            return fail(409, "The assistant is still answering your last question. Wait for that answer first.");
+        }
         const conversation = CHATS[itineraryId] ?? (CHATS[itineraryId] = []);
-        conversation.push({ role: "user", content: message }, reply);
+        conversation.push({ role: "user", content: message });
+        ANSWERING.add(Number(itineraryId));
 
-        return new Promise(resolve => setTimeout(() => resolve(structuredClone(reply)), 700));
+        return new Promise(resolve => setTimeout(() => {
+            conversation.push(reply);
+            ANSWERING.delete(Number(itineraryId));
+            resolve(structuredClone(reply));
+        }, 700));
+    },
+    chatStatus: itineraryId => {
+        if (requireLogin() || !myItinerary(itineraryId)) return requireLogin() || fail(404, "Itinerary not found.");
+        return respondWith({ answering: ANSWERING.has(Number(itineraryId)) });
     },
     chatHistory: itineraryId => {
         if (requireLogin() || !myItinerary(itineraryId)) return requireLogin() || fail(404, "Itinerary not found.");

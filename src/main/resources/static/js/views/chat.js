@@ -191,29 +191,91 @@ function loseSession() {
     handleAuthLost();
 }
 
+// how often a reloaded page checks whether the answer it is waiting for has been saved
+const ANSWER_CHECK_MS = 2000;
+let answerCheckTimer = null;
+
+// an unknown status counts as not answering, so a failed check never leaves the chat stuck waiting
+async function isStillAnswering(itineraryId) {
+    try {
+        const status = await api.chatStatus(itineraryId);
+        return Boolean(status?.answering);
+    } catch (error) {
+        if (error.status === 401) throw error;
+        return false;
+    }
+}
+
+// the question was asked before a reload, or in another tab, and the answer is still being written.
+// the backend saves it once it is done, so check back until it is there and then show it
+function waitForAnswer(itineraryId) {
+    clearTimeout(answerCheckTimer);
+
+    answerCheckTimer = setTimeout(async () => {
+        const isStale = itineraryId !== currentItineraryId || !panel.open;
+        if (isStale) return;   // opening the panel again starts a fresh load
+
+        try {
+            const stillAnswering = await isStillAnswering(itineraryId);
+            if (itineraryId !== currentItineraryId) return;
+
+            if (stillAnswering) {
+                waitForAnswer(itineraryId);
+            } else {
+                await loadHistory(itineraryId);
+                elements.input.focus();
+            }
+        } catch (error) {
+            if (error.status === 401) loseSession();
+        }
+    }, ANSWER_CHECK_MS);
+}
+
 async function loadHistory(itineraryId) {
+    clearTimeout(answerCheckTimer);
     elements.log.innerHTML = "";
     elements.emptyState.hidden = true;
     elements.clearButton.hidden = true;
     const loadingIndicator = appendTypingIndicator();
 
     try {
-        const messages = (await api.chatHistory(itineraryId)) ?? [];
+        const [messages, stillAnswering] = await Promise.all([
+            api.chatHistory(itineraryId),
+            isStillAnswering(itineraryId),
+        ]);
         if (itineraryId !== currentItineraryId) return;
 
         // the backend only stores what the user and the assistant said, but skip anything else just in case
-        const conversation = messages.filter(message => message.role === "user" || message.role === "assistant");
-        if (!conversation.length) return showEmptyState();
+        const conversation = (messages ?? []).filter(message => message.role === "user" || message.role === "assistant");
+        if (!conversation.length && !stillAnswering) {
+            setWaiting(false);
+            return showEmptyState();
+        }
 
         elements.log.innerHTML = "";
         for (const message of conversation) {
             appendMessage(message.content, message.role);
+        }
+
+        if (stillAnswering) {
+            appendTypingIndicator();
+            setWaiting(true);
+            waitForAnswer(itineraryId);
+            return;
+        }
+        setWaiting(false);
+
+        // the question is saved before the model is asked, so a reply that failed leaves it on its own
+        const lastMessage = conversation.at(-1);
+        if (lastMessage.role === "user") {
+            appendMessage("This question didn't get an answer. Please ask it again.", "error");
         }
     } catch (error) {
         if (error.status === 401) return loseSession();
         if (itineraryId !== currentItineraryId) return;
 
         // chatting still works without the old messages, so this isn't a dead end
+        setWaiting(false);
         replaceMessage(loadingIndicator, "Couldn't load earlier messages.", "error");
     }
 }
@@ -228,12 +290,25 @@ async function sendQuestion(text) {
 
     const typingIndicator = appendTypingIndicator();
     setWaiting(true);
+    // set when the reload below takes over, so the panel keeps waiting for the earlier answer
+    let isWaitingForEarlierAnswer = false;
 
     try {
         const response = await api.chat(itineraryId, questionText);
         replaceMessage(typingIndicator, response?.content ?? "No reply.", "assistant");
     } catch (error) {
         if (error.status === 401) return loseSession();
+
+        // an earlier question is still being answered, eg one asked before a reload. this one was
+        // not saved, so it goes back in the box and the panel shows the earlier answer arriving
+        if (error.status === 409) {
+            isWaitingForEarlierAnswer = true;
+            if (itineraryId !== currentItineraryId) return;
+            await loadHistory(itineraryId);
+            elements.input.value = questionText;
+            updateComposer();
+            return;
+        }
 
         // a server error here nearly always means the model is down, which the user can't fix
         const isServerError = error.status >= 500;
@@ -243,7 +318,7 @@ async function sendQuestion(text) {
         replaceMessage(typingIndicator, message, "error");
     } finally {
         // if the user switched trips while waiting, the new trip's panel has its own state
-        if (itineraryId === currentItineraryId) {
+        if (itineraryId === currentItineraryId && !isWaitingForEarlierAnswer) {
             setWaiting(false);
             scrollToLatest();
             elements.input.focus();
