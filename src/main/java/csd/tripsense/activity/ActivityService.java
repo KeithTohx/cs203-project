@@ -61,7 +61,7 @@ public interface ActivityService {
     List<Activity> getActivitiesPendingForNews(Long newsId, Long countryId, LocalDateTime now);
 
     // the activity's revision as it is in the database right now (see Activity.revision), or
-    // empty if the activity has been deleted
-    Optional<Long> findRevision(Long id);
+    // empty if this activity has been deleted, including when a new one has since been given its id
+    Optional<Long> findRevision(Activity activity);
 
 }

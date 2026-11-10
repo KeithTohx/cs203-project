@@ -132,8 +132,10 @@ public class ImpactServiceImpl implements ImpactService {
 
         Verdict verdict = chatService.ask(buildItineraryPrompt(news, itinerary), Verdict.class);
 
+        // the lookup also checks the trip's identity key, so a trip deleted during the call and
+        // replaced by a new one with the same id (and revision 0) reads as gone, not unchanged
         SaveOutcome outcome = transactions.execute(status -> {
-            Optional<Long> revisionNow = itineraryService.findRevision(itinerary.getId());
+            Optional<Long> revisionNow = itineraryService.findRevision(itinerary);
             if (!revisionNow.equals(Optional.of(judgedRevision))) {
                 throw new EditedDuringEvaluationException("Itinerary", itinerary.getId());
             }
@@ -156,7 +158,7 @@ public class ImpactServiceImpl implements ImpactService {
         Verdict verdict = chatService.ask(buildPrompt(news, activity), Verdict.class);
 
         SaveOutcome outcome = transactions.execute(status -> {
-            Optional<Long> revisionNow = activityService.findRevision(activity.getId());
+            Optional<Long> revisionNow = activityService.findRevision(activity);
             if (!revisionNow.equals(Optional.of(judgedRevision))) {
                 throw new EditedDuringEvaluationException("Activity", activity.getId());
             }

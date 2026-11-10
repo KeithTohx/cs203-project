@@ -35,6 +35,21 @@ public class AuditService {
     public static final String ITINERARY_UPDATED = "ITINERARY_UPDATED";
     public static final String ITINERARY_DELETED = "ITINERARY_DELETED";
 
+    // a person overriding what the AI decided. the details keep what the AI said, so the trail still
+    // shows what was overridden after the verdict or advice itself is gone
+    public static final String IMPACT_REJECTED = "IMPACT_REJECTED";
+    public static final String IMPACT_RESTORED = "IMPACT_RESTORED";
+    public static final String IMPACT_DELETED = "IMPACT_DELETED";
+    public static final String RECOMMENDATION_ACCEPTED = "RECOMMENDATION_ACCEPTED";
+    public static final String RECOMMENDATION_DISMISSED = "RECOMMENDATION_DISMISSED";
+    public static final String RECOMMENDATION_REOPENED = "RECOMMENDATION_REOPENED";
+    public static final String RECOMMENDATION_REGENERATED = "RECOMMENDATION_REGENERATED";
+
+    // an admin going past the rules that apply to everyone else: reading someone else's account, or
+    // trying an account change the safety rules refused (eg demoting the last admin)
+    public static final String ADMIN_ACCOUNT_VIEWED = "ADMIN_ACCOUNT_VIEWED";
+    public static final String ADMIN_ACTION_REFUSED = "ADMIN_ACTION_REFUSED";
+
     private static final Logger log = LoggerFactory.getLogger(AuditService.class);
 
     private final AuditLogRepository repository;

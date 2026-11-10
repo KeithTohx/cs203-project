@@ -51,8 +51,8 @@ class ImpactServiceImplTest {
                 activityService, newsService, events, TransactionOperations.withoutTransaction());
 
         // nothing has been edited since it was loaded, unless a test says otherwise
-        lenient().when(itineraryService.findRevision(anyLong())).thenReturn(Optional.of(0L));
-        lenient().when(activityService.findRevision(anyLong())).thenReturn(Optional.of(0L));
+        lenient().when(itineraryService.findRevision(any(Itinerary.class))).thenReturn(Optional.of(0L));
+        lenient().when(activityService.findRevision(any(Activity.class))).thenReturn(Optional.of(0L));
 
         user = mock(User.class);
 
@@ -221,7 +221,7 @@ class ImpactServiceImplTest {
     @DisplayName("Should record which revision of the trip a new verdict was judged on")
     void evaluateItineraryForNews_ShouldRecordJudgedRevision() {
         itinerary.setRevision(3L);
-        when(itineraryService.findRevision(1L)).thenReturn(Optional.of(3L));
+        when(itineraryService.findRevision(itinerary)).thenReturn(Optional.of(3L));
         when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
                 .thenReturn(Optional.empty());
         givenModelAnswers(true, "Quake affects Hokkaido trips");
@@ -236,7 +236,7 @@ class ImpactServiceImplTest {
     @DisplayName("Should ask the model again when the stored verdict was judged on an older revision of the trip")
     void evaluateItineraryForNews_ShouldAskAgain_WhenStoredVerdictIsFromOlderRevision() {
         itinerary.setRevision(2L);
-        when(itineraryService.findRevision(1L)).thenReturn(Optional.of(2L));
+        when(itineraryService.findRevision(itinerary)).thenReturn(Optional.of(2L));
         Impact judgedInJapan = storedImpact("Quake near the trip");
         judgedInJapan.setJudgedRevision(1L);
         when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
@@ -257,7 +257,7 @@ class ImpactServiceImplTest {
     @DisplayName("Should throw the verdict away when the trip is edited while the model is answering")
     void evaluateItineraryForNews_ShouldNotSave_WhenTripEditedDuringModelCall() {
         // loaded at revision 0, but the edit committed while the model was answering
-        when(itineraryService.findRevision(1L)).thenReturn(Optional.of(1L));
+        when(itineraryService.findRevision(itinerary)).thenReturn(Optional.of(1L));
         when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
                 .thenReturn(Optional.empty());
         givenModelAnswers(true, "Quake affects Hokkaido trips");
@@ -273,7 +273,7 @@ class ImpactServiceImplTest {
     @Test
     @DisplayName("Should throw the verdict away when the trip is deleted while the model is answering")
     void evaluateItineraryForNews_ShouldNotSave_WhenTripDeletedDuringModelCall() {
-        when(itineraryService.findRevision(1L)).thenReturn(Optional.empty());
+        when(itineraryService.findRevision(itinerary)).thenReturn(Optional.empty());
         when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
                 .thenReturn(Optional.empty());
         givenModelAnswers(true, "Quake affects Hokkaido trips");
@@ -287,7 +287,7 @@ class ImpactServiceImplTest {
     @Test
     @DisplayName("Should throw the verdict away when the activity is edited while the model is answering")
     void evaluateActivityForNews_ShouldNotSave_WhenActivityEditedDuringModelCall() {
-        when(activityService.findRevision(10L)).thenReturn(Optional.of(1L));
+        when(activityService.findRevision(activity)).thenReturn(Optional.of(1L));
         when(impactRepository.findFirstByNewsIdAndActivityId(5L, 10L)).thenReturn(Optional.empty());
         givenModelAnswers(true, "Niseko lifts suspended");
 
@@ -337,7 +337,7 @@ class ImpactServiceImplTest {
     void evaluateItineraryForNews_ShouldAnnounceRemovedAlert_WhenReplacedVerdictHadOne() {
         when(user.getId()).thenReturn(3L);
         itinerary.setRevision(2L);
-        when(itineraryService.findRevision(1L)).thenReturn(Optional.of(2L));
+        when(itineraryService.findRevision(itinerary)).thenReturn(Optional.of(2L));
         Impact alerted = storedImpact("Quake near the trip");
         alerted.setItinerary(itinerary);
         alerted.setJudgedRevision(1L);
@@ -358,7 +358,7 @@ class ImpactServiceImplTest {
     @DisplayName("Should say nothing about alerts when the replaced verdict never had one")
     void evaluateItineraryForNews_ShouldNotAnnounceRemoval_WhenReplacedVerdictHadNoAlert() {
         itinerary.setRevision(2L);
-        when(itineraryService.findRevision(1L)).thenReturn(Optional.of(2L));
+        when(itineraryService.findRevision(itinerary)).thenReturn(Optional.of(2L));
         Impact notAlerted = storedImpact("Quake near the trip");
         notAlerted.setJudgedRevision(1L);
         when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))

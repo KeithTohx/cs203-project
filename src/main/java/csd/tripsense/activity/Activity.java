@@ -2,6 +2,7 @@ package csd.tripsense.activity;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
@@ -19,6 +20,8 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
+import jakarta.persistence.PrePersist;
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -81,5 +84,16 @@ public class Activity {
 
     public void bumpRevision() {
         revision = currentRevision() + 1;
+    }
+
+    // see Itinerary.identityKey, an activity id is handed on the same way
+    @Column(name = "identity_key", length = 36, updatable = false)
+    @JsonIgnore
+    @Setter(AccessLevel.NONE)
+    private String identityKey;
+
+    @PrePersist
+    void assignIdentityKey() {
+        identityKey = UUID.randomUUID().toString();
     }
 }

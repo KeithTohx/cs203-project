@@ -46,8 +46,8 @@ public class ActivityServiceImpl implements ActivityService {
     }
 
     @Override
-    public Optional<Long> findRevision(Long id) {
-        return activities.findRevisionById(id);
+    public Optional<Long> findRevision(Activity activity) {
+        return activities.findRevision(activity.getId(), activity.getIdentityKey());
     }
 
     @Override

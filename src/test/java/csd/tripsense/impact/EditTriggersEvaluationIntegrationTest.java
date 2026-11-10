@@ -277,6 +277,28 @@ class EditTriggersEvaluationIntegrationTest {
         return activity;
     }
 
+    private User savedUser() {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        return users.saveAndFlush(new User("s" + suffix + "@example.com", "s" + suffix, "long-enough-hash", "USER"));
+    }
+
+    private static Itinerary tripFor(User owner, Country country, String name) {
+        Itinerary itinerary = new Itinerary();
+        itinerary.setUser(owner);
+        itinerary.setCountry(country);
+        itinerary.setName(name);
+        return itinerary;
+    }
+
+    private static Activity newActivityIn(Itinerary on, Country country, String name) {
+        Activity activity = new Activity();
+        activity.setItinerary(on);
+        activity.setCountry(country);
+        activity.setName(name);
+        activity.setAddress("Somewhere");
+        return activity;
+    }
+
     private Itinerary sameTripIn(Country country) {
         Itinerary changes = new Itinerary();
         changes.setName(trip.getName());
@@ -408,6 +430,77 @@ class EditTriggersEvaluationIntegrationTest {
         await().atMost(REJUDGED_WITHIN).until(() -> impacts
                 .findFirstByNewsIdAndActivityId(thaiNews.getId(), skiing.getId()).isPresent());
         assertThat(impacts.findFirstByNewsIdAndActivityId(japanNews.getId(), skiing.getId())).isEmpty();
+    }
+
+    // sqlite gives the next insert the highest id plus one, so deleting the newest trip frees its id
+    // for the next trip, which also starts back at revision 0. a stranger's trip in another country
+    // makes an alert saved against it plainly wrong
+    @Test
+    @DisplayName("Should throw away a verdict when the trip is deleted while the model is answering and a new trip takes its id")
+    void tripReplacedDuringModelCall_VerdictIsNotSavedAgainstReplacement() {
+        Itinerary doomed = itineraries.saveAndFlush(tripFor(trip.getUser(), japan, "Doomed trip"));
+        User stranger = savedUser();
+        Itinerary[] replacement = new Itinerary[1];
+        Thread testThread = Thread.currentThread();
+
+        doAnswer(invocation -> {
+            String prompt = invocation.getArgument(0);
+            boolean thisTestsCall = Thread.currentThread() == testThread && prompt.contains("Doomed trip");
+            if (thisTestsCall) {
+                itineraryService.deleteItinerary(doomed.getId());
+                replacement[0] = itineraries.saveAndFlush(tripFor(stranger, thailand, "Stranger's trip"));
+            }
+            return affected(invocation, OLD_REASON);
+        }).when(ai).ask(anyString(), any(Class.class));
+
+        assertThatThrownBy(() -> impactService.evaluateItineraryForNews(doomed, japanNews))
+                .isInstanceOf(EditedDuringEvaluationException.class);
+
+        // the case this guards against, so the test fails loudly if sqlite ever stops reusing ids
+        assertThat(replacement[0].getId()).isEqualTo(doomed.getId());
+        assertThat(replacement[0].currentRevision()).isEqualTo(doomed.currentRevision());
+
+        assertThat(impacts.findByItineraryId(replacement[0].getId())).isEmpty();
+        assertThat(alertService.list(stranger.getId(), false, null, 20).content()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Should throw away a verdict when the activity is deleted while the model is answering and a new activity takes its id")
+    void activityReplacedDuringModelCall_VerdictIsNotSavedAgainstReplacement() {
+        Activity doomed = activities.saveAndFlush(newActivityIn(trip, japan, "Doomed visit"));
+        Itinerary strangersTrip = itineraries.saveAndFlush(tripFor(savedUser(), thailand, "Stranger's trip"));
+        Activity[] replacement = new Activity[1];
+        Thread testThread = Thread.currentThread();
+
+        doAnswer(invocation -> {
+            String prompt = invocation.getArgument(0);
+            boolean thisTestsCall = Thread.currentThread() == testThread && prompt.contains("Doomed visit");
+            if (thisTestsCall) {
+                activityService.deleteActivity(doomed.getId());
+                replacement[0] = activities.saveAndFlush(newActivityIn(strangersTrip, thailand, "Temple visit"));
+            }
+            return affected(invocation, OLD_REASON);
+        }).when(ai).ask(anyString(), any(Class.class));
+
+        assertThatThrownBy(() -> impactService.evaluateActivityForNews(doomed, japanNews))
+                .isInstanceOf(EditedDuringEvaluationException.class);
+
+        assertThat(replacement[0].getId()).isEqualTo(doomed.getId());
+        assertThat(impacts.findByActivityId(replacement[0].getId())).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Should give every saved trip and activity its own identity key, and keep it through an edit")
+    void identityKey_SetOnInsertAndKeptThroughEdits() {
+        String tripKey = trip.getIdentityKey();
+        assertThat(tripKey).isNotBlank();
+        assertThat(skiing.getIdentityKey()).isNotBlank().isNotEqualTo(tripKey);
+
+        itineraryService.updateItinerary(trip.getId(), sameTripIn(thailand));
+
+        Itinerary edited = itineraries.findById(trip.getId()).orElseThrow();
+        assertThat(edited.getIdentityKey()).isEqualTo(tripKey);
+        assertThat(itineraryService.findRevision(edited)).contains(edited.currentRevision());
     }
 
     @Test

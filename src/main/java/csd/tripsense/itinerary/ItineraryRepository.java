@@ -8,7 +8,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
-import java.util.List;
 
 @Repository
 public interface ItineraryRepository extends JpaRepository<Itinerary, Long> {
@@ -56,7 +55,11 @@ public interface ItineraryRepository extends JpaRepository<Itinerary, Long> {
                                        @Param("now") LocalDateTime now);
 
     // read straight from the database, never from an entity already loaded, so the evaluator
-    // sees an edit that committed while the model was answering. empty once the trip is deleted
-    @Query("select coalesce(i.revision, 0L) from Itinerary i where i.id = :id")
-    Optional<Long> findRevisionById(@Param("id") Long id);
+    // sees an edit that committed while the model was answering. empty once the trip is deleted,
+    // and also once its id has gone to a new trip, which has a different identity key
+    @Query("""
+            select coalesce(i.revision, 0L) from Itinerary i
+            where i.id = :id and i.identityKey = :identityKey
+            """)
+    Optional<Long> findRevision(@Param("id") Long id, @Param("identityKey") String identityKey);
 }

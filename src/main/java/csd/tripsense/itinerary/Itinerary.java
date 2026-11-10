@@ -2,6 +2,7 @@ package csd.tripsense.itinerary;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
@@ -58,6 +59,21 @@ public class Itinerary {
 
     public void bumpRevision() {
         revision = currentRevision() + 1;
+    }
+
+    // random, set once when the trip is first saved and never changed. sqlite hands a deleted
+    // row's id to the next insert, and a new trip starts back at revision 0, so the id and revision
+    // together cannot tell a trip from the one that replaced it. this can.
+    // rows made before this existed are filled in by data.sql on startup
+    @Column(name = "identity_key", length = 36, updatable = false)
+    @JsonIgnore
+    @Setter(AccessLevel.NONE)
+    private String identityKey;
+
+    // always a fresh key, even if the request body sent one, so no two trips can ever share it
+    @PrePersist
+    void assignIdentityKey() {
+        identityKey = UUID.randomUUID().toString();
     }
 
     // the foreign keys live on activity and impact (mappedBy), these just let jpa find them.

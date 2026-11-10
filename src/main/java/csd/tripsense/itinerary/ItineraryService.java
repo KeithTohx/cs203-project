@@ -95,7 +95,7 @@ public interface ItineraryService {
     List<Itinerary> getItinerariesPendingForNews(Long newsId, Long countryId, LocalDateTime now);
 
     // the trip's revision as it is in the database right now (see Itinerary.revision), or empty
-    // if the trip has been deleted
-    Optional<Long> findRevision(Long id);
+    // if this trip has been deleted, including when a new trip has since been given its id
+    Optional<Long> findRevision(Itinerary itinerary);
 
 }

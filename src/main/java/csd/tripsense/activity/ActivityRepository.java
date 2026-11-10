@@ -33,7 +33,10 @@ public interface ActivityRepository extends JpaRepository<Activity, Long> {
                                       @Param("countryId") Long countryId,
                                       @Param("now") LocalDateTime now);
 
-    // see ItineraryRepository.findRevisionById
-    @Query("select coalesce(a.revision, 0L) from Activity a where a.id = :id")
-    Optional<Long> findRevisionById(@Param("id") Long id);
+    // see ItineraryRepository.findRevision
+    @Query("""
+            select coalesce(a.revision, 0L) from Activity a
+            where a.id = :id and a.identityKey = :identityKey
+            """)
+    Optional<Long> findRevision(@Param("id") Long id, @Param("identityKey") String identityKey);
 }

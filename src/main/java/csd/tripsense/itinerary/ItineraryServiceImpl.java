@@ -169,8 +169,8 @@ public class ItineraryServiceImpl implements ItineraryService {
         }
 
     @Override
-    public Optional<Long> findRevision(Long id) {
-        return itineraries.findRevisionById(id);
+    public Optional<Long> findRevision(Itinerary itinerary) {
+        return itineraries.findRevision(itinerary.getId(), itinerary.getIdentityKey());
     }
 
 }

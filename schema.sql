@@ -35,6 +35,7 @@ create table itinerary {
     date_start timestamp,
     date_end timestamp,
     revision bigint,           -- goes up when the name, country or dates change; null reads as 0
+    identity_key varchar(36),  -- random, set once on insert, so a new trip that reuses a deleted id is not mistaken for it
 
     foreign key (user_id) references user(id),
     foreign key (country_id) references country(id)
@@ -51,6 +52,7 @@ create table activity {
     date_end timestamp,
     category varchar,          -- ActivityCategory, null on rows made before it existed
     revision bigint,           -- goes up when the name, address, start, trip or trip's country change; null reads as 0
+    identity_key varchar(36),  -- random, set once on insert, see itinerary.identity_key
 
     foreign key (itinerary_id) references itinerary(id),
     foreign key (country_id) references country(id)
