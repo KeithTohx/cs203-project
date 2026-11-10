@@ -29,6 +29,7 @@ create table country {
 
 create table itinerary {
     id integer primary key,
+    assessment_revision bigint, -- increments when details used by the model change
     assessment_identity varchar, -- immutable row-lifetime identity; protected assessment saves validate it
     user_id integer not null,
     country_id integer not null,
@@ -43,6 +44,7 @@ create table itinerary {
 
 create table activity {
     id integer primary key,
+    assessment_revision bigint, -- also increments when the trip country changes
     assessment_identity varchar, -- regenerated for replacement rows even if their numeric id is reused
     itinerary_id integer not null,
     country_id integer,            -- copied from the itinerary; null on rows created before this column existed
@@ -69,6 +71,8 @@ CREATE TABLE IF NOT EXISTS news (
 
 create table impact {
     id integer primary key,
+    assessment_identity varchar, -- protects in-flight advice against verdict replacement
+    judged_revision bigint,
     user_id integer not null,
     news_id integer not null,
     itinerary_id integer,
@@ -173,3 +177,12 @@ end;
 create trigger delete_activity_evaluation_task after delete on activity begin
     delete from pending_impact_evaluation where activity=1 and target_id=old.id;
 end;
+
+-- Source creation/edit and its scheduling intent commit together. A separate recovery pass
+-- consumes this row only after the news snapshot has been durably queued.
+create table pending_evaluation_request (
+    id varchar(255) primary key,
+    target_id bigint,
+    activity boolean,
+    requested_at timestamp
+);
