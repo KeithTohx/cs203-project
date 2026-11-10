@@ -3,7 +3,9 @@ package csd.tripsense.impact;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 
 import java.io.IOException;
@@ -16,6 +18,9 @@ import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -25,6 +30,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.mockito.invocation.InvocationOnMock;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityRepository;
@@ -72,6 +78,7 @@ class EditTriggersEvaluationIntegrationTest {
 
     @Autowired private ItineraryService itineraryService;
     @Autowired private ActivityService activityService;
+    @Autowired private ImpactService impactService;
     @Autowired private UserRepository users;
     @Autowired private CountryRepository countries;
     @Autowired private ItineraryRepository itineraries;
@@ -135,12 +142,15 @@ class EditTriggersEvaluationIntegrationTest {
     // ===== HELPERS =====
 
     private void givenAiSaysAffected() {
-        when(ai.ask(anyString(), any(Class.class))).thenAnswer(invocation -> {
-            Class<?> verdictType = invocation.getArgument(1);
-            var constructor = verdictType.getDeclaredConstructor(boolean.class, String.class);
-            constructor.setAccessible(true);
-            return constructor.newInstance(true, NEW_REASON);
-        });
+        when(ai.ask(anyString(), any(Class.class))).thenAnswer(invocation -> affected(invocation, NEW_REASON));
+    }
+
+    // the verdict type is private to the evaluator, so it is built from whatever type was asked for
+    private static Object affected(InvocationOnMock invocation, String reason) throws Exception {
+        Class<?> verdictType = invocation.getArgument(1);
+        var constructor = verdictType.getDeclaredConstructor(boolean.class, String.class);
+        constructor.setAccessible(true);
+        return constructor.newInstance(true, reason);
     }
 
     private Country savedCountry(String name) {
@@ -209,6 +219,14 @@ class EditTriggersEvaluationIntegrationTest {
             stored = impacts.findFirstByNewsIdAndActivityId(article.getId(), activity.getId());
         }
         return stored.filter(impact -> NEW_REASON.equals(impact.getReason())).isPresent();
+    }
+
+    private Activity newActivity(String name, Itinerary on) {
+        Activity activity = new Activity();
+        activity.setItinerary(on);
+        activity.setName(name);
+        activity.setAddress("Sapporo, Hokkaido");
+        return activity;
     }
 
     private Itinerary sameTripIn(Country country) {
@@ -314,5 +332,86 @@ class EditTriggersEvaluationIntegrationTest {
         assertThat(adviceLeftOnTrip()).isEqualTo(1);
 
         await().atMost(REJUDGED_WITHIN).until(() -> judgedAgain(skiing, japanNews));
+    }
+
+    // ===== EDITS WHILE AN EVALUATION IS RUNNING =====
+
+    @Test
+    @DisplayName("Should throw away a verdict on the old country when the trip moves while the model is answering")
+    void editDuringModelCall_VerdictOnOldDetailsIsNotSaved() {
+        // loaded before the edit, as the ingest job would have it
+        Activity skiingInJapan = activities.findById(skiing.getId()).orElseThrow();
+        Thread testThread = Thread.currentThread();
+
+        // the traveller moves the trip to thailand while the model is still judging japanese news
+        doAnswer(invocation -> {
+            String prompt = invocation.getArgument(0);
+            boolean thisTestsCall = Thread.currentThread() == testThread && prompt.contains("Hokkaido earthquake");
+            if (thisTestsCall) {
+                itineraryService.updateItinerary(trip.getId(), sameTripIn(thailand));
+            }
+            return affected(invocation, OLD_REASON);
+        }).when(ai).ask(anyString(), any(Class.class));
+
+        assertThatThrownBy(() -> impactService.evaluateActivityForNews(skiingInJapan, japanNews))
+                .isInstanceOf(EditedDuringEvaluationException.class);
+
+        // the edit's own run judges the new country, and the japanese verdict never comes back
+        await().atMost(REJUDGED_WITHIN).until(() -> impacts
+                .findFirstByNewsIdAndActivityId(thaiNews.getId(), skiing.getId()).isPresent());
+        assertThat(impacts.findFirstByNewsIdAndActivityId(japanNews.getId(), skiing.getId())).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Should ask the model once when two edits queue up, and keep the verdict judged on the latest details")
+    void twoQueuedEdits_LatestDetailsJudgedOnce() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch lastJobDone = new CountDownLatch(1);
+        AtomicInteger latestTripCalls = new AtomicInteger();
+
+        doAnswer(invocation -> {
+            String prompt = invocation.getArgument(0);
+            if (prompt.contains("Activity: Keeps the queue busy")) {
+                release.await(10, TimeUnit.SECONDS);
+            }
+            if (prompt.contains("Trip: Second name")) {
+                latestTripCalls.incrementAndGet();
+            }
+            if (prompt.contains("Activity: Queued last")) {
+                lastJobDone.countDown();
+            }
+            return affected(invocation, NEW_REASON);
+        }).when(ai).ask(anyString(), any(Class.class));
+
+        // a separate trip, so the edited trip's runs never judge the activity queued last
+        Itinerary otherTrip = new Itinerary();
+        otherTrip.setUser(trip.getUser());
+        otherTrip.setCountry(japan);
+        otherTrip.setName("Other trip");
+        otherTrip = itineraries.saveAndFlush(otherTrip);
+
+        try {
+            // the evaluation thread is busy, so both edits queue behind it
+            activityService.addActivity(newActivity("Keeps the queue busy", otherTrip));
+
+            Itinerary firstEdit = sameTripIn(japan);
+            firstEdit.setName("First name");
+            itineraryService.updateItinerary(trip.getId(), firstEdit);
+
+            Itinerary secondEdit = sameTripIn(japan);
+            secondEdit.setName("Second name");
+            itineraryService.updateItinerary(trip.getId(), secondEdit);
+
+            // runs only once both edits' runs are done
+            activityService.addActivity(newActivity("Queued last", otherTrip));
+        } finally {
+            release.countDown();
+        }
+
+        assertThat(lastJobDone.await(REJUDGED_WITHIN.toSeconds(), TimeUnit.SECONDS)).isTrue();
+        // the first run judged the latest details, the second reused that verdict instead of
+        // deleting it and alerting the traveller again
+        assertThat(latestTripCalls.get()).isEqualTo(1);
+        assertThat(judgedAgain(null, japanNews)).isTrue();
     }
 }

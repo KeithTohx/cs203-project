@@ -3,6 +3,7 @@ package csd.tripsense.activity;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,6 +46,11 @@ public class ActivityServiceImpl implements ActivityService {
     }
 
     @Override
+    public Optional<Long> findRevision(Long id) {
+        return activities.findRevisionById(id);
+    }
+
+    @Override
     public Activity addActivity(Activity activity) {
         Itinerary itinerary = itineraryService.getItineraryById(activity.getItinerary().getId());
         activity.setItinerary(itinerary);
@@ -54,8 +60,8 @@ public class ActivityServiceImpl implements ActivityService {
         return saved;
     }
 
-    // one transaction, so the cleared verdicts go with the edit, and the re-evaluation only starts
-    // once both have committed
+    // one transaction, so the new revision and the cleared verdicts go with the edit, and the
+    // re-evaluation only starts once all of it has committed
     @Override
     @Transactional
     public Activity updateActivity(Long id, Activity newActivityInfo) {
@@ -74,16 +80,21 @@ public class ActivityServiceImpl implements ActivityService {
             activity.setAddress(newActivityInfo.getAddress());
             activity.setDateStart(newActivityInfo.getDateStart());
             activity.setDateEnd(newActivityInfo.getDateEnd());
-            Activity saved = activities.save(activity);
 
             // the model was asked about the name, address and start. a move to another trip also
             // counts, since its verdicts still point at the old itinerary and may be about news
             // from another country
-            boolean judgedFieldsChanged = !Objects.equals(oldName, saved.getName())
-                    || !Objects.equals(oldAddress, saved.getAddress())
-                    || !Objects.equals(oldStart, saved.getDateStart());
-            boolean movedTrip = !Objects.equals(oldItineraryId, itineraryId(saved.getItinerary()));
-            if (judgedFieldsChanged || movedTrip) {
+            boolean judgedFieldsChanged = !Objects.equals(oldName, activity.getName())
+                    || !Objects.equals(oldAddress, activity.getAddress())
+                    || !Objects.equals(oldStart, activity.getDateStart());
+            boolean movedTrip = !Objects.equals(oldItineraryId, itineraryId(activity.getItinerary()));
+            boolean judgedDetailsChanged = judgedFieldsChanged || movedTrip;
+            if (judgedDetailsChanged) {
+                activity.bumpRevision();
+            }
+
+            Activity saved = activities.save(activity);
+            if (judgedDetailsChanged) {
                 events.publishEvent(new ActivityEditedEvent(saved.getId()));
             }
             return saved;

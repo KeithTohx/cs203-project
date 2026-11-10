@@ -6,7 +6,6 @@ import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.function.IntSupplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,7 +46,6 @@ public class NewItemEvaluationListener {
     private final ActivityService activityService;
     private final NewsService newsService;
     private final ImpactService impactService;
-    private final StaleVerdictCleaner staleVerdicts;
     private final boolean enabled;
     private final int lookbackDays;
     private final int maxCalls;
@@ -56,11 +54,10 @@ public class NewItemEvaluationListener {
     @Autowired
     public NewItemEvaluationListener(ItineraryService itineraryService, ActivityService activityService,
                                           NewsService newsService, ImpactService impactService,
-                                          StaleVerdictCleaner staleVerdicts,
                                           @Value("${impact.eval.new-itinerary.enabled:true}") boolean enabled,
                                           @Value("${impact.eval.new-itinerary.news-lookback-days:5}") int lookbackDays,
                                           @Value("${impact.eval.new-itinerary.max-calls:200}") int maxCalls) {
-        this(itineraryService, activityService, newsService, impactService, staleVerdicts,
+        this(itineraryService, activityService, newsService, impactService,
                 enabled, lookbackDays, maxCalls,
                 Executors.newSingleThreadExecutor(runnable -> {
                     Thread thread = new Thread(runnable, "new-itinerary-eval");
@@ -72,13 +69,11 @@ public class NewItemEvaluationListener {
     // package private so a test can pass a direct executor and avoid threads
     NewItemEvaluationListener(ItineraryService itineraryService, ActivityService activityService,
                                    NewsService newsService, ImpactService impactService,
-                                   StaleVerdictCleaner staleVerdicts,
                                    boolean enabled, int lookbackDays, int maxCalls, Executor executor) {
         this.itineraryService = itineraryService;
         this.activityService = activityService;
         this.newsService = newsService;
         this.impactService = impactService;
-        this.staleVerdicts = staleVerdicts;
         this.enabled = enabled;
         this.lookbackDays = lookbackDays;
         this.maxCalls = maxCalls;
@@ -100,42 +95,23 @@ public class NewItemEvaluationListener {
         executor.execute(() -> evaluateActivity(event.activityId()));
     }
 
-    // an edit to what the trip was judged on. StaleVerdictCleaner has already removed the old
-    // verdicts inside the edit's transaction, so judging it like a new trip only asks about the
-    // pairs that are now missing, and leaves the verdicts that still stand alone
+    // an edit to what the trip was judged on. StaleVerdictCleaner has already removed the verdicts
+    // judged on the old details inside the edit's transaction, so judging it like a new trip only
+    // asks about the pairs that are now missing, and reuses the verdicts that still stand.
+    // when two edits queue up here, the first run judges the latest details and the second finds
+    // nothing missing, so the model is not asked twice. a run that was still judging the old
+    // details when the edit committed has its verdicts thrown away at save time, see
+    // ImpactServiceImpl
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onItineraryEdited(ItineraryEditedEvent event) {
         if (!enabled) return;
-        executor.execute(() -> {
-            clearLateVerdicts(() -> staleVerdicts.clearFor(event), "itinerary", event.itineraryId());
-            evaluate(event.itineraryId());
-        });
+        executor.execute(() -> evaluate(event.itineraryId()));
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onActivityEdited(ActivityEditedEvent event) {
         if (!enabled) return;
-        executor.execute(() -> {
-            clearLateVerdicts(() -> staleVerdicts.clearFor(event), "activity", event.activityId());
-            evaluateActivity(event.activityId());
-        });
-    }
-
-    // the editor saves the trip and then its activities straight away, so an earlier run on this
-    // thread can still be judging the old details while an edit commits. anything it writes after
-    // the edit's own clear would be reused from then on. this thread runs one job at a time, so
-    // clearing again here, just before judging, means nothing judged before the edit survives it.
-    // usually there is nothing left to clear
-    private void clearLateVerdicts(IntSupplier clear, String what, Long id) {
-        try {
-            int cleared = clear.getAsInt();
-            if (cleared > 0) {
-                log.info("Edited {} {}: cleared {} verdicts judged on the old details", what, id, cleared);
-            }
-        } catch (Exception e) {
-            // still judge it, the pairs cleared by the edit itself need a verdict either way
-            log.warn("Could not clear late verdicts for edited {} {}: {}", what, id, e.getMessage());
-        }
+        executor.execute(() -> evaluateActivity(event.activityId()));
     }
  
     void evaluateActivity(Long activityId) {
@@ -224,6 +200,9 @@ public class NewItemEvaluationListener {
             call.run();
             progress.judged++;
             progress.failures = 0;
+        } catch (EditedDuringEvaluationException e) {
+            // not the model failing, the edit has queued its own run for the new details
+            progress.skipped++;
         } catch (Exception e) {
             progress.skipped++;
             if (++progress.failures >= MAX_CONSECUTIVE_FAILURES) {

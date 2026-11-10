@@ -11,9 +11,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionOperations;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityService;
@@ -35,7 +35,6 @@ class ImpactServiceImplTest {
     @Mock private NewsService newsService;
     @Mock private org.springframework.context.ApplicationEventPublisher events;
 
-    @InjectMocks
     private ImpactServiceImpl impactService;
 
     private User user;
@@ -45,6 +44,14 @@ class ImpactServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        // runs the guarded save straight away, there is no database to open a transaction on
+        impactService = new ImpactServiceImpl(impactRepository, chatService, itineraryService,
+                activityService, newsService, events, TransactionOperations.withoutTransaction());
+
+        // nothing has been edited since it was loaded, unless a test says otherwise
+        lenient().when(itineraryService.findRevision(anyLong())).thenReturn(Optional.of(0L));
+        lenient().when(activityService.findRevision(anyLong())).thenReturn(Optional.of(0L));
+
         user = mock(User.class);
 
         itinerary = new Itinerary();
@@ -204,6 +211,107 @@ class ImpactServiceImplTest {
         assertThrows(RuntimeException.class, () -> impactService.evaluateActivityForNews(activity, news));
 
         verify(impactRepository, never()).save(any(Impact.class));
+    }
+
+    // ===== verdicts and edits (revisions) =====
+
+    @Test
+    @DisplayName("Should record which revision of the trip a new verdict was judged on")
+    void evaluateItineraryForNews_ShouldRecordJudgedRevision() {
+        itinerary.setRevision(3L);
+        when(itineraryService.findRevision(1L)).thenReturn(Optional.of(3L));
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.empty());
+        givenModelAnswers(true, "Quake affects Hokkaido trips");
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateItineraryForNews(itinerary, news);
+
+        assertEquals(3L, result.getJudgedRevision());
+    }
+
+    @Test
+    @DisplayName("Should ask the model again when the stored verdict was judged on an older revision of the trip")
+    void evaluateItineraryForNews_ShouldAskAgain_WhenStoredVerdictIsFromOlderRevision() {
+        itinerary.setRevision(2L);
+        when(itineraryService.findRevision(1L)).thenReturn(Optional.of(2L));
+        Impact judgedInJapan = storedImpact("Quake near the trip");
+        judgedInJapan.setJudgedRevision(1L);
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.of(judgedInJapan));
+        givenModelAnswers(false, "Different country");
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateItineraryForNews(itinerary, news);
+
+        // a fresh row, so the old row's alert, advice and rejection go with the old row
+        verify(impactRepository).delete(judgedInJapan);
+        assertNotSame(judgedInJapan, result);
+        assertEquals("Different country", result.getReason());
+        assertEquals(2L, result.getJudgedRevision());
+    }
+
+    @Test
+    @DisplayName("Should throw the verdict away when the trip is edited while the model is answering")
+    void evaluateItineraryForNews_ShouldNotSave_WhenTripEditedDuringModelCall() {
+        // loaded at revision 0, but the edit committed while the model was answering
+        when(itineraryService.findRevision(1L)).thenReturn(Optional.of(1L));
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.empty());
+        givenModelAnswers(true, "Quake affects Hokkaido trips");
+
+        assertThrows(EditedDuringEvaluationException.class,
+                () -> impactService.evaluateItineraryForNews(itinerary, news));
+
+        // nothing saved means no alert either
+        verify(impactRepository, never()).save(any(Impact.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("Should throw the verdict away when the trip is deleted while the model is answering")
+    void evaluateItineraryForNews_ShouldNotSave_WhenTripDeletedDuringModelCall() {
+        when(itineraryService.findRevision(1L)).thenReturn(Optional.empty());
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.empty());
+        givenModelAnswers(true, "Quake affects Hokkaido trips");
+
+        assertThrows(EditedDuringEvaluationException.class,
+                () -> impactService.evaluateItineraryForNews(itinerary, news));
+
+        verify(impactRepository, never()).save(any(Impact.class));
+    }
+
+    @Test
+    @DisplayName("Should throw the verdict away when the activity is edited while the model is answering")
+    void evaluateActivityForNews_ShouldNotSave_WhenActivityEditedDuringModelCall() {
+        when(activityService.findRevision(10L)).thenReturn(Optional.of(1L));
+        when(impactRepository.findFirstByNewsIdAndActivityId(5L, 10L)).thenReturn(Optional.empty());
+        givenModelAnswers(true, "Niseko lifts suspended");
+
+        assertThrows(EditedDuringEvaluationException.class,
+                () -> impactService.evaluateActivityForNews(activity, news));
+
+        verify(impactRepository, never()).save(any(Impact.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("Should keep the verdict another run saved while the model was answering, instead of storing the pair twice")
+    void evaluateActivityForNews_ShouldKeepOtherRunsVerdict_WhenSavedMeanwhile() {
+        Impact savedByOtherRun = storedImpact("Lifts closed");
+        // nothing stored when this run started, the other run's verdict is there by the time it saves
+        when(impactRepository.findFirstByNewsIdAndActivityId(5L, 10L))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(savedByOtherRun));
+        givenModelAnswers(true, "Niseko lifts suspended");
+
+        Impact result = impactService.evaluateActivityForNews(activity, news);
+
+        assertSame(savedByOtherRun, result);
+        // no second row, and no second alert for the traveller
+        verify(impactRepository, never()).save(any(Impact.class));
+        verifyNoInteractions(events);
     }
 
     // ===== evaluate (the existing API endpoint, must keep its behaviour) =====

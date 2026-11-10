@@ -2,6 +2,7 @@ package csd.tripsense.activity;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -31,4 +32,8 @@ public interface ActivityRepository extends JpaRepository<Activity, Long> {
     List<Activity> findPendingForNews(@Param("newsId") Long newsId,
                                       @Param("countryId") Long countryId,
                                       @Param("now") LocalDateTime now);
+
+    // see ItineraryRepository.findRevisionById
+    @Query("select coalesce(a.revision, 0L) from Activity a where a.id = :id")
+    Optional<Long> findRevisionById(@Param("id") Long id);
 }

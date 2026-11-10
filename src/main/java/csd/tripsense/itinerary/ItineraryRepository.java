@@ -2,6 +2,7 @@ package csd.tripsense.itinerary;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -53,4 +54,9 @@ public interface ItineraryRepository extends JpaRepository<Itinerary, Long> {
     List<Itinerary> findPendingForNews(@Param("newsId") Long newsId,
                                        @Param("countryId") Long countryId,
                                        @Param("now") LocalDateTime now);
+
+    // read straight from the database, never from an entity already loaded, so the evaluator
+    // sees an edit that committed while the model was answering. empty once the trip is deleted
+    @Query("select coalesce(i.revision, 0L) from Itinerary i where i.id = :id")
+    Optional<Long> findRevisionById(@Param("id") Long id);
 }

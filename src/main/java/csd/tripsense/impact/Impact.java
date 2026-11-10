@@ -61,6 +61,27 @@ public class Impact {
     @Column
     private Boolean alertEligible;
 
+    // the revision of the activity (for an activity verdict) or the trip (for a whole trip
+    // verdict) that the model was shown. null on older rows, which reads as revision 0.
+    // a Long for the same reason as Itinerary.revision
+    @Column(name = "judged_revision")
+    private Long judgedRevision;
+
+    public boolean wasJudgedOn(long revision) {
+        long judgedOn = judgedRevision == null ? 0 : judgedRevision;
+        return judgedOn == revision;
+    }
+
+    // false once the trip or activity has been edited since this was judged, so the verdict is
+    // about details the traveller no longer has
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public boolean isJudgedOnCurrentDetails() {
+        if (activity != null) {
+            return wasJudgedOn(activity.currentRevision());
+        }
+        return wasJudgedOn(itinerary.currentRevision());
+    }
+
     // An alert contains personal trip data, so remove it whenever its source impact is removed.
     @jakarta.persistence.OneToMany(mappedBy = "impact", cascade = jakarta.persistence.CascadeType.REMOVE,
             fetch = jakarta.persistence.FetchType.LAZY)

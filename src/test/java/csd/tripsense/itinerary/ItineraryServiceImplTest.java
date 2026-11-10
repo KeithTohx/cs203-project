@@ -152,6 +152,7 @@ class ItineraryServiceImplTest {
         itineraryService.updateItinerary(5L, new Itinerary());
 
         verifyNoInteractions(events);
+        assertEquals(0, existing.currentRevision());
     }
 
     @Test
@@ -163,7 +164,9 @@ class ItineraryServiceImplTest {
 
         itineraryService.updateItinerary(1L, trip(null, 7L, 1L, "Hokkaido Ski Trip"));
 
-        verify(events).publishEvent(new ItineraryEditedEvent(1L, false));
+        verify(events).publishEvent(new ItineraryEditedEvent(1L));
+        // so the verdicts judged on the old name can be told apart from new ones
+        assertEquals(1, stored.currentRevision());
     }
 
     @Test
@@ -178,9 +181,12 @@ class ItineraryServiceImplTest {
 
         itineraryService.updateItinerary(1L, trip(null, 7L, 2L, "Ski Trip"));
 
-        verify(events).publishEvent(new ItineraryEditedEvent(1L, true));
+        verify(events).publishEvent(new ItineraryEditedEvent(1L));
         // the news job matches activities on their own copy of the country
         assertEquals(2L, skiing.getCountry().getId());
+        // the activity verdicts were about news from the old country, so they are out of date too
+        assertEquals(1, stored.currentRevision());
+        assertEquals(1, skiing.currentRevision());
     }
 
     @Test
@@ -195,7 +201,7 @@ class ItineraryServiceImplTest {
         changes.setDateStart(LocalDateTime.of(2027, 2, 8, 0, 0));
         itineraryService.updateItinerary(1L, changes);
 
-        verify(events).publishEvent(new ItineraryEditedEvent(1L, false));
+        verify(events).publishEvent(new ItineraryEditedEvent(1L));
     }
 
     // ---------------------------------------------------------------- helpers

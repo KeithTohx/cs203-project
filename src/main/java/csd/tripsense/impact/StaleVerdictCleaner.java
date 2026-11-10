@@ -11,14 +11,18 @@ import org.springframework.transaction.annotation.Transactional;
 import csd.tripsense.activity.ActivityEditedEvent;
 import csd.tripsense.itinerary.ItineraryEditedEvent;
 
-// the evaluator reuses any stored verdict for a news and trip pair without asking again, so once
-// the details a verdict was judged on change, it has to go before the trip is judged again.
-// its alerts and recommendations go with it, since they were about the old details.
+// once the details a verdict was judged on change, the verdict is about plans the traveller no
+// longer has. its alerts and recommendations go with it, since they were about the old details.
+//
+// which verdicts are out of date comes from the revisions: the edit has already raised the trip's
+// revision (and each activity's when the country changed, see ItineraryServiceImpl), so a verdict
+// whose judged revision no longer matches its trip or activity is stale. a verdict that matches
+// is left alone, even if it was written after an earlier edit, so a second edit to the same trip
+// never throws away the fresh verdicts the first one paid the model for.
 //
 // a plain listener and not an after commit one, so the delete is part of the edit's transaction:
 // the traveller never sees a verdict about their old plans next to their new ones, and if the
-// edit fails nothing is lost. NewItemEvaluationListener re-judges the trip after the commit, and
-// calls clearFor once more first, see the comment there
+// edit fails nothing is lost. NewItemEvaluationListener judges the missing pairs after the commit
 @Component
 public class StaleVerdictCleaner {
 
@@ -30,48 +34,33 @@ public class StaleVerdictCleaner {
         this.impacts = impacts;
     }
 
+    // a renamed or rescheduled trip only makes its whole trip verdicts stale, since activity
+    // verdicts were judged on the activity's own details. a new country makes the activity
+    // verdicts stale too, and the revisions already say so.
+    // transactional so the find and the cascading delete share one session, it joins the edit's
     @EventListener
+    @Transactional
     public void onItineraryEdited(ItineraryEditedEvent event) {
-        int cleared = clearFor(event);
-        log.info("Itinerary {} edited: cleared {} verdicts (country changed: {})",
-                event.itineraryId(), cleared, event.countryChanged());
+        List<Impact> onTrip = impacts.findByItineraryId(event.itineraryId());
+        int cleared = clearOutOfDate(onTrip);
+        log.info("Itinerary {} edited: cleared {} verdicts judged on the old details",
+                event.itineraryId(), cleared);
     }
 
     @EventListener
+    @Transactional
     public void onActivityEdited(ActivityEditedEvent event) {
-        int cleared = clearFor(event);
-        log.info("Activity {} edited: cleared {} verdicts", event.activityId(), cleared);
-    }
-
-    // a new name or new dates only touch the whole trip verdicts, since activity verdicts were
-    // judged on the activity's own name, address and start. a new country clears the activity
-    // verdicts too, the same way moving an activity to another trip does, because they are about
-    // news from a country the trip is no longer in.
-    // transactional so the find and the delete share one session when this runs on the
-    // evaluation thread. inside an edit it just joins the edit's transaction
-    @Transactional
-    public int clearFor(ItineraryEditedEvent event) {
-        List<Impact> onTrip = impacts.findByItineraryId(event.itineraryId());
-
-        List<Impact> outOfDate;
-        if (event.countryChanged()) {
-            outOfDate = onTrip;
-        } else {
-            outOfDate = onTrip.stream()
-                    .filter(impact -> impact.getActivity() == null)
-                    .toList();
-        }
-
-        return clear(outOfDate);
-    }
-
-    @Transactional
-    public int clearFor(ActivityEditedEvent event) {
         List<Impact> forActivity = impacts.findByActivityId(event.activityId());
-        return clear(forActivity);
+        int cleared = clearOutOfDate(forActivity);
+        log.info("Activity {} edited: cleared {} verdicts judged on the old details",
+                event.activityId(), cleared);
     }
 
-    private int clear(List<Impact> outOfDate) {
+    private int clearOutOfDate(List<Impact> verdicts) {
+        List<Impact> outOfDate = verdicts.stream()
+                .filter(verdict -> !verdict.isJudgedOnCurrentDetails())
+                .toList();
+
         if (outOfDate.isEmpty()) {
             return 0;
         }

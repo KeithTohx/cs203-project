@@ -12,7 +12,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -45,14 +44,13 @@ class NewItemEvaluationListenerTest {
     @Mock private ActivityService activityService;
     @Mock private NewsService newsService;
     @Mock private ImpactService impactService;
-    @Mock private StaleVerdictCleaner staleVerdicts;
 
     // ---------------------------------------------------------------- helpers
 
     // Runnable::run so the "background" work happens on the test thread
     private NewItemEvaluationListener listener(boolean enabled, int lookbackDays, int maxCalls) {
         return new NewItemEvaluationListener(itineraryService, activityService, newsService,
-                impactService, staleVerdicts, enabled, lookbackDays, maxCalls, Runnable::run);
+                impactService, enabled, lookbackDays, maxCalls, Runnable::run);
     }
 
     private static News news(long id) {
@@ -413,10 +411,10 @@ class NewItemEvaluationListenerTest {
     void onEdited_ShouldDoNothing_WhenDisabled() {
         NewItemEvaluationListener disabled = listener(false, 5, 200);
 
-        disabled.onItineraryEdited(new ItineraryEditedEvent(ITINERARY_ID, false));
+        disabled.onItineraryEdited(new ItineraryEditedEvent(ITINERARY_ID));
         disabled.onActivityEdited(new ActivityEditedEvent(ACTIVITY_ID));
 
-        verifyNoInteractions(itineraryService, activityService, newsService, impactService, staleVerdicts);
+        verifyNoInteractions(itineraryService, activityService, newsService, impactService);
     }
 
     @Test
@@ -428,10 +426,10 @@ class NewItemEvaluationListenerTest {
         givenNews(recent);
         when(activityService.getActivitiesByItinerary(ITINERARY_ID)).thenReturn(List.of(act));
 
-        listener(true, 5, 200).onItineraryEdited(new ItineraryEditedEvent(ITINERARY_ID, false));
+        listener(true, 5, 200).onItineraryEdited(new ItineraryEditedEvent(ITINERARY_ID));
 
-        // the evaluator skips pairs that still have a verdict, so this only calls the model for
-        // the ones StaleVerdictCleaner removed
+        // the evaluator reuses verdicts judged on the current details, so this only calls the
+        // model for the ones StaleVerdictCleaner removed
         verify(impactService).evaluateItineraryForNews(trip, recent);
         verify(impactService).evaluateActivityForNews(act, recent);
     }
@@ -450,46 +448,24 @@ class NewItemEvaluationListenerTest {
     }
 
     @Test
-    @DisplayName("Should clear an edited trip's verdicts again just before judging it, in case an earlier run wrote some on the old details")
-    void onItineraryEdited_ShouldClearAgainBeforeJudging() {
+    @DisplayName("Should keep judging the other pairs when one is edited mid-run, it is not the model failing")
+    void onItineraryEdited_ShouldKeepGoing_WhenAPairWasEditedMidRun() {
         Itinerary trip = givenActiveTrip();
-        News recent = news(10L);
-        givenNews(recent);
-        ItineraryEditedEvent edited = new ItineraryEditedEvent(ITINERARY_ID, true);
+        News first = news(10L);
+        News second = news(11L);
+        News third = news(12L);
+        News fourth = news(13L);
+        givenNews(first, second, third, fourth);
+        when(activityService.getActivitiesByItinerary(ITINERARY_ID)).thenReturn(List.of());
+        // three in a row would stop the run if they counted as model failures
+        when(impactService.evaluateItineraryForNews(eq(trip), any(News.class)))
+                .thenThrow(new EditedDuringEvaluationException("Itinerary", ITINERARY_ID))
+                .thenThrow(new EditedDuringEvaluationException("Itinerary", ITINERARY_ID))
+                .thenThrow(new EditedDuringEvaluationException("Itinerary", ITINERARY_ID))
+                .thenReturn(new Impact());
 
-        listener(true, 5, 200).onItineraryEdited(edited);
+        listener(true, 5, 200).onItineraryEdited(new ItineraryEditedEvent(ITINERARY_ID));
 
-        InOrder order = inOrder(staleVerdicts, impactService);
-        order.verify(staleVerdicts).clearFor(edited);
-        order.verify(impactService).evaluateItineraryForNews(trip, recent);
-    }
-
-    @Test
-    @DisplayName("Should clear an edited activity's verdicts again just before judging it")
-    void onActivityEdited_ShouldClearAgainBeforeJudging() {
-        Activity act = givenActivityOnActiveTrip();
-        News recent = news(10L);
-        givenNews(recent);
-        ActivityEditedEvent edited = new ActivityEditedEvent(ACTIVITY_ID);
-
-        listener(true, 5, 200).onActivityEdited(edited);
-
-        InOrder order = inOrder(staleVerdicts, impactService);
-        order.verify(staleVerdicts).clearFor(edited);
-        order.verify(impactService).evaluateActivityForNews(act, recent);
-    }
-
-    @Test
-    @DisplayName("Should still judge an edited activity when clearing again fails, the edit already cleared its verdicts")
-    void onActivityEdited_ShouldStillJudge_WhenClearingAgainFails() {
-        Activity act = givenActivityOnActiveTrip();
-        News recent = news(10L);
-        givenNews(recent);
-        ActivityEditedEvent edited = new ActivityEditedEvent(ACTIVITY_ID);
-        when(staleVerdicts.clearFor(edited)).thenThrow(new RuntimeException("db busy"));
-
-        listener(true, 5, 200).onActivityEdited(edited);
-
-        verify(impactService).evaluateActivityForNews(act, recent);
+        verify(impactService).evaluateItineraryForNews(trip, fourth);
     }
 }

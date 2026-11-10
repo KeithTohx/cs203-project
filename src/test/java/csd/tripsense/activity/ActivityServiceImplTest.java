@@ -197,6 +197,8 @@ class ActivityServiceImplTest {
         activityService.updateActivity(10L, changes);
 
         verifyNoInteractions(events);
+        // its verdicts still stand, so they must still match
+        assertEquals(0, existing.currentRevision());
     }
 
     @Test
@@ -211,6 +213,7 @@ class ActivityServiceImplTest {
         activityService.updateActivity(10L, changes);
 
         verify(events).publishEvent(new ActivityEditedEvent(10L));
+        assertEquals(1, existing.currentRevision());
     }
 
     @Test
@@ -226,6 +229,7 @@ class ActivityServiceImplTest {
         activityService.updateActivity(10L, changes);
 
         verify(events).publishEvent(new ActivityEditedEvent(10L));
+        assertEquals(1, existing.currentRevision());
     }
 
     private Activity storedActivity() {

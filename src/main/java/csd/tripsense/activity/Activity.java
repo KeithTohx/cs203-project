@@ -63,4 +63,23 @@ public class Activity {
     @ManyToOne
     @JoinColumn(name = "country_id")
     private Country country;
+
+    // goes up by one each time something an activity verdict depends on changes: its name,
+    // address or start, the trip it belongs to, or that trip's country. see Itinerary.revision.
+    // null on rows made before this existed, which reads as revision 0. a Long for the same
+    // reason as Itinerary.revision
+    @Column(name = "revision")
+    @JsonIgnore
+    private Long revision;
+
+    public long currentRevision() {
+        if (revision == null) {
+            return 0;
+        }
+        return revision;
+    }
+
+    public void bumpRevision() {
+        revision = currentRevision() + 1;
+    }
 }
