@@ -25,5 +25,15 @@ public interface AdminChangeRepository extends JpaRepository<AdminChange, Long> 
             """)
     int markRead(@Param("userId") Long userId, @Param("upToId") Long upToId, @Param("now") Instant now);
 
+    // one change, only if it is theirs
+    @Modifying
+    @Query("""
+            update AdminChange change set change.readAt = :now
+            where change.id = :id
+              and change.userId = :userId
+              and change.readAt is null
+            """)
+    int markOneRead(@Param("userId") Long userId, @Param("id") Long id, @Param("now") Instant now);
+
     void deleteByUserId(Long userId);
 }

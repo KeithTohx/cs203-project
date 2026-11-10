@@ -366,10 +366,32 @@ const recordByAdmin = (action, ownerId, details) => record(action, me.id, me.ema
 
 // what the traveller is told, like the backend's AdminChangeService. an admin's own trips are left out
 const ADMIN_CHANGES = [];
-const tellOwner = (ownerId, message) => {
+// target is what the change was about, like AdminChangeTarget: { itineraryId, itineraryName, newsId }.
+// the names are copied in, so they still read right after the trip is deleted
+const tellOwner = (ownerId, message, target = {}) => {
     if (ownerId == null || ownerId === me.id) return;
     const nextId = Math.max(0, ...ADMIN_CHANGES.map(change => change.id)) + 1;
-    ADMIN_CHANGES.push({ id: nextId, userId: ownerId, message, createdAt: new Date().toISOString(), readAt: null });
+    const itineraryId = target.itineraryId == null ? null : Number(target.itineraryId);
+    const newsId = target.newsId ?? null;
+
+    ADMIN_CHANGES.push({
+        id: nextId,
+        userId: ownerId,
+        message,
+        createdAt: new Date().toISOString(),
+        readAt: null,
+        itineraryId,
+        itineraryName: target.itineraryName ?? (itineraryId == null ? null : tripNameOf(itineraryId)),
+        newsId,
+        newsTitle: newsId == null ? null : NEWS[newsId]?.title ?? null,
+    });
+};
+
+// what the traveller gets back, with whether the trip can still be opened
+const adminChangeView = change => {
+    const trip = ITINERARIES.find(itinerary => itinerary.id === change.itineraryId);
+    const { userId, ...shown } = change;
+    return { ...shown, itineraryExists: Boolean(trip) && trip.userId === userId };
 };
 
 // the same wording as AdminDataController
@@ -626,7 +648,7 @@ export const mockApi = {
         itinerary.adminEditedAt = new Date().toISOString();
         ITINERARIES.push(itinerary);
         recordByAdmin("ITINERARY_CREATED", itinerary.userId, `itinerary ${itinerary.id} '${itinerary.name}'`);
-        tellOwner(itinerary.userId, `An admin added the trip '${itinerary.name}'.`);
+        tellOwner(itinerary.userId, `An admin added the trip '${itinerary.name}'.`, { itineraryId: itinerary.id });
         return respondWith(itinerary);
     },
     adminUpdateItinerary: (id, { name, countryId, dateStart, dateEnd, keepImpacts }) => {
@@ -654,7 +676,7 @@ export const mockApi = {
         Object.assign(itinerary, { name, dateStart, dateEnd, countryId: country.id, countryName: country.name });
         markEditedByAdmin(itinerary.id);
         recordByAdmin("ITINERARY_UPDATED", itinerary.userId, `itinerary ${itinerary.id} '${itinerary.name}'`);
-        tellOwner(itinerary.userId, `An admin edited your trip '${itinerary.name}'.${clearedNote(clearedCount)}`);
+        tellOwner(itinerary.userId, `An admin edited your trip '${itinerary.name}'.${clearedNote(clearedCount)}`, { itineraryId: itinerary.id });
         return respondWith(itinerary);
     },
     adminDeleteItinerary: id => {
@@ -666,7 +688,8 @@ export const mockApi = {
 
         removeItinerary(itinerary);
         recordByAdmin("ITINERARY_DELETED", itinerary.userId, `itinerary ${itinerary.id} '${itinerary.name}'`);
-        tellOwner(itinerary.userId, `An admin deleted your trip '${itinerary.name}'.`);
+        tellOwner(itinerary.userId, `An admin deleted your trip '${itinerary.name}'.`,
+            { itineraryId: itinerary.id, itineraryName: itinerary.name });
         return respondWith(null);
     },
     adminActivities: itineraryId => {
@@ -698,7 +721,7 @@ export const mockApi = {
         ACTIVITIES.push(activity);
         markEditedByAdmin(activity.itineraryId);
         recordByAdmin("ACTIVITY_CREATED", ownerId, `activity ${activity.id} '${activity.name}'`);
-        tellOwner(ownerId, `An admin added ${activityOnTrip(activity)}.`);
+        tellOwner(ownerId, `An admin added ${activityOnTrip(activity)}.`, { itineraryId: activity.itineraryId });
         return respondWith(activity);
     },
     adminUpdateActivity: (id, { name, address, dateStart, dateEnd, category, keepImpacts }) => {
@@ -721,7 +744,8 @@ export const mockApi = {
         Object.assign(activity, { name, address, dateStart, dateEnd, category });
         markEditedByAdmin(activity.itineraryId);
         recordByAdmin("ACTIVITY_UPDATED", ownerOfItinerary(activity.itineraryId), `activity ${activity.id} '${activity.name}'`);
-        tellOwner(ownerOfItinerary(activity.itineraryId), `An admin edited ${activityOnTrip(activity)}.${clearedNote(clearedCount)}`);
+        tellOwner(ownerOfItinerary(activity.itineraryId), `An admin edited ${activityOnTrip(activity)}.${clearedNote(clearedCount)}`,
+            { itineraryId: activity.itineraryId });
         return respondWith(activity);
     },
     // the impacts on it go too, with their alerts and recommendations
@@ -738,7 +762,7 @@ export const mockApi = {
         ACTIVITIES.splice(ACTIVITIES.indexOf(activity), 1);
         markEditedByAdmin(activity.itineraryId);
         recordByAdmin("ACTIVITY_DELETED", ownerOfItinerary(activity.itineraryId), `activity ${activity.id} '${activity.name}'`);
-        tellOwner(ownerOfItinerary(activity.itineraryId), `An admin deleted ${activityOnTrip(activity)}.`);
+        tellOwner(ownerOfItinerary(activity.itineraryId), `An admin deleted ${activityOnTrip(activity)}.`, { itineraryId: activity.itineraryId });
         return respondWith(null);
     },
     adminImpacts: userId => {
@@ -790,7 +814,8 @@ export const mockApi = {
             ALERTS.push({ id: nextAlertId, impactId: impact.id, createdAt: new Date().toISOString(), readAt: null });
         }
         recordByAdmin("IMPACT_CREATED", ownerId, `impact ${impact.id} (${impacted ? "impacted" : "not impacted"})`);
-        tellOwner(ownerId, `An admin linked the news ${newsNameOf(impact)} to ${placeOfImpact(itineraryId, impact)}.`);
+        tellOwner(ownerId, `An admin linked the news ${newsNameOf(impact)} to ${placeOfImpact(itineraryId, impact)}.`,
+            { itineraryId, newsId: impact.newsId });
         return respondWith(adminImpact(Number(itineraryId), impact));
     },
     adminUpdateImpact: (id, { impacted, reason, rejected }) => {
@@ -806,7 +831,8 @@ export const mockApi = {
         Object.assign(entry.impact, { impacted, reason, rejected: Boolean(rejected) });
         recordByAdmin("IMPACT_UPDATED", ownerOfItinerary(entry.itineraryId), `impact ${entry.impact.id} (${impacted ? "impacted" : "not impacted"})`);
         tellOwner(ownerOfItinerary(entry.itineraryId),
-            `An admin changed how the news ${newsNameOf(entry.impact)} affects ${placeOfImpact(entry.itineraryId, entry.impact)}.`);
+            `An admin changed how the news ${newsNameOf(entry.impact)} affects ${placeOfImpact(entry.itineraryId, entry.impact)}.`,
+            { itineraryId: entry.itineraryId, newsId: entry.impact.newsId });
         return respondWith(adminImpact(entry.itineraryId, entry.impact));
     },
     adminDeleteImpact: id => {
@@ -819,7 +845,8 @@ export const mockApi = {
         removeImpact(entry.itineraryId, entry.impact);
         recordByAdmin("IMPACT_DELETED", ownerOfItinerary(entry.itineraryId), `impact ${entry.impact.id}`);
         tellOwner(ownerOfItinerary(entry.itineraryId),
-            `An admin removed the news ${newsNameOf(entry.impact)} from ${placeOfImpact(entry.itineraryId, entry.impact)}.`);
+            `An admin removed the news ${newsNameOf(entry.impact)} from ${placeOfImpact(entry.itineraryId, entry.impact)}.`,
+            { itineraryId: entry.itineraryId, newsId: entry.impact.newsId });
         return respondWith(null);
     },
     adminRecommendations: userId => {
@@ -851,7 +878,8 @@ export const mockApi = {
         RECOMMENDATIONS[entry.itineraryId].push(recommendation);
 
         recordByAdmin("RECOMMENDATION_CREATED", ownerOfItinerary(entry.itineraryId), `recommendation ${recommendation.id} (${action})`);
-        tellOwner(ownerOfItinerary(entry.itineraryId), `An admin added a suggestion for ${placeOfImpact(entry.itineraryId, entry.impact)}.`);
+        tellOwner(ownerOfItinerary(entry.itineraryId), `An admin added a suggestion for ${placeOfImpact(entry.itineraryId, entry.impact)}.`,
+            { itineraryId: entry.itineraryId, newsId: entry.impact.newsId });
         return respondWith(adminRecommendation(recommendation));
     },
     adminUpdateRecommendation: (id, { severity, action, advice, optionId, status }) => {
@@ -879,7 +907,8 @@ export const mockApi = {
         });
 
         recordByAdmin("RECOMMENDATION_UPDATED", ownerOfItinerary(entry.itineraryId), `recommendation ${recommendation.id} (${action})`);
-        tellOwner(ownerOfItinerary(entry.itineraryId), `An admin changed a suggestion for ${placeOfImpact(entry.itineraryId, recommendation)}.`);
+        tellOwner(ownerOfItinerary(entry.itineraryId), `An admin changed a suggestion for ${placeOfImpact(entry.itineraryId, recommendation)}.`,
+            { itineraryId: entry.itineraryId });
         return respondWith(adminRecommendation(recommendation));
     },
     adminDeleteRecommendation: id => {
@@ -892,8 +921,111 @@ export const mockApi = {
         const list = RECOMMENDATIONS[entry.itineraryId];
         list.splice(list.indexOf(entry.recommendation), 1);
         recordByAdmin("RECOMMENDATION_DELETED", ownerOfItinerary(entry.itineraryId), `recommendation ${entry.recommendation.id} (${entry.recommendation.action})`);
-        tellOwner(ownerOfItinerary(entry.itineraryId), `An admin removed a suggestion for ${placeOfImpact(entry.itineraryId, entry.recommendation)}.`);
+        tellOwner(ownerOfItinerary(entry.itineraryId), `An admin removed a suggestion for ${placeOfImpact(entry.itineraryId, entry.recommendation)}.`,
+            { itineraryId: entry.itineraryId });
         return respondWith(null);
+    },
+    // the delete alls: one audit entry and one note to the traveller per batch, like the backend
+    adminDeleteAllItineraries: userId => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const theirs = ITINERARIES.filter(itinerary => itinerary.userId === Number(userId));
+        for (const itinerary of theirs) removeItinerary(itinerary);
+
+        if (theirs.length) {
+            recordByAdmin("ITINERARY_DELETED", Number(userId), `all ${theirs.length} itineraries`);
+            tellOwner(Number(userId), "An admin deleted all your trips.");
+        }
+        return respondWith({ deleted: theirs.length });
+    },
+    adminDeleteAllActivities: itineraryId => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const itinerary = ITINERARIES.find(candidate => candidate.id === Number(itineraryId));
+        if (!itinerary) return fail(404, `Itinerary with ID: ${itineraryId} not found`);
+
+        const onTrip = ACTIVITIES.filter(activity => activity.itineraryId === itinerary.id);
+        const activityIds = new Set(onTrip.map(activity => activity.id));
+        const onTheirActivities = (IMPACTS[itinerary.id] ?? []).filter(impact => activityIds.has(impact.activityId));
+        for (const impact of onTheirActivities) removeImpact(itinerary.id, impact);
+        for (const activity of onTrip) ACTIVITIES.splice(ACTIVITIES.indexOf(activity), 1);
+
+        if (onTrip.length) {
+            markEditedByAdmin(itinerary.id);
+            recordByAdmin("ACTIVITY_DELETED", itinerary.userId, `all ${onTrip.length} activities on itinerary ${itinerary.id} '${itinerary.name}'`);
+            tellOwner(itinerary.userId, `An admin deleted every activity on your trip '${itinerary.name}'.`, { itineraryId: itinerary.id });
+        }
+        return respondWith({ deleted: onTrip.length });
+    },
+    adminDeleteAllImpacts: itineraryId => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const itinerary = ITINERARIES.find(candidate => candidate.id === Number(itineraryId));
+        if (!itinerary) return fail(404, `Itinerary with ID: ${itineraryId} not found`);
+
+        const onTrip = [...(IMPACTS[itinerary.id] ?? [])];
+        for (const impact of onTrip) removeImpact(itinerary.id, impact);
+
+        if (onTrip.length) {
+            recordByAdmin("IMPACT_DELETED", itinerary.userId, `all ${onTrip.length} impacts on itinerary ${itinerary.id} '${itinerary.name}'`);
+            tellOwner(itinerary.userId, `An admin removed all the news from your trip '${itinerary.name}'.`, { itineraryId: itinerary.id });
+        }
+        return respondWith({ deleted: onTrip.length });
+    },
+    adminDeleteWholeTripImpacts: itineraryId => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const itinerary = ITINERARIES.find(candidate => candidate.id === Number(itineraryId));
+        if (!itinerary) return fail(404, `Itinerary with ID: ${itineraryId} not found`);
+
+        const onWholeTrip = (IMPACTS[itinerary.id] ?? []).filter(impact => impact.activityId == null);
+        for (const impact of onWholeTrip) removeImpact(itinerary.id, impact);
+
+        if (onWholeTrip.length) {
+            recordByAdmin("IMPACT_DELETED", itinerary.userId, `all ${onWholeTrip.length} whole trip impacts on itinerary ${itinerary.id} '${itinerary.name}'`);
+            tellOwner(itinerary.userId, `An admin removed all the news affecting your trip '${itinerary.name}' as a whole.`,
+                { itineraryId: itinerary.id });
+        }
+        return respondWith({ deleted: onWholeTrip.length });
+    },
+    adminDeleteActivityImpacts: activityId => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const activity = ACTIVITIES.find(candidate => candidate.id === Number(activityId));
+        if (!activity) return fail(404, `Activity with ID: ${activityId} not found`);
+
+        const onActivity = (IMPACTS[activity.itineraryId] ?? []).filter(impact => impact.activityId === activity.id);
+        for (const impact of onActivity) removeImpact(activity.itineraryId, impact);
+
+        const ownerId = ownerOfItinerary(activity.itineraryId);
+        if (onActivity.length) {
+            recordByAdmin("IMPACT_DELETED", ownerId, `all ${onActivity.length} impacts on activity ${activity.id} of itinerary ${activity.itineraryId}`);
+            tellOwner(ownerId, `An admin removed all the news from an activity on your trip '${tripNameOf(activity.itineraryId)}'.`,
+                { itineraryId: activity.itineraryId });
+        }
+        return respondWith({ deleted: onActivity.length });
+    },
+    adminDeleteAllRecommendations: userId => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const theirTrips = ITINERARIES.filter(itinerary => itinerary.userId === Number(userId));
+        let count = 0;
+        for (const itinerary of theirTrips) {
+            count += (RECOMMENDATIONS[itinerary.id] ?? []).length;
+            RECOMMENDATIONS[itinerary.id] = [];
+        }
+
+        if (count) {
+            recordByAdmin("RECOMMENDATION_DELETED", Number(userId), `all ${count} recommendations`);
+            tellOwner(Number(userId), "An admin removed all the suggestions on your trips.");
+        }
+        return respondWith({ deleted: count });
     },
     // like the backend: not on yourself, and the last enabled admin cannot be made a user
     changeUserRole: (id, role) => {
@@ -978,7 +1110,16 @@ export const mockApi = {
 
         const mine = newestFirst(ADMIN_CHANGES.filter(change => change.userId === me.id));
         const unreadCount = mine.filter(change => change.readAt == null).length;
-        return respondWith({ content: mine.slice(0, 20), unreadCount });
+        return respondWith({ content: mine.slice(0, 20).map(adminChangeView), unreadCount });
+    },
+    markAdminChangeRead: id => {
+        const notLoggedIn = requireLogin();
+        if (notLoggedIn) return notLoggedIn;
+
+        const mine = ADMIN_CHANGES.filter(change => change.userId === me.id);
+        const change = mine.find(candidate => candidate.id === Number(id));
+        if (change) change.readAt ??= new Date().toISOString();
+        return respondWith({ unreadCount: mine.filter(candidate => candidate.readAt == null).length });
     },
     markAdminChangesRead: (upToId = null) => {
         const notLoggedIn = requireLogin();

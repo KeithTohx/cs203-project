@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -24,6 +25,7 @@ import csd.tripsense.impact.ImpactResponse;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryResponse;
 import csd.tripsense.notice.AdminChangeService;
+import csd.tripsense.notice.AdminChangeTarget;
 import csd.tripsense.recommendation.Recommendation;
 import csd.tripsense.recommendation.RecommendationResponse;
 import csd.tripsense.user.User;
@@ -81,7 +83,7 @@ public class AdminDataController {
         Itinerary created = adminData.createItinerary(userId, request);
 
         recordByAdmin(AuditService.ITINERARY_CREATED, admin, userId, describe(created));
-        tellOwner(userId, admin, "An admin added the trip " + quote(created.getName()) + ".");
+        tellOwner(userId, admin, "An admin added the trip " + quote(created.getName()) + ".", targetOf(created));
         return ResponseEntity.status(HttpStatus.CREATED).body(ItineraryResponse.from(created));
     }
 
@@ -98,7 +100,7 @@ public class AdminDataController {
         recordCleared(edit.clearedVerdicts(), admin, describe(updated) + " changed name, country or dates");
         String message = "An admin edited your trip " + quote(updated.getName()) + "."
                 + clearedNote(edit.clearedVerdicts());
-        tellOwner(ownerOf(updated), admin, message);
+        tellOwner(ownerOf(updated), admin, message, targetOf(updated));
         return ItineraryResponse.from(updated);
     }
 
@@ -110,8 +112,25 @@ public class AdminDataController {
         Itinerary deleted = adminData.deleteItinerary(id);
 
         recordByAdmin(AuditService.ITINERARY_DELETED, admin, ownerOf(deleted), describe(deleted));
-        tellOwner(ownerOf(deleted), admin, "An admin deleted your trip " + quote(deleted.getName()) + ".");
+        tellOwner(ownerOf(deleted), admin, "An admin deleted your trip " + quote(deleted.getName()) + ".", targetOf(deleted));
         return ResponseEntity.noContent().build();
+    }
+
+    // one audit entry and one note to the traveller for the whole batch, not one per row
+    @Operation(summary = "Delete all of one account's itineraries",
+            description = "Also removes their activities, impacts, alerts and recommendations. Gives back how many went.")
+    @DeleteMapping("/users/{userId}/itineraries")
+    public BulkDeleteResponse deleteAllItineraries(@PathVariable("userId") Long userId,
+                                                   @AuthenticationPrincipal CurrentUser admin) {
+        requireLoggedIn(admin);
+        int count = adminData.deleteAllItineraries(userId);
+
+        if (count > 0) {
+            String what = countOf(count, "itinerary", "itineraries");
+            recordByAdmin(AuditService.ITINERARY_DELETED, admin, userId, "all " + what);
+            tellOwner(userId, admin, "An admin deleted all your trips.", AdminChangeTarget.NONE);
+        }
+        return new BulkDeleteResponse(count);
     }
 
     // ---------- activities ----------
@@ -137,7 +156,8 @@ public class AdminDataController {
         Activity created = adminData.createActivity(itineraryId, request);
 
         recordByAdmin(AuditService.ACTIVITY_CREATED, admin, ownerOf(created.getItinerary()), describe(created));
-        tellOwner(ownerOf(created.getItinerary()), admin, "An admin added " + activityOnTrip(created) + ".");
+        tellOwner(ownerOf(created.getItinerary()), admin, "An admin added " + activityOnTrip(created) + ".",
+                targetOf(created.getItinerary()));
         return ResponseEntity.status(HttpStatus.CREATED).body(ActivityResponse.from(created));
     }
 
@@ -153,7 +173,7 @@ public class AdminDataController {
         recordByAdmin(AuditService.ACTIVITY_UPDATED, admin, ownerOf(updated.getItinerary()), describe(updated));
         recordCleared(edit.clearedVerdicts(), admin, describe(updated) + " changed name, address or start");
         String message = "An admin edited " + activityOnTrip(updated) + "." + clearedNote(edit.clearedVerdicts());
-        tellOwner(ownerOf(updated.getItinerary()), admin, message);
+        tellOwner(ownerOf(updated.getItinerary()), admin, message, targetOf(updated.getItinerary()));
         return ActivityResponse.from(updated);
     }
 
@@ -164,8 +184,27 @@ public class AdminDataController {
         Activity deleted = adminData.deleteActivity(id);
 
         recordByAdmin(AuditService.ACTIVITY_DELETED, admin, ownerOf(deleted.getItinerary()), describe(deleted));
-        tellOwner(ownerOf(deleted.getItinerary()), admin, "An admin deleted " + activityOnTrip(deleted) + ".");
+        tellOwner(ownerOf(deleted.getItinerary()), admin, "An admin deleted " + activityOnTrip(deleted) + ".",
+                targetOf(deleted.getItinerary()));
         return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "Delete all activities on an itinerary",
+            description = "Also removes the impacts on them. The whole trip impacts stay. Gives back how many went.")
+    @DeleteMapping("/itineraries/{itineraryId}/activities")
+    public BulkDeleteResponse deleteAllActivities(@PathVariable("itineraryId") Long itineraryId,
+                                                  @AuthenticationPrincipal CurrentUser admin) {
+        requireLoggedIn(admin);
+        AdminBulkDelete deleted = adminData.deleteAllActivities(itineraryId);
+
+        if (deleted.count() > 0) {
+            Itinerary trip = deleted.itinerary();
+            String what = countOf(deleted.count(), "activity", "activities");
+            recordByAdmin(AuditService.ACTIVITY_DELETED, admin, ownerOf(trip), "all " + what + " on " + describe(trip));
+            tellOwner(ownerOf(trip), admin, "An admin deleted every activity on your trip " + quote(trip.getName()) + ".",
+                    targetOf(trip));
+        }
+        return new BulkDeleteResponse(deleted.count());
     }
 
     // ---------- impacts ----------
@@ -187,7 +226,8 @@ public class AdminDataController {
         Impact created = adminData.createImpact(userId, request);
 
         recordByAdmin(AuditService.IMPACT_CREATED, admin, userId, describe(created));
-        tellOwner(userId, admin, "An admin linked the news " + newsOf(created) + " to " + placeOf(created) + ".");
+        tellOwner(userId, admin, "An admin linked the news " + newsOf(created) + " to " + placeOf(created) + ".",
+                targetOf(created));
         return ResponseEntity.status(HttpStatus.CREATED).body(ImpactResponse.from(created));
     }
 
@@ -201,7 +241,8 @@ public class AdminDataController {
 
         recordByAdmin(AuditService.IMPACT_UPDATED, admin, ownerOf(updated), describe(updated));
         tellOwner(ownerOf(updated), admin,
-                "An admin changed how the news " + newsOf(updated) + " affects " + placeOf(updated) + ".");
+                "An admin changed how the news " + newsOf(updated) + " affects " + placeOf(updated) + ".",
+                targetOf(updated));
         return ImpactResponse.from(updated);
     }
 
@@ -213,8 +254,66 @@ public class AdminDataController {
 
         recordByAdmin(AuditService.IMPACT_DELETED, admin, ownerOf(deleted), describe(deleted));
         tellOwner(ownerOf(deleted), admin,
-                "An admin removed the news " + newsOf(deleted) + " from " + placeOf(deleted) + ".");
+                "An admin removed the news " + newsOf(deleted) + " from " + placeOf(deleted) + ".",
+                targetOf(deleted));
         return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "Delete all impacts on an itinerary",
+            description = "On the whole trip and on each activity, with their alerts and recommendations. "
+                    + "wholeTripOnly=true leaves the activity ones alone. The news stays. Gives back how many went.")
+    @DeleteMapping("/itineraries/{itineraryId}/impacts")
+    public BulkDeleteResponse deleteAllImpacts(@PathVariable("itineraryId") Long itineraryId,
+                                               @RequestParam(name = "wholeTripOnly", defaultValue = "false") boolean wholeTripOnly,
+                                               @AuthenticationPrincipal CurrentUser admin) {
+        requireLoggedIn(admin);
+        if (wholeTripOnly) {
+            return deleteWholeTripImpacts(itineraryId, admin);
+        }
+        AdminBulkDelete deleted = adminData.deleteAllImpacts(itineraryId);
+
+        if (deleted.count() > 0) {
+            Itinerary trip = deleted.itinerary();
+            String what = countOf(deleted.count(), "impact", "impacts");
+            recordByAdmin(AuditService.IMPACT_DELETED, admin, ownerOf(trip), "all " + what + " on " + describe(trip));
+            tellOwner(ownerOf(trip), admin, "An admin removed all the news from your trip " + quote(trip.getName()) + ".",
+                    targetOf(trip));
+        }
+        return new BulkDeleteResponse(deleted.count());
+    }
+
+    private BulkDeleteResponse deleteWholeTripImpacts(Long itineraryId, CurrentUser admin) {
+        AdminBulkDelete deleted = adminData.deleteWholeTripImpacts(itineraryId);
+
+        if (deleted.count() > 0) {
+            Itinerary trip = deleted.itinerary();
+            String what = countOf(deleted.count(), "whole trip impact", "whole trip impacts");
+            recordByAdmin(AuditService.IMPACT_DELETED, admin, ownerOf(trip), "all " + what + " on " + describe(trip));
+            tellOwner(ownerOf(trip), admin,
+                    "An admin removed all the news affecting your trip " + quote(trip.getName()) + " as a whole.",
+                    targetOf(trip));
+        }
+        return new BulkDeleteResponse(deleted.count());
+    }
+
+    @Operation(summary = "Delete all impacts on an activity",
+            description = "With their alerts and recommendations. The news stays. Gives back how many went.")
+    @DeleteMapping("/activities/{activityId}/impacts")
+    public BulkDeleteResponse deleteActivityImpacts(@PathVariable("activityId") Long activityId,
+                                                    @AuthenticationPrincipal CurrentUser admin) {
+        requireLoggedIn(admin);
+        AdminBulkDelete deleted = adminData.deleteActivityImpacts(activityId);
+
+        if (deleted.count() > 0) {
+            Itinerary trip = deleted.itinerary();
+            String what = countOf(deleted.count(), "impact", "impacts");
+            recordByAdmin(AuditService.IMPACT_DELETED, admin, ownerOf(trip),
+                    "all " + what + " on activity " + activityId + " of " + describe(trip));
+            tellOwner(ownerOf(trip), admin,
+                    "An admin removed all the news from an activity on your trip " + quote(trip.getName()) + ".",
+                    targetOf(trip));
+        }
+        return new BulkDeleteResponse(deleted.count());
     }
 
     // ---------- recommendations ----------
@@ -235,7 +334,8 @@ public class AdminDataController {
 
         recordByAdmin(AuditService.RECOMMENDATION_CREATED, admin, ownerOf(created.getImpact()), describe(created));
         tellOwner(ownerOf(created.getImpact()), admin,
-                "An admin added a suggestion for " + placeOf(created.getImpact()) + ".");
+                "An admin added a suggestion for " + placeOf(created.getImpact()) + ".",
+                targetOf(created.getImpact()));
         return ResponseEntity.status(HttpStatus.CREATED).body(RecommendationResponse.from(created));
     }
 
@@ -249,7 +349,8 @@ public class AdminDataController {
 
         recordByAdmin(AuditService.RECOMMENDATION_UPDATED, admin, ownerOf(updated.getImpact()), describe(updated));
         tellOwner(ownerOf(updated.getImpact()), admin,
-                "An admin changed a suggestion for " + placeOf(updated.getImpact()) + ".");
+                "An admin changed a suggestion for " + placeOf(updated.getImpact()) + ".",
+                targetOf(updated.getImpact()));
         return RecommendationResponse.from(updated);
     }
 
@@ -262,8 +363,25 @@ public class AdminDataController {
 
         recordByAdmin(AuditService.RECOMMENDATION_DELETED, admin, ownerOf(deleted.getImpact()), describe(deleted));
         tellOwner(ownerOf(deleted.getImpact()), admin,
-                "An admin removed a suggestion for " + placeOf(deleted.getImpact()) + ".");
+                "An admin removed a suggestion for " + placeOf(deleted.getImpact()) + ".",
+                targetOf(deleted.getImpact()));
         return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "Delete all of one account's recommendations",
+            description = "Every attempt on every impact. The impacts stay. Gives back how many went.")
+    @DeleteMapping("/users/{userId}/recommendations")
+    public BulkDeleteResponse deleteAllRecommendations(@PathVariable("userId") Long userId,
+                                                       @AuthenticationPrincipal CurrentUser admin) {
+        requireLoggedIn(admin);
+        int count = adminData.deleteAllRecommendations(userId);
+
+        if (count > 0) {
+            String what = countOf(count, "recommendation", "recommendations");
+            recordByAdmin(AuditService.RECOMMENDATION_DELETED, admin, userId, "all " + what);
+            tellOwner(userId, admin, "An admin removed all the suggestions on your trips.", AdminChangeTarget.NONE);
+        }
+        return new BulkDeleteResponse(count);
     }
 
     // ---------- helpers ----------
@@ -290,8 +408,29 @@ public class AdminDataController {
     }
 
     // the traveller's side of the same change, in their words rather than the log's ids
-    private void tellOwner(Long ownerId, CurrentUser admin, String message) {
-        adminChanges.record(ownerId, admin.getId(), message);
+    private void tellOwner(Long ownerId, CurrentUser admin, String message, AdminChangeTarget target) {
+        adminChanges.record(ownerId, admin.getId(), message, target);
+    }
+
+    // which trip the change was on, so the traveller's alert can link to it
+    private static AdminChangeTarget targetOf(Itinerary itinerary) {
+        if (itinerary == null) {
+            return AdminChangeTarget.NONE;
+        }
+        return AdminChangeTarget.trip(itinerary.getId(), itinerary.getName());
+    }
+
+    // the trip, plus the news the impact is about
+    private static AdminChangeTarget targetOf(Impact impact) {
+        if (impact == null) {
+            return AdminChangeTarget.NONE;
+        }
+
+        AdminChangeTarget onTrip = targetOf(impact.getItinerary());
+        if (impact.getNews() == null) {
+            return onTrip;
+        }
+        return onTrip.withNews(impact.getNews().getId(), impact.getNews().getTitle());
     }
 
     // an edit that cleared news checks says so, since alerts and suggestions may have gone with them
@@ -303,6 +442,14 @@ public class AdminDataController {
                 ? "1 news check on it was cleared"
                 : cleared.size() + " news checks on it were cleared";
         return " " + checks + ", and it will be checked against the news again.";
+    }
+
+    // what a delete all sends back
+    public record BulkDeleteResponse(int deleted) {
+    }
+
+    private static String countOf(int count, String one, String many) {
+        return count + " " + (count == 1 ? one : many);
     }
 
     private static String quote(String name) {

@@ -47,6 +47,10 @@ public interface AdminDataService {
     @PreAuthorize("hasRole('ADMIN')")
     Itinerary deleteItinerary(Long itineraryId);
 
+    // every itinerary the account has, with everything hanging off them. gives back how many went
+    @PreAuthorize("hasRole('ADMIN')")
+    int deleteAllItineraries(Long userId);
+
     // ---------- activities ----------
 
     @PreAuthorize("hasRole('ADMIN')")
@@ -68,6 +72,10 @@ public interface AdminDataService {
     @PreAuthorize("hasRole('ADMIN')")
     Activity deleteActivity(Long activityId);
 
+    // every activity on one trip, and the impacts on them. the whole trip impacts stay
+    @PreAuthorize("hasRole('ADMIN')")
+    AdminBulkDelete deleteAllActivities(Long itineraryId);
+
     // ---------- impacts ----------
 
     // newest first
@@ -85,6 +93,19 @@ public interface AdminDataService {
     @PreAuthorize("hasRole('ADMIN')")
     Impact deleteImpact(Long impactId);
 
+    // every impact on one trip, on the whole trip and on each activity, with their alerts and
+    // recommendations. the news itself stays, so the next run can judge the trip again
+    @PreAuthorize("hasRole('ADMIN')")
+    AdminBulkDelete deleteAllImpacts(Long itineraryId);
+
+    // only the impacts on the trip as a whole, the ones on its activities stay
+    @PreAuthorize("hasRole('ADMIN')")
+    AdminBulkDelete deleteWholeTripImpacts(Long itineraryId);
+
+    // every impact on one activity, with their alerts and recommendations
+    @PreAuthorize("hasRole('ADMIN')")
+    AdminBulkDelete deleteActivityImpacts(Long activityId);
+
     // ---------- recommendations ----------
 
     // every attempt on every impact of the user, dismissed ones too, newest first
@@ -99,4 +120,8 @@ public interface AdminDataService {
 
     @PreAuthorize("hasRole('ADMIN')")
     Recommendation deleteRecommendation(Long recommendationId);
+
+    // every attempt on every impact of the account. the impacts stay
+    @PreAuthorize("hasRole('ADMIN')")
+    int deleteAllRecommendations(Long userId);
 }

@@ -108,6 +108,7 @@ class ImpactServiceImplTest {
         Impact stored = new Impact();
         stored.setImpacted(true);
         stored.setReason(reason);
+        stored.setPromptVersion(Impact.CURRENT_PROMPT_VERSION);
         return stored;
     }
 

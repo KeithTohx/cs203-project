@@ -75,13 +75,39 @@ public class Impact {
     @com.fasterxml.jackson.annotation.JsonIgnore
     private String verdictKey;
 
+    // raise this whenever the prompts, or the rules applied to the model's answer, change in a way
+    // that would give different verdicts. verdicts from an older version count as out of date like
+    // an edit's, so OutdatedVerdictSweeper clears them on the next start and they are judged again.
+    // the seed impacts in data.sql carry this number too, so raise it there as well
+    //   1 - the first prompts (rows from before this existed have null, which reads as 1)
+    //   2 - verdicts must name a kind of disruption, politics and diplomacy are never enough
+    public static final long CURRENT_PROMPT_VERSION = 2;
+
+    // a Long and not an Integer for the same reason as Itinerary.revision: the sqlite dialect drops
+    // the type from the id column when a table has another integer column, and ids stop being made
+    @Column(name = "prompt_version")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Long promptVersion;
+
+    public long promptVersionOrDefault() {
+        if (promptVersion == null) {
+            return 1;
+        }
+        return promptVersion;
+    }
+
+    public boolean isFromCurrentPrompt() {
+        return promptVersionOrDefault() == CURRENT_PROMPT_VERSION;
+    }
+
+    // judged on these details, by the prompts as they are now
     public boolean wasJudgedOn(long revision) {
         long judgedOn = judgedRevision == null ? 0 : judgedRevision;
-        return judgedOn == revision;
+        return judgedOn == revision && isFromCurrentPrompt();
     }
 
     // false once the trip or activity has been edited since this was judged, so the verdict is
-    // about details the traveller no longer has
+    // about details the traveller no longer has. also false for a verdict from older prompts
     @com.fasterxml.jackson.annotation.JsonIgnore
     public boolean isJudgedOnCurrentDetails() {
         if (activity != null) {

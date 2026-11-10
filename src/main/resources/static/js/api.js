@@ -88,8 +88,9 @@ const realApi = {
     return request(`/api/alerts${query}`, "PATCH", {read: true});
   },
   alertStreamUrl:"/api/alerts/stream",                                                // server-sent events: "ready" on connect, "alert" when one is saved, "admin-change" when an admin changed your trips
-  // what an admin changed in your trips, the bell shows them as one alert
-  adminChanges:() => request("/api/user/me/admin-changes"),                           // -> {content: [{id, message, createdAt, readAt}], unreadCount}, newest 20
+  // what an admin changed in your trips, shown next to the news alerts with an "Admin" tag
+  adminChanges:() => request("/api/user/me/admin-changes"),                           // -> {content: [{id, message, createdAt, readAt, itineraryId, itineraryName, itineraryExists, newsId, newsTitle}], unreadCount}, newest 20
+  markAdminChangeRead:id => request(`/api/user/me/admin-changes/${id}`, "PATCH"),     // -> {unreadCount}, just that one
   markAdminChangesRead:(upToId = null) => {
     const query = upToId == null ? "" : `?${new URLSearchParams({upToId})}`;
     return request(`/api/user/me/admin-changes${query}`, "PATCH");                    // -> {unreadCount}
@@ -116,19 +117,25 @@ const realApi = {
   adminAddItinerary:(userId, itinerary) => request(`/api/admin/users/${userId}/itineraries`, "POST", itinerary),   // {name, countryId, dateStart, dateEnd}
   adminUpdateItinerary:(id, itinerary) => request(`/api/admin/itineraries/${id}`, "PUT", itinerary),
   adminDeleteItinerary:id => request(`/api/admin/itineraries/${id}`, "DELETE"),        // its activities, impacts, alerts and recommendations go too
+  adminDeleteAllItineraries:userId => request(`/api/admin/users/${userId}/itineraries`, "DELETE"),   // -> {deleted}, every trip they have
   adminActivities:itineraryId => request(`/api/admin/itineraries/${itineraryId}/activities`),
   adminUserActivities:userId => request(`/api/admin/users/${userId}/activities`),      // every activity on all their trips, earliest first
   adminAddActivity:(itineraryId, activity) => request(`/api/admin/itineraries/${itineraryId}/activities`, "POST", activity),   // {name, address, dateStart, dateEnd, category}
   adminUpdateActivity:(id, activity) => request(`/api/admin/activities/${id}`, "PUT", activity),
   adminDeleteActivity:id => request(`/api/admin/activities/${id}`, "DELETE"),
+  adminDeleteAllActivities:itineraryId => request(`/api/admin/itineraries/${itineraryId}/activities`, "DELETE"),   // -> {deleted}, whole trip impacts stay
   adminImpacts:userId => request(`/api/admin/users/${userId}/impacts`),                // newest first, rejected ones included
   adminAddImpact:(userId, impact) => request(`/api/admin/users/${userId}/impacts`, "POST", impact),   // {newsId, itineraryId, activityId, impacted, reason, rejected, sendAlert}
   adminUpdateImpact:(id, changes) => request(`/api/admin/impacts/${id}`, "PUT", changes),   // {impacted, reason, rejected}
   adminDeleteImpact:id => request(`/api/admin/impacts/${id}`, "DELETE"),
+  adminDeleteAllImpacts:itineraryId => request(`/api/admin/itineraries/${itineraryId}/impacts`, "DELETE"),   // -> {deleted}, whole trip and activity impacts
+  adminDeleteWholeTripImpacts:itineraryId => request(`/api/admin/itineraries/${itineraryId}/impacts?wholeTripOnly=true`, "DELETE"),   // -> {deleted}, the activity ones stay
+  adminDeleteActivityImpacts:activityId => request(`/api/admin/activities/${activityId}/impacts`, "DELETE"),   // -> {deleted}
   adminRecommendations:userId => request(`/api/admin/users/${userId}/recommendations`),   // every attempt, newest first
   adminAddRecommendation:(impactId, recommendation) => request(`/api/admin/impacts/${impactId}/recommendations`, "POST", recommendation),   // {severity, action, advice, optionId, status}
   adminUpdateRecommendation:(id, recommendation) => request(`/api/admin/recommendations/${id}`, "PUT", recommendation),
   adminDeleteRecommendation:id => request(`/api/admin/recommendations/${id}`, "DELETE"),
+  adminDeleteAllRecommendations:userId => request(`/api/admin/users/${userId}/recommendations`, "DELETE"),   // -> {deleted}, the impacts stay
 };
 
 // Mock mode only on localhost, via http://localhost:8080/?mock

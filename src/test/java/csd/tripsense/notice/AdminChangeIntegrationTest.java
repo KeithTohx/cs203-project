@@ -151,4 +151,72 @@ class AdminChangeIntegrationTest {
             .status(HttpStatus.OK)
             .body("adminEditedAt", nullValue());
     }
+
+    @Test
+    @DisplayName("Should mark one change read, and not someone else's")
+    void markOneRead_OnlyTheirOwn() {
+        adminChanges.record(traveller.getId(), 99L, "first");
+        adminChanges.record(traveller.getId(), 99L, "second");
+        adminChanges.record(stranger.getId(), 99L, "not theirs");
+        Long firstId = changeRepository.findTop20ByUserIdOrderByIdDesc(traveller.getId()).get(1).getId();
+        Long strangersId = changeRepository.findTop20ByUserIdOrderByIdDesc(stranger.getId()).get(0).getId();
+
+        given()
+            .postProcessors(user(loggedInAs(traveller)), csrf())
+        .when()
+            .patch(PATH + "/" + firstId)
+        .then()
+            .status(HttpStatus.OK)
+            .body("unreadCount", equalTo(1));
+
+        // the stranger's stays unread
+        given()
+            .postProcessors(user(loggedInAs(traveller)), csrf())
+        .when()
+            .patch(PATH + "/" + strangersId)
+        .then()
+            .status(HttpStatus.OK);
+
+        long strangersUnread = changeRepository.countByUserIdAndReadAtIsNull(stranger.getId());
+        org.assertj.core.api.Assertions.assertThat(strangersUnread).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("Should say which trip and news a change was about, and only link a trip that is still theirs")
+    void list_CarriesTripAndNews() {
+        Country japan = new Country();
+        japan.setName("Japan");
+        japan = countryRepository.saveAndFlush(japan);
+
+        csd.tripsense.itinerary.Itinerary trip = new csd.tripsense.itinerary.Itinerary();
+        trip.setUser(traveller);
+        trip.setCountry(japan);
+        trip.setName("Japan Ski Trip");
+        trip = itineraryRepository.saveAndFlush(trip);
+
+        csd.tripsense.itinerary.Itinerary strangersTrip = new csd.tripsense.itinerary.Itinerary();
+        strangersTrip.setUser(stranger);
+        strangersTrip.setCountry(japan);
+        strangersTrip.setName("Paris");
+        strangersTrip = itineraryRepository.saveAndFlush(strangersTrip);
+
+        // pointing at someone else's trip, like a reused id after the traveller's trip was deleted
+        adminChanges.record(traveller.getId(), 99L, "An admin deleted your trip 'Old trip'.",
+                AdminChangeTarget.trip(strangersTrip.getId(), "Old trip"));
+        adminChanges.record(traveller.getId(), 99L, "An admin removed the news 'Quake' from your trip 'Japan Ski Trip'.",
+                AdminChangeTarget.trip(trip.getId(), "Japan Ski Trip").withNews(7L, "Quake"));
+
+        given()
+            .postProcessors(user(loggedInAs(traveller)))
+        .when()
+            .get(PATH)
+        .then()
+            .status(HttpStatus.OK)
+            .body("content[0].itineraryId", equalTo(trip.getId().intValue()))
+            .body("content[0].itineraryName", equalTo("Japan Ski Trip"))
+            .body("content[0].itineraryExists", equalTo(true))
+            .body("content[0].newsTitle", equalTo("Quake"))
+            .body("content[1].itineraryName", equalTo("Old trip"))
+            .body("content[1].itineraryExists", equalTo(false));
+    }
 }

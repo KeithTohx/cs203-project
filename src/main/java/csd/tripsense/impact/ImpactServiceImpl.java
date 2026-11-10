@@ -288,6 +288,7 @@ public class ImpactServiceImpl implements ImpactService {
             impact = latest.orElseGet(Impact::new);
         }
         impact.setJudgedRevision(judgedRevision);
+        impact.setPromptVersion(Impact.CURRENT_PROMPT_VERSION);
         Impact saved = save(impact, itinerary, news, activity, verdict);
         return new SaveOutcome(saved, true);
     }

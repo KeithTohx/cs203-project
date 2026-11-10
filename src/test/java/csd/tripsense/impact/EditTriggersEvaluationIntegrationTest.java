@@ -233,6 +233,7 @@ class EditTriggersEvaluationIntegrationTest {
         impact.setNews(article);
         impact.setImpacted(true);
         impact.setReason(OLD_REASON);
+        impact.setPromptVersion(Impact.CURRENT_PROMPT_VERSION);
         impact.setVerdictKey(UUID.randomUUID().toString());
         impact = impacts.saveAndFlush(impact);
 

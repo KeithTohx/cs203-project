@@ -30,6 +30,15 @@ public interface ImpactRepository extends JpaRepository<Impact, Long> {
     List<Impact> findByUserIdAndItineraryIdAndImpactedTrue(Long userId, Long itineraryId);
 
     long countByItineraryIdAndUserId(Long itineraryId, Long userId);
+
+    // the trips holding a verdict the model reached under older prompts, see Impact.CURRENT_PROMPT_VERSION.
+    // seed rows without a reason have never been judged, so they are left for the evaluator
+    @org.springframework.data.jpa.repository.Query("""
+            select distinct i.itinerary.id from Impact i
+            where i.reason is not null
+              and (i.promptVersion is null or i.promptVersion < :current)
+            """)
+    List<Long> findTripsJudgedBeforePrompt(@org.springframework.data.repository.query.Param("current") long current);
     
     void deleteByUserId(Long userId);
 
