@@ -114,4 +114,12 @@ public class NewsServiceImpl implements NewsService {
         return newsRepository.findByCountryIdSince(countryId, since);
     }
 
+    @Override
+    public List<News> getNewsByIdsAboutCountry(Collection<Long> newsIds, Long countryId) {
+        if (newsIds.isEmpty()) {
+            return List.of();
+        }
+        return newsRepository.findByIdInAndCountryId(newsIds, countryId);
+    }
+
 }

@@ -27,6 +27,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.stubbing.Answer;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionOperations;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityCategory;
@@ -80,8 +81,14 @@ class RecommendationServiceImplTest {
         itineraryService = mock(ItineraryService.class);
         chatService = mock(ChatService.class);
         preferenceService = mock(PreferenceService.class);
+        // no database here, so the guarded save runs without a transaction
         service = new RecommendationServiceImpl(recommendations, options, impactService,
-                itineraryService, chatService, preferenceService, new csd.tripsense.itinerary.ItineraryAccess(mock(csd.tripsense.user.UserRepository.class)));
+                itineraryService, chatService, preferenceService,
+                new csd.tripsense.itinerary.ItineraryAccess(mock(csd.tripsense.user.UserRepository.class)),
+                TransactionOperations.withoutTransaction());
+        // the impact is never edited while the model answers, unless a test says otherwise
+        when(impactService.findUnchanged(any(Impact.class)))
+                .thenAnswer(invocation -> Optional.of(invocation.getArgument(0)));
 
         // deep stubs so we can say "its user has id 1 and its country is Japan" without building a
         // Country object, which this test has no reason to know about
@@ -190,6 +197,43 @@ class RecommendationServiceImplTest {
         assertThat(refreshed.getStatus()).isEqualTo(RecommendationStatus.ACCEPTED);
         assertThat(refreshed.getDecidedAt()).isEqualTo(decidedAt);
         assertThat(refreshed.getPreferencesVersion()).isEqualTo(prefs.getUpdatedAt());
+    }
+
+    @Test
+    void aDecisionMadeWhileTheModelWasAnsweringIsNotUndone() {
+        preferencesSavedAt(Instant.now());
+        // what generate loaded before asking the model
+        Recommendation loadedBefore = staleRecommendation();
+        loadedBefore.setId(42L);
+        loadedBefore.setStatus(RecommendationStatus.PENDING);
+        // the same row once the traveller accepted it, while the model was still answering
+        Recommendation decidedMeanwhile = staleRecommendation();
+        decidedMeanwhile.setId(42L);
+        decidedMeanwhile.setStatus(RecommendationStatus.ACCEPTED);
+        when(recommendations.findFirstByImpactIdOrderByIdDesc(4L))
+                .thenReturn(Optional.of(loadedBefore), Optional.of(decidedMeanwhile));
+        theImpactsAre(skiImpact(4L));
+        theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
+
+        Recommendation refreshed = generateOne();
+
+        assertThat(refreshed).isSameAs(decidedMeanwhile);
+        assertThat(refreshed.getStatus()).isEqualTo(RecommendationStatus.ACCEPTED);
+        verify(recommendations, never()).save(loadedBefore);
+    }
+
+    @Test
+    void adviceIsDroppedWhenTheImpactChangedWhileTheModelWasAnswering() {
+        Impact ski = skiImpact(4L);
+        theImpactsAre(ski);
+        theModelSays("MEDIUM", "REPLACE", 1L, "Visit the art museum.");
+        // the traveller edited the activity, so the verdict this advice was for is gone
+        when(impactService.findUnchanged(ski)).thenReturn(Optional.empty());
+
+        List<Recommendation> result = service.generate(ITINERARY_ID);
+
+        assertThat(result).isEmpty();
+        verify(recommendations, never()).save(any());
     }
 
     // ----- caching and staleness -----
