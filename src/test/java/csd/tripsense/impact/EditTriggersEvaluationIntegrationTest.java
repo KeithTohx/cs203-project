@@ -191,10 +191,15 @@ class EditTriggersEvaluationIntegrationTest {
 
     // published just now, so it is inside the lookback window the re-evaluation reads
     private News savedNews(String title, Country about) {
+        return savedNewsFrom(title, about, 0);
+    }
+
+    // the re-evaluation after an edit only reads the last few days of news by itself
+    private News savedNewsFrom(String title, Country about, int daysAgo) {
         News article = new News();
         article.setTitle(title);
         article.setUrl("https://example.com/" + UUID.randomUUID());
-        article.setPublishedAt(LocalDateTime.now(ZoneOffset.UTC));
+        article.setPublishedAt(LocalDateTime.now(ZoneOffset.UTC).minusDays(daysAgo));
         article.setCountries(Set.of(about));
         return news.saveAndFlush(article);
     }
@@ -364,6 +369,31 @@ class EditTriggersEvaluationIntegrationTest {
         assertThat(adviceLeftOnTrip()).isEqualTo(1);
 
         await().atMost(REJUDGED_WITHIN).until(() -> judgedAgain(null, japanNews));
+    }
+
+    @Test
+    @DisplayName("Should judge an article older than the lookback again after a rename, instead of losing its verdict")
+    void rename_RejudgesOlderArticle() {
+        News monthOld = savedNewsFrom("Ski resort fire", japan, 30);
+        savedOldVerdict(null, monthOld);
+
+        Itinerary renamed = sameTripIn(japan);
+        renamed.setName("Hokkaido powder week");
+        itineraryService.updateItinerary(trip.getId(), renamed);
+
+        await().atMost(REJUDGED_WITHIN).until(() -> judgedAgain(null, monthOld));
+        assertThat(oldVerdictKept(null, monthOld)).isFalse();
+    }
+
+    @Test
+    @DisplayName("Should judge an older article again for an activity whose address changed")
+    void activityAddressChange_RejudgesOlderArticle() {
+        News monthOld = savedNewsFrom("Ski resort fire", japan, 30);
+        savedOldVerdict(skiing, monthOld);
+
+        activityService.updateActivity(skiing.getId(), skiingMovedTo("Furano, Hokkaido"));
+
+        await().atMost(REJUDGED_WITHIN).until(() -> judgedAgain(skiing, monthOld));
     }
 
     @Test

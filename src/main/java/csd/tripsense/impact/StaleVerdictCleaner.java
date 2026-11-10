@@ -1,6 +1,9 @@
 package csd.tripsense.impact;
 
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -27,7 +30,9 @@ import csd.tripsense.itinerary.ItineraryEditedEvent;
 //
 // a plain listener and not an after commit one, so the delete is part of the edit's transaction:
 // the traveller never sees a verdict about their old plans next to their new ones, and if the
-// edit fails nothing is lost. NewItemEvaluationListener judges the missing pairs after the commit
+// edit fails nothing is lost. NewItemEvaluationListener judges the missing pairs after the commit.
+// it only reads recent news by itself, so the articles cleared here are handed to it as well,
+// otherwise a verdict on an older article would be deleted and never judged again
 @Component
 public class StaleVerdictCleaner {
 
@@ -79,7 +84,12 @@ public class StaleVerdictCleaner {
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
 
+        VerdictsClearedEvent cleared = articlesBehind(outOfDate);
+
         impacts.deleteAll(outOfDate);
+
+        // only acted on once the edit has committed, so nothing is judged again if the edit fails
+        events.publishEvent(cleared);
 
         // the stream service only sends this once the edit has committed. the new verdicts may say
         // unaffected, and then no new alert would ever arrive to make the browser reload its list
@@ -87,5 +97,24 @@ public class StaleVerdictCleaner {
             events.publishEvent(new AlertsRemovedEvent(ownerId));
         }
         return outOfDate.size();
+    }
+
+    // which articles each trip or activity had a verdict on. an activity verdict goes under the
+    // activity, not its trip, since the activity may have moved to another trip in the edit
+    private static VerdictsClearedEvent articlesBehind(List<Impact> verdicts) {
+        Map<Long, Set<Long>> newsIdsByTrip = new HashMap<>();
+        Map<Long, Set<Long>> newsIdsByActivity = new HashMap<>();
+
+        for (Impact verdict : verdicts) {
+            Long newsId = verdict.getNews().getId();
+            if (verdict.getActivity() != null) {
+                Long activityId = verdict.getActivity().getId();
+                newsIdsByActivity.computeIfAbsent(activityId, id -> new HashSet<>()).add(newsId);
+            } else if (verdict.getItinerary() != null) {
+                Long itineraryId = verdict.getItinerary().getId();
+                newsIdsByTrip.computeIfAbsent(itineraryId, id -> new HashSet<>()).add(newsId);
+            }
+        }
+        return new VerdictsClearedEvent(newsIdsByTrip, newsIdsByActivity);
     }
 }

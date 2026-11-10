@@ -7,6 +7,8 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -23,6 +25,7 @@ import csd.tripsense.country.Country;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryCreatedEvent;
 import csd.tripsense.itinerary.ItineraryEditedEvent;
+import csd.tripsense.itinerary.ItineraryNotFoundException;
 import csd.tripsense.itinerary.ItineraryService;
 import csd.tripsense.news.News;
 import csd.tripsense.news.NewsService;
@@ -507,5 +510,74 @@ class NewItemEvaluationListenerTest {
         listener(true, 5, 200).onItineraryEdited(new ItineraryEditedEvent(ITINERARY_ID));
 
         verify(impactService).evaluateItineraryForNews(trip, fourth);
+    }
+
+    // ---------------------------------------------------------------- articles whose verdicts an edit cleared
+
+    private static VerdictsClearedEvent clearedOnTrip(Long... newsIds) {
+        return new VerdictsClearedEvent(Map.of(ITINERARY_ID, Set.of(newsIds)), Map.of());
+    }
+
+    @Test
+    @DisplayName("Should judge cleared articles again however old they are, looking them up by id in the trip's current country")
+    void onVerdictsCleared_RejudgesClearedArticlesInCurrentCountry() {
+        Itinerary trip = givenActiveTrip();
+        News monthOld = news(50);
+        when(newsService.getNewsByIdsAboutCountry(Set.of(50L, 51L), COUNTRY_ID)).thenReturn(List.of(monthOld));
+
+        listener(true, 5, 200).onVerdictsCleared(clearedOnTrip(50L, 51L));
+
+        // 51 is about another country now, so the lookup leaves it out and it is never asked about
+        verify(impactService).evaluateItineraryForNews(trip, monthOld);
+        verify(impactService, times(1)).evaluateItineraryForNews(any(Itinerary.class), any(News.class));
+        verify(newsService, never()).getNewsByCountrySince(any(), any());
+    }
+
+    @Test
+    @DisplayName("Should not ask again about a cleared article the edit's own run has already judged")
+    void onVerdictsCleared_SkipsArticlesJudgedMeanwhile() {
+        Itinerary trip = givenActiveTrip();
+        News recent = news(50);
+        when(newsService.getNewsByIdsAboutCountry(Set.of(50L), COUNTRY_ID)).thenReturn(List.of(recent));
+        when(impactService.hasCurrentVerdict(trip, recent)).thenReturn(true);
+
+        listener(true, 5, 200).onVerdictsCleared(clearedOnTrip(50L));
+
+        verify(impactService, never()).evaluateItineraryForNews(any(Itinerary.class), any(News.class));
+    }
+
+    @Test
+    @DisplayName("Should judge an activity's cleared articles against the activity, and carry on past a deleted trip")
+    void onVerdictsCleared_ActivityArticlesJudged_DeletedTripSkipped() {
+        when(itineraryService.getItineraryById(ITINERARY_ID)).thenThrow(new ItineraryNotFoundException(ITINERARY_ID));
+        Activity skiing = givenActivityOnActiveTrip();
+        News monthOld = news(52);
+        when(newsService.getNewsByIdsAboutCountry(Set.of(52L), COUNTRY_ID)).thenReturn(List.of(monthOld));
+        VerdictsClearedEvent cleared = new VerdictsClearedEvent(
+                Map.of(ITINERARY_ID, Set.of(50L)),
+                Map.of(ACTIVITY_ID, Set.of(52L)));
+
+        listener(true, 5, 200).onVerdictsCleared(cleared);
+
+        verify(impactService).evaluateActivityForNews(skiing, monthOld);
+        verify(impactService, never()).evaluateItineraryForNews(any(Itinerary.class), any(News.class));
+    }
+
+    @Test
+    @DisplayName("Should not judge cleared articles again for a trip that has already ended")
+    void onVerdictsCleared_EndedTrip_JudgesNothing() {
+        when(itineraryService.getItineraryById(ITINERARY_ID)).thenReturn(trip(LocalDateTime.now().minusDays(1)));
+
+        listener(true, 5, 200).onVerdictsCleared(clearedOnTrip(50L));
+
+        verifyNoInteractions(newsService, impactService);
+    }
+
+    @Test
+    @DisplayName("Should do nothing with cleared articles when evaluation is turned off")
+    void onVerdictsCleared_Disabled_DoesNothing() {
+        listener(false, 5, 200).onVerdictsCleared(clearedOnTrip(50L));
+
+        verifyNoInteractions(itineraryService, newsService, impactService);
     }
 }

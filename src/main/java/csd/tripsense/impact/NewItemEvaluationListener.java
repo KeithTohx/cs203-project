@@ -3,6 +3,8 @@ package csd.tripsense.impact;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -18,10 +20,12 @@ import org.springframework.transaction.event.TransactionalEventListener;
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityCreatedEvent;
 import csd.tripsense.activity.ActivityEditedEvent;
+import csd.tripsense.activity.ActivityNotFoundException;
 import csd.tripsense.activity.ActivityService;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryCreatedEvent;
 import csd.tripsense.itinerary.ItineraryEditedEvent;
+import csd.tripsense.itinerary.ItineraryNotFoundException;
 import csd.tripsense.itinerary.ItineraryService;
 import csd.tripsense.news.News;
 import csd.tripsense.news.NewsService;
@@ -113,6 +117,89 @@ public class NewItemEvaluationListener {
     public void onActivityEdited(ActivityEditedEvent event) {
         if (!enabled) return;
         executor.execute(() -> evaluateActivity(event.activityId()));
+    }
+
+    // the articles whose verdicts an edit cleared. the edit's own run above only reads recent news,
+    // so an older article among these would otherwise lose its verdict for good. an article both runs
+    // cover is only asked about once, whichever runs second finds its verdict already there
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onVerdictsCleared(VerdictsClearedEvent event) {
+        if (!enabled || event.isEmpty()) return;
+        executor.execute(() -> rejudgeCleared(event));
+    }
+
+    void rejudgeCleared(VerdictsClearedEvent event) {
+        try {
+            Progress progress = new Progress();
+            boolean keepGoing = true;
+
+            for (Map.Entry<Long, Set<Long>> trip : event.newsIdsByTrip().entrySet()) {
+                keepGoing = rejudgeTrip(trip.getKey(), trip.getValue(), progress);
+                if (!keepGoing) break;
+            }
+
+            for (Map.Entry<Long, Set<Long>> activity : event.newsIdsByActivity().entrySet()) {
+                if (!keepGoing) break;
+                keepGoing = rejudgeActivity(activity.getKey(), activity.getValue(), progress);
+            }
+
+            log.info("Cleared verdicts: judged {}, reused {}, skipped {} ({})", progress.judged,
+                    progress.reused, progress.skipped,
+                    progress.stopReason == null ? "complete" : progress.stopReason);
+        } catch (Exception e) {
+            log.warn("Judging cleared verdicts again failed: {}", e.getMessage());
+        }
+    }
+
+    // returns false when the whole run should stop, see judge
+    private boolean rejudgeTrip(Long itineraryId, Set<Long> newsIds, Progress progress) {
+        Itinerary itinerary;
+        try {
+            itinerary = itineraryService.getItineraryById(itineraryId);
+        } catch (ItineraryNotFoundException e) {
+            return true;   // deleted since the edit, nothing to judge
+        }
+        if (!isWorthJudging(itinerary)) return true;
+
+        // only articles about the trip's country now, the same rule every other run uses. after a move
+        // to another country the old country's news is no longer about this trip
+        List<News> stillRelevant = newsService.getNewsByIdsAboutCountry(newsIds, itinerary.getCountry().getId());
+        for (News news : stillRelevant) {
+            boolean alreadyJudged = impactService.hasCurrentVerdict(itinerary, news);
+            boolean keepGoing = judge(progress, alreadyJudged,
+                    () -> impactService.evaluateItineraryForNews(itinerary, news));
+            if (!keepGoing) return false;
+        }
+        return true;
+    }
+
+    private boolean rejudgeActivity(Long activityId, Set<Long> newsIds, Progress progress) {
+        Activity activity;
+        try {
+            activity = activityService.getActivityById(activityId);
+        } catch (ActivityNotFoundException e) {
+            return true;
+        }
+        Itinerary itinerary = activity.getItinerary();
+        if (!isWorthJudging(itinerary)) return true;
+
+        List<News> stillRelevant = newsService.getNewsByIdsAboutCountry(newsIds, itinerary.getCountry().getId());
+        for (News news : stillRelevant) {
+            boolean alreadyJudged = impactService.hasCurrentVerdict(activity, news);
+            boolean keepGoing = judge(progress, alreadyJudged,
+                    () -> impactService.evaluateActivityForNews(activity, news));
+            if (!keepGoing) return false;
+        }
+        return true;
+    }
+
+    // the same rules as for a new trip: a countryless trip or one that has already ended is not judged
+    private static boolean isWorthJudging(Itinerary itinerary) {
+        if (itinerary == null || itinerary.getCountry() == null) {
+            return false;
+        }
+        boolean hasEnded = itinerary.getDateEnd() != null && itinerary.getDateEnd().isBefore(LocalDateTime.now());
+        return !hasEnded;
     }
  
     void evaluateActivity(Long activityId) {

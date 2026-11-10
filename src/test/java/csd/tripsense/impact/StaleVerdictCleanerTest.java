@@ -10,6 +10,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -27,6 +29,7 @@ import csd.tripsense.alert.Alert;
 import csd.tripsense.alert.AlertsRemovedEvent;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryEditedEvent;
+import csd.tripsense.news.News;
 import csd.tripsense.user.User;
 
 // the edit raises the revisions before this runs, so each test sets the trip and activity up as
@@ -47,16 +50,26 @@ class StaleVerdictCleanerTest {
     @BeforeEach
     void setUp() {
         trip = new Itinerary();
+        trip.setId(7L);
         trip.setRevision(1L);
 
         skiing = new Activity();
+        skiing.setId(100L);
         skiing.setItinerary(trip);
         skiing.setRevision(1L);
     }
 
     private Impact wholeTripVerdict(Long judgedRevision) {
+        return wholeTripVerdict(judgedRevision, 50L);
+    }
+
+    private Impact wholeTripVerdict(Long judgedRevision, Long newsId) {
+        News article = new News();
+        article.setId(newsId);
+
         Impact impact = new Impact();
         impact.setItinerary(trip);
+        impact.setNews(article);
         impact.setJudgedRevision(judgedRevision);
         return impact;
     }
@@ -176,6 +189,32 @@ class StaleVerdictCleanerTest {
         cleaner.onActivityEdited(new ActivityEditedEvent(100L));
 
         verify(impacts).deleteAll(List.of(notAlerted));
-        verifyNoInteractions(events);
+        verify(events, never()).publishEvent(any(AlertsRemovedEvent.class));
+    }
+
+    // ===== handing the cleared articles on to be judged again =====
+
+    @Test
+    @DisplayName("Should hand on every cleared article, under the trip or activity it was judged against, after the delete")
+    void onItineraryEdited_PublishesClearedArticles() {
+        trip.setRevision(2L);
+        skiing.setRevision(2L);
+        Impact oldTripVerdict = wholeTripVerdict(1L, 50L);
+        Impact olderTripVerdict = wholeTripVerdict(0L, 51L);
+        Impact oldActivityVerdict = wholeTripVerdict(1L, 52L);
+        oldActivityVerdict.setActivity(skiing);
+        Impact freshTripVerdict = wholeTripVerdict(2L, 53L);
+        when(impacts.findByItineraryId(7L))
+                .thenReturn(List.of(oldTripVerdict, olderTripVerdict, oldActivityVerdict, freshTripVerdict));
+
+        cleaner.onItineraryEdited(new ItineraryEditedEvent(7L));
+
+        // the fresh verdict stays, so its article is not handed on
+        VerdictsClearedEvent expected = new VerdictsClearedEvent(
+                Map.of(7L, Set.of(50L, 51L)),
+                Map.of(100L, Set.of(52L)));
+        InOrder order = inOrder(impacts, events);
+        order.verify(impacts).deleteAll(any());
+        order.verify(events).publishEvent(expected);
     }
 }
