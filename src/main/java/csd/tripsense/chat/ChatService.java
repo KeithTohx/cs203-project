@@ -9,6 +9,17 @@ package csd.tripsense.chat;
 public interface ChatService {
 
     /**
+     * Runs a request the caller built, against the first model that still has budget.
+     * Used by the chatbot, which needs its own system prompt and memory advisor.
+     */
+    <T> T runWithFallback(org.springframework.ai.chat.client.ChatClient.ChatClientRequestSpec request,
+                          java.util.function.Function<
+                                  org.springframework.ai.chat.client.ChatClient.ChatClientRequestSpec, T> call);
+
+    /** The best model not known to be out of budget, empty when no list is configured. */
+    java.util.Optional<String> firstAvailableModel();
+
+    /**
      * Sends a prompt and returns the reply as plain text.
      *
      * @param prompt what to ask the model

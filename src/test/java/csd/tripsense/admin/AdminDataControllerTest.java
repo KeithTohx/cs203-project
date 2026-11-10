@@ -211,7 +211,8 @@ class AdminDataControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(70))
                 .andExpect(jsonPath("$.newsTitle").value("Earthquake near Hokkaido"))
-                .andExpect(jsonPath("$.rejected").value(false));
+                // nothing has rejected it and nobody has confirmed it, so it stays null
+                .andExpect(jsonPath("$.rejected").doesNotExist());
 
         verify(auditService).record(eq(AuditService.IMPACT_CREATED), eq(3L), eq("admin@example.com"),
                 eq(4L), contains("impact 70"));

@@ -43,8 +43,7 @@ const routes = [
 	{ path: "/admin/audit", nav: "Activity", icon: "activity", role: "ADMIN", view: context => showAdminAudit(context.root, context.user, context.reauth) },
 	{ path: "/admin/sql", nav: "Database", icon: "database", role: "ADMIN", view: context => showAdminSql(context.root, context.user, context.reauth, context.onLeave) },
 	{ path: "/news", nav: "News", icon: "news", view: context => showNews(context.root, context.user, context.reauth) },
-	// opened from the bell, so it has no link of its own in the top bar
-	{ path: "/alerts", role: "USER", view: context => showAlerts(context.root, context.user, context.reauth, context.onLeave) },
+	{ path: "/alerts", nav: "Alerts", icon: "bell", role: "USER", view: context => showAlerts(context.root, context.user, context.reauth, context.onLeave) },
 	{ path: "/account", view: context => showAccount(context.root, context.user, context.reauth) },
 	{ path: "/account/preferences", role: "USER", view: context => showEditPreferences(context.root, context.user, context.reauth) },
 	{ path: "/account/details", view: context => showEditDetails(context.root, context.user, context.reauth) },

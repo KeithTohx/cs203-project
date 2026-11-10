@@ -120,6 +120,8 @@ class RecommendationServiceImplTest {
 
         Impact impact = mock(Impact.class);
         when(impact.getId()).thenReturn(impactId);
+        // false means the traveller confirmed it affects them, which is what generate acts on
+        when(impact.getRejected()).thenReturn(false);
         when(impact.getActivity()).thenReturn(activity);
         when(impact.getNews()).thenReturn(news);
         when(impact.getReason()).thenReturn("The resort is closed.");
@@ -691,6 +693,7 @@ class RecommendationServiceImplTest {
     @Test
     void aWholeTripImpactNeverCallsTheModelAndOffersNoPlace() {
         Impact wholeTrip = mock(Impact.class);
+        when(wholeTrip.getRejected()).thenReturn(false);
         when(wholeTrip.getId()).thenReturn(5L);
         when(wholeTrip.getActivity()).thenReturn(null);
         theImpactsAre(wholeTrip);

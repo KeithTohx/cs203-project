@@ -28,6 +28,7 @@
             const markAdminChangeRead=async()=>{}, markAdminChangesRead=async()=>{};
             const adminChangeLink=()=>'', adminChangeTitle=()=>'', timeTag=()=>'';
             const byNewestFirst=(first,second)=>new Date(second.createdAt)-new Date(first.createdAt);
+            const pageHead=title=>'<h1>'+title+'</h1>', loading=()=>'';
             const alertMetaParts=()=>[], alertTitle=()=>'', emptyState=()=>'', escapeHtml=x=>x,
                 hostnameOf=()=>'', safeUrl=()=>null, icon=()=>'';
             ${plain}

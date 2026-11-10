@@ -112,6 +112,8 @@ class RecommendationServiceImplMainTest {
         impact.setActivity(activity);
         impact.setNews(earthquake);
         impact.setImpacted(true);
+        // false means the traveller confirmed it affects them, which generate() now needs
+        impact.setRejected(false);
         impact.setReason(reason);
         return impact;
     }

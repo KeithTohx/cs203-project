@@ -5,7 +5,7 @@ import {
     groupAlerts, isAdminChangeUnread, isGroupUnread, markAdminChangeRead, markAdminChangesRead, markAlertsRead,
     markAllAlertsRead, onAlertsChanged, waitForSaves,
 } from "../alerts.js";
-import { emptyState, escapeHtml, hostnameOf, safeUrl, showError, timeTag } from "../util.js";
+import { emptyState, escapeHtml, hostnameOf, loading, pageHead, safeUrl, showError, timeTag } from "../util.js";
 import { icon } from "../icons.js";
 
 // the same as the bell loads, the backend caps a page at 100
@@ -88,14 +88,13 @@ const createViewSwitch = (view, unreadCount) => `
 export async function showAlerts(root, user, onAuthLost, onLeave) {
     let disposed = false;
     root.innerHTML = `
-        <h1>Alerts</h1>
-        <p class="meta">News that affects your trips, and anything an admin changed in them, newest first.</p>
+        ${pageHead("Alerts")}
+        <p class="meta page-intro">News that affects your trips, and anything an admin changed in
+            them, newest first.</p>
         <div id="alerts-switch"></div>
         <div id="alerts-error"></div>
         <ul class="news-list" id="alerts-list"></ul>
-        <div id="alerts-status" role="status">
-            <div class="msg">Loading…</div>
-        </div>
+        <div id="alerts-status" role="status">${loading()}</div>
         <p class="pager">
             <button class="ghost" type="button" id="load-more" hidden>Load older alerts</button>
         </p>

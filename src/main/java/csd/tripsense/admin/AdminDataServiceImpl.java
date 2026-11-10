@@ -340,12 +340,13 @@ public class AdminDataServiceImpl implements AdminDataService {
         }
 
         boolean impacted = request.impacted();
-        boolean rejected = Boolean.TRUE.equals(request.rejected());
+        // left null when the admin says nothing, so it still reads as "not looked at"
+        Boolean rejected = request.rejected();
         String reason = blankToNull(request.reason());
 
         // the alert service quietly skips anything it would never show, so say why up front instead
         boolean wantsAlert = Boolean.TRUE.equals(request.sendAlert());
-        if (wantsAlert && (!impacted || rejected || reason == null)) {
+        if (wantsAlert && (!impacted || Boolean.TRUE.equals(rejected) || reason == null)) {
             throw badRequest("an alert needs an impacted, not rejected impact with a reason");
         }
 
@@ -385,7 +386,7 @@ public class AdminDataServiceImpl implements AdminDataService {
 
         impact.setImpacted(request.impacted());
         impact.setReason(reason);
-        impact.setRejected(Boolean.TRUE.equals(request.rejected()));
+        impact.setRejected(request.rejected());
         stampAsCurrent(impact);
         return impacts.save(impact);
     }

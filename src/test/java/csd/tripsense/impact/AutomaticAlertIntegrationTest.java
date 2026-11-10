@@ -95,7 +95,7 @@ class AutomaticAlertIntegrationTest {
         constructor.setAccessible(true);
         Class<?> kind = constructor.getParameterTypes()[1];
         return constructor.newInstance(reason,
-                Enum.valueOf((Class<Enum>) kind, affected ? "DISASTER" : "NONE"), affected);
+                Enum.valueOf((Class<Enum>) kind, affected ? "DISASTER" : "NONE"), 0, affected);
     }
     private void verdict() {
         doAnswer(inv -> {

@@ -1,20 +1,18 @@
 // admin only: every account's actions, newest first, filtered and paged on the backend
 import { api } from "../api.js";
 import { createActionFilter, createAuditTable } from "../audit.js";
-import { createPager, debounce, showError } from "../util.js";
+import { createPager, debounce, loading, noMatches, pageHead, showError } from "../util.js";
 
 export async function showAdminAudit(root, user, onAuthLost) {
     root.innerHTML = `
-        <h1>Activity log</h1>
+        ${pageHead("Activity log")}
         <div class="card">
             <div class="row filters">
                 <label for="email-filter" class="sr-only">Filter by email</label>
                 <input id="email-filter" type="search" placeholder="Filter by email" autocomplete="off">
                 ${createActionFilter("action-filter")}
             </div>
-            <div id="audit-list">
-                <div class="msg">Loading…</div>
-            </div>
+            <div id="audit-list">${loading()}</div>
         </div>
     `;
 
@@ -41,7 +39,7 @@ export async function showAdminAudit(root, user, onAuthLost) {
 
         const isFiltered = filters.email || filters.action;
         auditList.innerHTML = !result.content.length && isFiltered
-            ? `<p class="meta">Nothing matches these filters.</p>`
+            ? noMatches()
             : createAuditTable(result.content) + createPager(result);
     };
 

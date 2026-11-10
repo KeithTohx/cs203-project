@@ -239,3 +239,38 @@ X-XSRF-TOKEN: {{xsrf}}
 {
     "itineraryId": 999
 }
+
+### ---------------------------------------------------------------------------
+### deciding on a recommendation - CS203-175
+### dismissed ones are left out of the list unless you ask for them, so the gui
+### passes includeDismissed=true and sorts them into their own section itself
+### ---------------------------------------------------------------------------
+
+### accept the first seeded one, expect status ACCEPTED and a decidedAt
+PATCH {{host}}/api/recommendation/1
+Content-Type: application/json
+X-XSRF-TOKEN: {{xsrf}}
+
+{
+    "status": "ACCEPTED"
+}
+
+### change your mind, expect decidedAt back to null
+PATCH {{host}}/api/recommendation/1
+Content-Type: application/json
+X-XSRF-TOKEN: {{xsrf}}
+
+{
+    "status": "PENDING"
+}
+
+### dismissed ones only show up when asked for
+GET {{host}}/api/itinerary/1/recommendation?includeDismissed=true
+
+### ask for a different suggestion, expect a new id and a place not offered before.
+### the old row stays, so this is how the history below grows
+POST {{host}}/api/recommendation/1/regenerate
+X-XSRF-TOKEN: {{xsrf}}
+
+### every attempt for one impact, oldest first
+GET {{host}}/api/impact/1/recommendation

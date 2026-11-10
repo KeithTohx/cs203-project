@@ -96,9 +96,7 @@ export const createAuditTable = entries => {
                         <th scope="col">Details</th>
                     </tr>
                 </thead>
-                <tbody>
-                    ${entries.map(createAuditRow).join("")}
-                </tbody>
+                <tbody>${entries.map(createAuditRow).join("")}</tbody>
             </table>
         </div>
     `;

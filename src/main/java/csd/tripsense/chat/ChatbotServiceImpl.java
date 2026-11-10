@@ -4,6 +4,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.stereotype.Service;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
@@ -65,6 +66,7 @@ public class ChatbotServiceImpl implements ChatbotService {
         """;
 
     private final ChatClient chatClient;
+    private final ChatService chatService;
     private final ChatMemory chatMemory;
     private final ItineraryService itineraryService;
     private final ActivityService activityService;
@@ -86,7 +88,7 @@ public class ChatbotServiceImpl implements ChatbotService {
         ChatClient.ChatClientRequestSpec request = buildRequest(userId, itineraryId, prompt);   // ownership check first
         String conversation = startAnswering(userId, itineraryId);
         try {
-            return request.call().content();
+            return chatService.runWithFallback(request, spec -> spec.call().content());
         } finally {
             answering.remove(conversation);
         }
@@ -95,6 +97,10 @@ public class ChatbotServiceImpl implements ChatbotService {
     @Override
     public Flux<String> streamChatBot(Long userId, Long itineraryId, String prompt) {
         ChatClient.ChatClientRequestSpec request = buildRequest(userId, itineraryId, prompt);
+        // a streamed failure arrives inside the flux, not as a throw, so there is nothing to catch
+        // and retry. picking a model known to have budget is the most that can be done here
+        chatService.firstAvailableModel()
+                .ifPresent(model -> request.options(ChatOptions.builder().model(model)));
         String conversation = startAnswering(userId, itineraryId);
         try {
             return request.stream().content()
