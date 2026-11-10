@@ -88,8 +88,9 @@ const realApi = {
     return request(`/api/alerts${query}`, "PATCH", {read: true});
   },
   alertStreamUrl:"/api/alerts/stream",                                                // server-sent events: "ready" on connect, "alert" when one is saved, "admin-change" when an admin changed your trips
-  // what an admin changed in your trips, the bell shows them as one alert
-  adminChanges:() => request("/api/user/me/admin-changes"),                           // -> {content: [{id, message, createdAt, readAt}], unreadCount}, newest 20
+  // what an admin changed in your trips, shown next to the news alerts with an "Admin" tag
+  adminChanges:() => request("/api/user/me/admin-changes"),                           // -> {content: [{id, message, createdAt, readAt, itineraryId, itineraryName, itineraryExists, newsId, newsTitle}], unreadCount}, newest 20
+  markAdminChangeRead:id => request(`/api/user/me/admin-changes/${id}`, "PATCH"),     // -> {unreadCount}, just that one
   markAdminChangesRead:(upToId = null) => {
     const query = upToId == null ? "" : `?${new URLSearchParams({upToId})}`;
     return request(`/api/user/me/admin-changes${query}`, "PATCH");                    // -> {unreadCount}
@@ -128,6 +129,8 @@ const realApi = {
   adminUpdateImpact:(id, changes) => request(`/api/admin/impacts/${id}`, "PUT", changes),   // {impacted, reason, rejected}
   adminDeleteImpact:id => request(`/api/admin/impacts/${id}`, "DELETE"),
   adminDeleteAllImpacts:itineraryId => request(`/api/admin/itineraries/${itineraryId}/impacts`, "DELETE"),   // -> {deleted}, whole trip and activity impacts
+  adminDeleteWholeTripImpacts:itineraryId => request(`/api/admin/itineraries/${itineraryId}/impacts?wholeTripOnly=true`, "DELETE"),   // -> {deleted}, the activity ones stay
+  adminDeleteActivityImpacts:activityId => request(`/api/admin/activities/${activityId}/impacts`, "DELETE"),   // -> {deleted}
   adminRecommendations:userId => request(`/api/admin/users/${userId}/recommendations`),   // every attempt, newest first
   adminAddRecommendation:(impactId, recommendation) => request(`/api/admin/impacts/${impactId}/recommendations`, "POST", recommendation),   // {severity, action, advice, optionId, status}
   adminUpdateRecommendation:(id, recommendation) => request(`/api/admin/recommendations/${id}`, "PUT", recommendation),

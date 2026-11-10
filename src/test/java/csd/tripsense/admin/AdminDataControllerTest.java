@@ -34,6 +34,7 @@ import org.springframework.web.server.ResponseStatusException;
 import csd.tripsense.activity.Activity;
 import csd.tripsense.audit.AuditService;
 import csd.tripsense.notice.AdminChangeService;
+import csd.tripsense.notice.AdminChangeTarget;
 import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.country.Country;
 import csd.tripsense.impact.Impact;
@@ -269,7 +270,8 @@ class AdminDataControllerTest {
         // one notice for the whole edit, however many checks it cleared
         verify(adminChanges).record(4L, 3L,
                 "An admin edited your trip 'Japan Ski Trip'. 1 news check on it was cleared, "
-                        + "and it will be checked against the news again.");
+                        + "and it will be checked against the news again.",
+                AdminChangeTarget.trip(10L, "Japan Ski Trip"));
     }
 
     @Test
@@ -286,7 +288,8 @@ class AdminDataControllerTest {
                 .andExpect(status().isOk());
 
         verify(adminData).updateItinerary(eq(10L), argThat(AdminItineraryRequest::keepsImpacts));
-        verify(adminChanges).record(4L, 3L, "An admin edited your trip 'Japan Ski Trip'.");
+        verify(adminChanges).record(4L, 3L, "An admin edited your trip 'Japan Ski Trip'.",
+                AdminChangeTarget.trip(10L, "Japan Ski Trip"));
     }
 
     @Test
@@ -298,7 +301,8 @@ class AdminDataControllerTest {
         mockMvc.perform(delete("/api/admin/activities/20"))
                 .andExpect(status().isNoContent());
 
-        verify(adminChanges).record(4L, 3L, "An admin deleted the activity 'Ski at Niseko' on 'Japan Ski Trip'.");
+        verify(adminChanges).record(4L, 3L, "An admin deleted the activity 'Ski at Niseko' on 'Japan Ski Trip'.",
+                AdminChangeTarget.trip(10L, "Japan Ski Trip"));
     }
 
     @Test

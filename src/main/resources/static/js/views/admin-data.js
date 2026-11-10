@@ -8,7 +8,7 @@
 // everything is loaded in one go and every section draws from that, since a change in one
 // (deleting an itinerary) also removes rows in the others (its impacts and recommendations)
 import { api } from "../api.js";
-import { confirmTwice, dateRange, escapeHtml, formatDateTime, newsTitleOf, showError, showToast } from "../util.js";
+import { confirmTwice, dateRange, escapeHtml, formatDateTime, makeRoomForConfirm, newsTitleOf, showError, showToast } from "../util.js";
 
 // same values as the backend enums
 const CATEGORIES = [
@@ -27,6 +27,10 @@ const STATUSES = ["PENDING", "ACCEPTED", "DISMISSED"];
 
 // how many recent news articles the impact form offers
 const NEWS_CHOICES = 100;
+
+// what a delete button says while it waits for the second click
+const DELETE_CONFIRM = "Delete?";
+const DELETE_ALL_CONFIRM = "Delete all?";
 
 // ---------- small helpers ----------
 
@@ -297,7 +301,8 @@ function wireDeleteButtons(container, config, { errorElement, onChange, onAuthLo
     for (const button of container.querySelectorAll(`[data-delete][data-kind="${config.key}"]`)) {
         const id = Number(button.dataset.delete);
 
-        confirmTwice(button, { confirmText: "Delete?", onConfirm: async () => {
+        // sized for "Delete?" from the start, so it does not grow and wrap onto a new line when clicked
+        confirmTwice(button, { confirmText: DELETE_CONFIRM, roomForConfirm: true, onConfirm: async () => {
             button.disabled = true;
             errorElement.textContent = "";
             try {
@@ -320,7 +325,7 @@ function wireDeleteButtons(container, config, { errorElement, onChange, onAuthLo
 // a "delete all" button, two clicks like the single deletes. the backend removes the whole batch in
 // one go, so the traveller gets one note about it rather than one per row
 function wireDeleteAll(button, { noun, plural, run, errorElement, onChange, onAuthLost }) {
-    confirmTwice(button, { confirmText: `Delete all ${plural}?`, onConfirm: async () => {
+    confirmTwice(button, { confirmText: DELETE_ALL_CONFIRM, roomForConfirm: true, onConfirm: async () => {
         button.disabled = true;
         errorElement.textContent = "";
 
@@ -378,6 +383,7 @@ function mountSection(card, config, { getState, onChange, onAuthLost }) {
         const rows = config.rows(getState());
         shownRows = rows;
         deleteAllButton.hidden = rows.length === 0;
+        makeRoomForConfirm(deleteAllButton, DELETE_ALL_CONFIRM);   // it had no size while hidden
 
         if (!rows.length) {
             list.innerHTML = `<p class="meta">${escapeHtml(config.emptyText)}</p>`;
@@ -419,7 +425,8 @@ const createSectionCard = (key, title, addLabel) => `
             <h2>${escapeHtml(title)}</h2>
             <div class="heading-actions">
                 <button class="ghost small" type="button" data-add>${escapeHtml(addLabel)}</button>
-                <button class="ghost small danger" type="button" data-delete-all hidden>Delete all</button>
+                <button class="ghost small danger" type="button" data-delete-all hidden
+                        aria-label="Delete all ${escapeHtml(title.toLowerCase())}">Delete all</button>
             </div>
         </div>
         <p class="err" data-section-error role="alert"></p>
@@ -748,6 +755,16 @@ function mountTripDetail(card, { userId, lookups, view, getState, onChange, onAu
     const groupOf = activityId => activityId == null ? "trip" : String(activityId);
     const slotOf = groupKey => body.querySelector(`[data-group="${groupKey}"] > [data-form-slot]`);
 
+    // a group's own "delete all impacts", only when it has some. groupKey is "" for the whole trip
+    // or the activity's id, like the add impact buttons
+    const createGroupDeleteAll = (impacts, groupKey, label) => {
+        if (!impacts.length) return "";
+        return `
+            <button class="ghost small danger" type="button" data-delete-group-impacts="${groupKey}"
+                    aria-label="${label}">Delete all</button>
+        `;
+    };
+
     const createImpactList = (trip, activity) => {
         const impacts = impactsOn(trip, activity?.id ?? null);
         const emptyText = activity ? "No impacts on this activity." : "No impacts on the whole trip.";
@@ -771,6 +788,7 @@ function mountTripDetail(card, { userId, lookups, view, getState, onChange, onAu
                 </div>
                 <div class="heading-actions">
                     <button class="ghost small" type="button" data-add-impact="">Add impact</button>
+                    ${createGroupDeleteAll(impactsOn(trip, null), "", "Delete all whole trip impacts")}
                 </div>
             </div>
             <div data-form-slot hidden></div>
@@ -787,6 +805,7 @@ function mountTripDetail(card, { userId, lookups, view, getState, onChange, onAu
                 </div>
                 <div class="heading-actions">
                     <button class="ghost small" type="button" data-add-impact="${Number(activity.id)}">Add impact</button>
+                    ${createGroupDeleteAll(impactsOn(trip, activity.id), Number(activity.id), `Delete all impacts on ${escapeHtml(activity.name)}`)}
                     ${createRecordButtons(activities, activity)}
                 </div>
             </div>
@@ -872,6 +891,8 @@ function mountTripDetail(card, { userId, lookups, view, getState, onChange, onAu
         const itsImpacts = getState().impacts.filter(impact => impact.itineraryId === trip.id);
         deleteAllActivitiesButton.hidden = itsActivities.length === 0;
         deleteAllImpactsButton.hidden = itsImpacts.length === 0;
+        makeRoomForConfirm(deleteAllActivitiesButton, DELETE_ALL_CONFIRM);
+        makeRoomForConfirm(deleteAllImpactsButton, DELETE_ALL_CONFIRM);
 
         const activityGroups = itsActivities.length
             ? itsActivities.map(activity => createActivityGroup(trip, activity)).join("")
@@ -889,6 +910,14 @@ function mountTripDetail(card, { userId, lookups, view, getState, onChange, onAu
         const deleteHooks = { errorElement: sectionError, onChange, onAuthLost };
         wireDeleteButtons(body, activities, deleteHooks);
         wireDeleteButtons(body, impactConfig(userId, lookups, null), deleteHooks);
+
+        for (const button of body.querySelectorAll("[data-delete-group-impacts]")) {
+            const value = button.dataset.deleteGroupImpacts;
+            const run = value === ""
+                ? () => api.adminDeleteWholeTripImpacts(trip.id)
+                : () => api.adminDeleteActivityImpacts(Number(value));
+            wireDeleteAll(button, { ...deleteAllHooks, noun: "impact", plural: "impacts", run });
+        }
 
         showOpenForm(trip, keptForm);
     };

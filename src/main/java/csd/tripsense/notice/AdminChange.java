@@ -33,12 +33,34 @@ public class AdminChange {
     @Column(name = "read_at")
     private Instant readAt;
 
+    // what it was about, see AdminChangeTarget. copied names, so they still read right once the
+    // trip or the article is gone. null on rows from before these existed
+    @Column(name = "itinerary_id")
+    private Long itineraryId;
+
+    @Column(name = "itinerary_name")
+    private String itineraryName;
+
+    @Column(name = "news_id")
+    private Long newsId;
+
+    @Column(name = "news_title", length = 500)
+    private String newsTitle;
+
     protected AdminChange() {
     }
 
     public AdminChange(Long userId, String message) {
+        this(userId, message, AdminChangeTarget.NONE);
+    }
+
+    public AdminChange(Long userId, String message, AdminChangeTarget target) {
         this.userId = userId;
         this.message = message;
+        this.itineraryId = target.itineraryId();
+        this.itineraryName = target.itineraryName();
+        this.newsId = target.newsId();
+        this.newsTitle = target.newsTitle();
     }
 
     public Long getId() {
@@ -59,5 +81,21 @@ public class AdminChange {
 
     public Instant getReadAt() {
         return readAt;
+    }
+
+    public Long getItineraryId() {
+        return itineraryId;
+    }
+
+    public String getItineraryName() {
+        return itineraryName;
+    }
+
+    public Long getNewsId() {
+        return newsId;
+    }
+
+    public String getNewsTitle() {
+        return newsTitle;
     }
 }

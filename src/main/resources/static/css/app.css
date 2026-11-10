@@ -1476,6 +1476,21 @@ button > .icon,
     font-style: italic;
 }
 
+.admin-edit-note p {
+    margin: 0;
+}
+
+/* what the admin changed, under the note. not italic, so the messages read easily */
+.admin-edit-list {
+    margin: 4px 0 0;
+    padding-left: 22px;
+    font-style: normal;
+}
+
+.admin-edit-list li + li {
+    margin-top: 2px;
+}
+
 .nav-links {
     display: flex;
     flex-wrap: wrap;
@@ -1931,6 +1946,11 @@ h3.trip-heading {
 
 .trip-group .heading-actions button {
     margin-top: 0;
+}
+
+/* a label never breaks inside the button, the row of buttons wraps as a whole instead */
+.admin-data .heading-actions button {
+    white-space: nowrap;
 }
 
 /* an activity's impacts sit indented under it, so it is clear which activity they are about */

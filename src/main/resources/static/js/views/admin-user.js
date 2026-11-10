@@ -14,10 +14,9 @@ const describeAccountRules = (account, isSelf) => {
     if (account.role === "ADMIN") {
         return "Admins cannot be disabled or deleted, so make them a user first. Changing the role logs them out.";
     }
-    const deleteNote = " Deleting removes the account and its itineraries for good, its activity below is kept.";
-    if (!account.enabled) return "This account cannot log in until it is enabled again." + deleteNote;
+    if (!account.enabled) return "This account cannot log in until it is enabled again.";
     return "Disabling logs them out straight away and stops them logging in. Their data is kept. "
-        + "Changing the role logs them out too." + deleteNote;
+        + "Changing the role logs them out too.";
 };
 
 // the account's details, with buttons for its role and status.
@@ -63,15 +62,20 @@ const createAccountCard = (account, isSelf) => {
     `;
 };
 
-// deleting is for good, so it needs two clicks. it sits at the top next to the name.
+// deleting is for good, so it sits in its own card straight under the account details.
 // hidden while the account is an admin, since the backend only deletes plain user accounts
-const createDeleteButton = account => `
-    <div class="heading-actions" id="danger-zone"${account.role === "ADMIN" ? " hidden" : ""}>
-        <button class="ghost danger" type="button" id="delete-button"
-                aria-label="Delete ${escapeHtml(account.username)}'s account">
-            Delete account
-        </button>
-    </div>
+const createDangerZone = account => `
+    <section class="card danger-zone" id="danger-zone"${account.role === "ADMIN" ? " hidden" : ""}>
+        <div class="row">
+            <h2>Delete account</h2>
+            <button class="ghost danger" type="button" id="delete-button"
+                    aria-label="Delete ${escapeHtml(account.username)}'s account">
+                Delete
+            </button>
+        </div>
+        <p class="meta">Permanently removes this account and its itineraries. Its activity below is kept.</p>
+        <p class="err" id="delete-error" role="alert"></p>
+    </section>
 `;
 
 export async function showAdminUser(root, user, onAuthLost, id) {
@@ -100,12 +104,9 @@ export async function showAdminUser(root, user, onAuthLost, id) {
 
     root.innerHTML = `
         <p><a href="#/admin/users">← All users</a></p>
-        <div class="row">
-            <h1>${isDeleted ? `Deleted account #${userId}` : escapeHtml(account.username)}</h1>
-            ${account && !isSelf ? createDeleteButton(account) : ""}
-        </div>
-        <p class="err" id="delete-error" role="alert"></p>
+        <h1>${isDeleted ? `Deleted account #${userId}` : escapeHtml(account.username)}</h1>
         ${accountSection}
+        ${account && !isSelf ? createDangerZone(account) : ""}
         ${account ? `<div id="trip-data"></div>` : ""}
         <section class="card">
             <div class="row">
@@ -165,7 +166,7 @@ export async function showAdminUser(root, user, onAuthLost, id) {
     const accountCard = root.querySelector("#account-card");
     const dangerZone = root.querySelector("#danger-zone");
 
-    // a role change can take away or bring back the disable button and the delete button
+    // a role change can take away or bring back the disable button and the delete section
     const drawAccount = () => {
         accountCard.innerHTML = createAccountCard(account, isSelf);
         dangerZone.hidden = account.role === "ADMIN";

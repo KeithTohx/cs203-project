@@ -14,6 +14,8 @@ public interface ItineraryRepository extends JpaRepository<Itinerary, Long> {
 
     //Returns all of one user’s itineraries  
     List<Itinerary> findByUserId(Long userId);
+
+    boolean existsByIdAndUserId(Long id, Long userId);
     
     // Countries that have at least one trip still to come (or under way). Lets the evaluator
     // skip news about countries nobody is travelling to.

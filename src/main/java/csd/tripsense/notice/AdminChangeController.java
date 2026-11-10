@@ -4,6 +4,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -39,6 +40,14 @@ public class AdminChangeController {
     public AdminChangeService.UnreadCount markAllRead(@RequestParam(required = false) Long upToId,
                                                       @AuthenticationPrincipal CurrentUser me) {
         return adminChanges.markAllRead(userId(me), upToId);
+    }
+
+    @Operation(summary = "Mark one as read",
+            description = "Only your own. Returns the unreadCount left. Requires CSRF token.")
+    @PatchMapping("/{id}")
+    public AdminChangeService.UnreadCount markRead(@PathVariable("id") Long id,
+                                                   @AuthenticationPrincipal CurrentUser me) {
+        return adminChanges.markRead(userId(me), id);
     }
 
     private static Long userId(CurrentUser me) {

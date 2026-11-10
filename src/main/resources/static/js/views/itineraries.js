@@ -455,20 +455,38 @@ const createLatestNews = detailsList => {
     `;
 };
 
-// component: says an admin changed this trip or its activities, with a link to what they changed
-const createAdminEditNote = itinerary => {
-    if (!itinerary.adminEditedAt) return "";
+// how many of a trip's admin changes its card lists, the rest are on the alerts page
+const ADMIN_CHANGES_SHOWN = 3;
+
+// component: says an admin changed this trip or its activities, and lists what they changed.
+// adminChanges are this trip's own, newest first, the same ones the alerts show
+const createAdminEditNote = (itinerary, adminChanges = []) => {
+    const lastChanged = itinerary.adminEditedAt ?? adminChanges[0]?.createdAt;
+    if (!lastChanged) return "";
+
+    const shown = adminChanges.slice(0, ADMIN_CHANGES_SHOWN);
+    const changeList = shown.length
+        ? `
+            <ul class="meta admin-edit-list">
+                ${shown.map(change => `<li>${escapeHtml(change.message)} ${timeTag(change.createdAt)}</li>`).join("")}
+            </ul>
+        `
+        : "";
+    const linkText = adminChanges.length > shown.length ? "See every change" : "See it in your alerts";
 
     return `
-        <p class="meta admin-edit-note">
-            ${icon("pencil")}Changed by an admin ${timeTag(itinerary.adminEditedAt)}.
-            <a href="#/alerts">See what changed</a>
-        </p>
+        <div class="admin-edit-note">
+            <p class="meta">
+                ${icon("pencil")}Changed by an admin ${timeTag(lastChanged)}.
+                <a href="#/alerts">${linkText}</a>
+            </p>
+            ${changeList}
+        </div>
     `;
 };
 
 // component: one itinerary card
-const createItineraryCard = ({ itinerary, activities, impacts, recommendations, failed, isSuggesting }) => {
+const createItineraryCard = ({ itinerary, activities, impacts, recommendations, adminChanges, failed, isSuggesting }) => {
     const itineraryId = Number(itinerary.id);
     const isPast = isTripOver(itinerary);
     const tripCountdown = countdown(itinerary);
@@ -515,7 +533,7 @@ const createItineraryCard = ({ itinerary, activities, impacts, recommendations, 
                 <span>${flagOrPin(itinerary.countryName)}${escapeHtml(itinerary.countryName)}</span>
                 <span>${icon("calendar")}${dateRange(itinerary.dateStart, itinerary.dateEnd)}</span>
             </p>
-            ${createAdminEditNote(itinerary)}
+            ${createAdminEditNote(itinerary, adminChanges)}
             ${body}
             <p>
                 <button class="ghost" data-chat="${itineraryId}" data-chat-name="${escapeHtml(itinerary.name)}" aria-haspopup="dialog">
@@ -706,9 +724,23 @@ export async function showItineraries(root, user, onAuthLost, tripId = null) {
     };
 
     try {
-        // the backend sends an empty body instead of [] when the user has no itineraries
-        const itineraries = (await api.itineraries(user.id)) ?? [];
-        const itinerariesWithDetails = await Promise.all(itineraries.map(loadDetails));
+        // the backend sends an empty body instead of [] when the user has no itineraries.
+        // admin changes are only extra, so a failed load just leaves the cards without them
+        const [itineraries, adminChangePage] = await Promise.all([
+            api.itineraries(user.id),
+            api.adminChanges().catch(error => {
+                if (error.status === 401) throw error;
+                return null;
+            }),
+        ]);
+        const allAdminChanges = adminChangePage?.content ?? [];
+        const changesOn = itinerary => allAdminChanges.filter(change => change.itineraryExists
+            && Number(change.itineraryId) === Number(itinerary.id));
+
+        const itinerariesWithDetails = await Promise.all((itineraries ?? []).map(async itinerary => {
+            const details = await loadDetails(itinerary);
+            return { ...details, adminChanges: changesOn(itinerary) };
+        }));
         itinerariesWithDetails.forEach(details => detailsById.set(Number(details.itinerary.id), details));
 
         const startTime = details => new Date(details.itinerary.dateStart);

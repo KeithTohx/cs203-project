@@ -98,6 +98,14 @@ public interface AdminDataService {
     @PreAuthorize("hasRole('ADMIN')")
     AdminBulkDelete deleteAllImpacts(Long itineraryId);
 
+    // only the impacts on the trip as a whole, the ones on its activities stay
+    @PreAuthorize("hasRole('ADMIN')")
+    AdminBulkDelete deleteWholeTripImpacts(Long itineraryId);
+
+    // every impact on one activity, with their alerts and recommendations
+    @PreAuthorize("hasRole('ADMIN')")
+    AdminBulkDelete deleteActivityImpacts(Long activityId);
+
     // ---------- recommendations ----------
 
     // every attempt on every impact of the user, dismissed ones too, newest first

@@ -14,17 +14,21 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEventPublisher;
 
+import csd.tripsense.itinerary.ItineraryRepository;
+
 class AdminChangeServiceTest {
 
     private AdminChangeRepository changes;
+    private ItineraryRepository itineraries;
     private ApplicationEventPublisher events;
     private AdminChangeService service;
 
     @BeforeEach
     void setUp() {
         changes = mock(AdminChangeRepository.class);
+        itineraries = mock(ItineraryRepository.class);
         events = mock(ApplicationEventPublisher.class);
-        service = new AdminChangeService(changes, events);
+        service = new AdminChangeService(changes, itineraries, events);
     }
 
     @Test

@@ -424,6 +424,28 @@ public class AdminDataServiceImpl implements AdminDataService {
         return new AdminBulkDelete(onTrip.size(), itinerary);
     }
 
+    @Override
+    @Transactional
+    public AdminBulkDelete deleteWholeTripImpacts(Long itineraryId) {
+        Itinerary itinerary = findItinerary(itineraryId);
+        List<Impact> onWholeTrip = impacts.findByItineraryId(itineraryId).stream()
+                .filter(impact -> impact.getActivity() == null)
+                .toList();
+
+        impacts.deleteAll(onWholeTrip);
+        return new AdminBulkDelete(onWholeTrip.size(), itinerary);
+    }
+
+    @Override
+    @Transactional
+    public AdminBulkDelete deleteActivityImpacts(Long activityId) {
+        Activity activity = findActivity(activityId);
+        List<Impact> onActivity = impacts.findByActivityId(activityId);
+
+        impacts.deleteAll(onActivity);
+        return new AdminBulkDelete(onActivity.size(), activity.getItinerary());
+    }
+
     // ---------- recommendations ----------
 
     @Override
