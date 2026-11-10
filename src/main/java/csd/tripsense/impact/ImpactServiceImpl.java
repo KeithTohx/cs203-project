@@ -2,12 +2,15 @@ package csd.tripsense.impact;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Supplier;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionOperations;
 import org.springframework.context.ApplicationEventPublisher;
+import csd.tripsense.alert.AlertsRemovedEvent;
 import csd.tripsense.alert.ImpactEvaluatedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -163,6 +166,38 @@ public class ImpactServiceImpl implements ImpactService {
         return announce(outcome);
     }
 
+    @Override
+    public boolean hasCurrentVerdict(Itinerary itinerary, News news) {
+        Optional<Impact> stored = impacts
+                .findFirstByNewsIdAndItineraryIdAndActivityIsNull(news.getId(), itinerary.getId());
+        return stored.isPresent() && isJudgedOn(stored.get(), itinerary.currentRevision());
+    }
+
+    @Override
+    public boolean hasCurrentVerdict(Activity activity, News news) {
+        Optional<Impact> stored = impacts.findFirstByNewsIdAndActivityId(news.getId(), activity.getId());
+        return stored.isPresent() && isJudgedOn(stored.get(), activity.currentRevision());
+    }
+
+    // read fresh from the database, so this has to run inside the caller's transaction for the
+    // answer to still hold when the caller saves. the verdict key is what tells a replacement that
+    // reused the id apart from the verdict that was read, and the revision check catches a trip or
+    // activity edited since, in case its stale verdict has not been cleared yet
+    @Override
+    public Optional<Impact> findUnchanged(Impact seen) {
+        Optional<Impact> stored = impacts.findById(seen.getId());
+        if (stored.isEmpty()) {
+            return Optional.empty();
+        }
+
+        Impact current = stored.get();
+        boolean sameVerdict = Objects.equals(current.getVerdictKey(), seen.getVerdictKey());
+        if (!sameVerdict || !current.isJudgedOnCurrentDetails()) {
+            return Optional.empty();
+        }
+        return Optional.of(current);
+    }
+
     // a stored row only counts as evaluated if it has a reason (seed rows do not), and only for
     // the details it was judged on
     private static boolean isJudgedOn(Impact stored, long revision) {
@@ -186,8 +221,16 @@ public class ImpactServiceImpl implements ImpactService {
         if (latest.isPresent() && latest.get().getReason() != null) {
             // judged on older details. deleted rather than overwritten, so its alert, its advice and
             // any rejection go with it, they were about details the traveller has since changed
-            impacts.delete(latest.get());
+            Impact outOfDate = latest.get();
+            boolean hadAlerts = outOfDate.hasAlerts();
+            impacts.delete(outOfDate);
             impact = new Impact();
+
+            // sent after this transaction commits. the new verdict may not be alerted at all, and
+            // then nothing else would tell a connected browser the old alert is gone
+            if (hadAlerts && outOfDate.ownerId() != null) {
+                events.publishEvent(new AlertsRemovedEvent(outOfDate.ownerId()));
+            }
         } else {
             impact = latest.orElseGet(Impact::new);
         }
@@ -296,6 +339,9 @@ public class ImpactServiceImpl implements ImpactService {
         impact.setImpacted(verdict.impacted());
         impact.setReason(verdict.reason());
         impact.setAlertEligible(verdict.impacted() && !Boolean.TRUE.equals(impact.getRejected()));
+        // new on every write, including a seed row being judged for the first time, so advice
+        // drafted from what was here before can tell it has been replaced (see findUnchanged)
+        impact.setVerdictKey(UUID.randomUUID().toString());
         Impact saved = impacts.save(impact);
         log.info("Impact saved: id={} news={} itinerary={} activity={} impacted={} reason={}",
                 saved.getId(), news.getId(), itinerary.getId(),

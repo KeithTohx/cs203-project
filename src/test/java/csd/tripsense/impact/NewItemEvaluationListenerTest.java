@@ -305,6 +305,46 @@ class NewItemEvaluationListenerTest {
         verify(impactService, times(1)).evaluateActivityForNews(any(Activity.class), any(News.class));
     }
 
+    @Test
+    @DisplayName("Should not count verdicts that are reused without the model against max-calls")
+    void onItineraryEdited_ShouldSpendCapOnlyOnMissingVerdicts() {
+        // after a rename only the two whole trip verdicts were cleared, the activity verdicts stand
+        Itinerary trip = givenActiveTrip();
+        News first = news(10L);
+        News second = news(11L);
+        givenNews(first, second);
+        when(activityService.getActivitiesByItinerary(ITINERARY_ID))
+                .thenReturn(List.of(activity(100L), activity(101L), activity(102L)));
+        when(impactService.hasCurrentVerdict(any(Activity.class), any(News.class))).thenReturn(true);
+        when(impactService.hasCurrentVerdict(any(Itinerary.class), any(News.class))).thenReturn(false);
+        when(impactService.evaluateItineraryForNews(any(Itinerary.class), any(News.class)))
+                .thenReturn(new Impact());
+
+        listener(true, 5, 2).onItineraryEdited(new ItineraryEditedEvent(ITINERARY_ID));
+
+        // both missing verdicts fit in a budget of two model calls
+        verify(impactService).evaluateItineraryForNews(trip, first);
+        verify(impactService).evaluateItineraryForNews(trip, second);
+        verify(impactService, never()).evaluateActivityForNews(any(Activity.class), any(News.class));
+    }
+
+    @Test
+    @DisplayName("Should only ask the model about an edited activity for the news it has no current verdict on")
+    void onActivityEdited_ShouldSkipNewsAlreadyJudged() {
+        Activity act = givenActivityOnActiveTrip();
+        News judged = news(10L);
+        News missing = news(11L);
+        givenNews(judged, missing);
+        when(impactService.hasCurrentVerdict(act, judged)).thenReturn(true);
+        when(impactService.hasCurrentVerdict(act, missing)).thenReturn(false);
+        when(impactService.evaluateActivityForNews(act, missing)).thenReturn(new Impact());
+
+        listener(true, 5, 1).onActivityEdited(new ActivityEditedEvent(ACTIVITY_ID));
+
+        verify(impactService, never()).evaluateActivityForNews(act, judged);
+        verify(impactService).evaluateActivityForNews(act, missing);
+    }
+
     // ===== NEW ACTIVITY =====
 
     @Test

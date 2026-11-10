@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.io.IOException;
@@ -15,6 +16,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -30,6 +32,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.mockito.invocation.InvocationOnMock;
 
 import csd.tripsense.activity.Activity;
@@ -37,6 +40,9 @@ import csd.tripsense.activity.ActivityRepository;
 import csd.tripsense.activity.ActivityService;
 import csd.tripsense.alert.Alert;
 import csd.tripsense.alert.AlertRepository;
+import csd.tripsense.alert.AlertService;
+import csd.tripsense.alert.AlertStreamService;
+import csd.tripsense.alert.AlertsRemovedEvent;
 import csd.tripsense.chat.ChatService;
 import csd.tripsense.country.Country;
 import csd.tripsense.country.CountryRepository;
@@ -48,6 +54,7 @@ import csd.tripsense.news.NewsRepository;
 import csd.tripsense.recommendation.Action;
 import csd.tripsense.recommendation.Recommendation;
 import csd.tripsense.recommendation.RecommendationRepository;
+import csd.tripsense.recommendation.RecommendationService;
 import csd.tripsense.recommendation.RecommendationStatus;
 import csd.tripsense.recommendation.Severity;
 import csd.tripsense.user.User;
@@ -87,9 +94,15 @@ class EditTriggersEvaluationIntegrationTest {
     @Autowired private ImpactRepository impacts;
     @Autowired private AlertRepository alerts;
     @Autowired private RecommendationRepository recommendations;
+    @Autowired private RecommendationService recommendationService;
+    @Autowired private AlertService alertService;
 
     @MockitoBean
     private ChatService ai;
+
+    // real, but watched, to check the open stream is told when alerts are deleted
+    @MockitoSpyBean
+    private AlertStreamService alertStream;
 
     private Country japan;
     private Country thailand;
@@ -147,10 +160,27 @@ class EditTriggersEvaluationIntegrationTest {
 
     // the verdict type is private to the evaluator, so it is built from whatever type was asked for
     private static Object affected(InvocationOnMock invocation, String reason) throws Exception {
+        return verdict(invocation, true, reason);
+    }
+
+    private static Object verdict(InvocationOnMock invocation, boolean impacted, String reason) throws Exception {
         Class<?> verdictType = invocation.getArgument(1);
         var constructor = verdictType.getDeclaredConstructor(boolean.class, String.class);
         constructor.setAccessible(true);
-        return constructor.newInstance(true, reason);
+        return constructor.newInstance(impacted, reason);
+    }
+
+    // the recommendation service asks for its own private record: severity, action, option, advice
+    private static boolean isAdviceCall(InvocationOnMock invocation) {
+        Class<?> answerType = invocation.getArgument(1);
+        return answerType.getDeclaredConstructors()[0].getParameterCount() == 4;
+    }
+
+    private static Object advice(InvocationOnMock invocation, String text) throws Exception {
+        Class<?> suggestionType = invocation.getArgument(1);
+        var constructor = suggestionType.getDeclaredConstructors()[0];
+        constructor.setAccessible(true);
+        return constructor.newInstance("HIGH", "MONITOR", null, text);
     }
 
     private Country savedCountry(String name) {
@@ -173,16 +203,7 @@ class EditTriggersEvaluationIntegrationTest {
     // hanging off it. the re-evaluation runs straight away (the model is mocked) and sqlite hands
     // freed ids out again, so the tests tell the old verdicts apart by this reason, not by id
     private Impact savedOldVerdict(Activity activity, News article) {
-        Impact impact = new Impact();
-        impact.setUser(trip.getUser());
-        impact.setItinerary(trip);
-        impact.setActivity(activity);
-        impact.setNews(article);
-        impact.setImpacted(true);
-        impact.setReason(OLD_REASON);
-        impact = impacts.saveAndFlush(impact);
-
-        alerts.saveAndFlush(new Alert(impact));
+        Impact impact = savedAlertedVerdict(activity, article);
 
         Recommendation advice = new Recommendation();
         advice.setImpact(impact);
@@ -191,6 +212,22 @@ class EditTriggersEvaluationIntegrationTest {
         advice.setStatus(RecommendationStatus.PENDING);
         advice.setCreatedAt(LocalDateTime.now());
         recommendations.saveAndFlush(advice);
+        return impact;
+    }
+
+    // an affected verdict with an unread alert, and no advice yet
+    private Impact savedAlertedVerdict(Activity activity, News article) {
+        Impact impact = new Impact();
+        impact.setUser(trip.getUser());
+        impact.setItinerary(trip);
+        impact.setActivity(activity);
+        impact.setNews(article);
+        impact.setImpacted(true);
+        impact.setReason(OLD_REASON);
+        impact.setVerdictKey(UUID.randomUUID().toString());
+        impact = impacts.saveAndFlush(impact);
+
+        alerts.saveAndFlush(new Alert(impact));
         return impact;
     }
 
@@ -212,13 +249,24 @@ class EditTriggersEvaluationIntegrationTest {
     }
 
     private boolean judgedAgain(Activity activity, News article) {
+        return judgedAgainAs(activity, article, NEW_REASON);
+    }
+
+    private boolean judgedAgainAs(Activity activity, News article, String reason) {
         Optional<Impact> stored;
         if (activity == null) {
             stored = impacts.findFirstByNewsIdAndItineraryIdAndActivityIsNull(article.getId(), trip.getId());
         } else {
             stored = impacts.findFirstByNewsIdAndActivityId(article.getId(), activity.getId());
         }
-        return stored.filter(impact -> NEW_REASON.equals(impact.getReason())).isPresent();
+        return stored.filter(impact -> reason.equals(impact.getReason())).isPresent();
+    }
+
+    private Activity skiingMovedTo(String address) {
+        Activity moved = new Activity();
+        moved.setName(skiing.getName());
+        moved.setAddress(address);
+        return moved;
     }
 
     private Activity newActivity(String name, Itinerary on) {
@@ -413,5 +461,56 @@ class EditTriggersEvaluationIntegrationTest {
         // deleting it and alerting the traveller again
         assertThat(latestTripCalls.get()).isEqualTo(1);
         assertThat(judgedAgain(null, japanNews)).isTrue();
+    }
+
+    // ===== WORK THAT DEPENDS ON A VERDICT =====
+
+    @Test
+    @DisplayName("Should never save advice written for the old details when the activity is edited while the advice is being written")
+    void editDuringAdvice_DraftIsNeverSaved() {
+        savedAlertedVerdict(skiing, japanNews);
+        Thread generating = Thread.currentThread();
+
+        doAnswer(invocation -> {
+            boolean thisTestsAdvice = isAdviceCall(invocation) && Thread.currentThread() == generating;
+            if (!thisTestsAdvice) {
+                return affected(invocation, NEW_REASON);
+            }
+
+            // the traveller moves the activity while the model is still writing the advice
+            activityService.updateActivity(skiing.getId(), skiingMovedTo("Furano, Hokkaido"));
+            // and the new details are judged before the advice comes back. sqlite gives the new
+            // verdict the deleted one's id, so saving by id alone would attach the old advice to it
+            await().atMost(REJUDGED_WITHIN).until(() -> judgedAgain(skiing, japanNews));
+            return advice(invocation, "Advice about the old plans");
+        }).when(ai).ask(anyString(), any(Class.class));
+
+        List<Recommendation> made = recommendationService.generate(trip.getId());
+
+        assertThat(made).isEmpty();
+        assertThat(adviceLeftOnTrip()).isZero();
+    }
+
+    @Test
+    @DisplayName("Should remove the alert and its unread count, and tell the open stream, when an edit makes the activity unaffected")
+    void editToUnaffected_AlertGoesAndStreamIsTold() {
+        savedAlertedVerdict(skiing, japanNews);
+        Long travellerId = trip.getUser().getId();
+        assertThat(alertService.list(travellerId, false, null, 20).unreadCount()).isEqualTo(1);
+
+        String unaffected = "The new place is not affected";
+        doAnswer(invocation -> verdict(invocation, false, unaffected))
+                .when(ai).ask(anyString(), any(Class.class));
+
+        activityService.updateActivity(skiing.getId(), skiingMovedTo("Naha, Okinawa"));
+
+        // after commit and on the edit's own thread, so it has been told by the time the call returns.
+        // no new alert follows an unaffected verdict, so this is what makes the browser reload
+        verify(alertStream).onRemoved(new AlertsRemovedEvent(travellerId));
+
+        await().atMost(REJUDGED_WITHIN).until(() -> judgedAgainAs(skiing, japanNews, unaffected));
+        AlertService.AlertPage page = alertService.list(travellerId, false, null, 20);
+        assertThat(page.content()).isEmpty();
+        assertThat(page.unreadCount()).isZero();
     }
 }

@@ -17,6 +17,8 @@ import org.springframework.transaction.support.TransactionOperations;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityService;
+import csd.tripsense.alert.Alert;
+import csd.tripsense.alert.AlertsRemovedEvent;
 import csd.tripsense.chat.ChatService;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryService;
@@ -312,6 +314,143 @@ class ImpactServiceImplTest {
         // no second row, and no second alert for the traveller
         verify(impactRepository, never()).save(any(Impact.class));
         verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("Should give the verdict a new key every time it is written, even when a seed row is filled in place")
+    void evaluateActivityForNews_ShouldGiveVerdictNewKey_WhenWritten() {
+        Impact seed = storedImpact(null);
+        seed.setVerdictKey("written-before");
+        when(impactRepository.findFirstByNewsIdAndActivityId(5L, 10L)).thenReturn(Optional.of(seed));
+        givenModelAnswers(true, "Niseko lifts suspended");
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateActivityForNews(activity, news);
+
+        assertSame(seed, result);
+        assertNotNull(result.getVerdictKey());
+        assertNotEquals("written-before", result.getVerdictKey());
+    }
+
+    @Test
+    @DisplayName("Should tell the traveller's browser an alert went when the verdict it came from is replaced")
+    void evaluateItineraryForNews_ShouldAnnounceRemovedAlert_WhenReplacedVerdictHadOne() {
+        when(user.getId()).thenReturn(3L);
+        itinerary.setRevision(2L);
+        when(itineraryService.findRevision(1L)).thenReturn(Optional.of(2L));
+        Impact alerted = storedImpact("Quake near the trip");
+        alerted.setItinerary(itinerary);
+        alerted.setJudgedRevision(1L);
+        alerted.setAlerts(List.of(new Alert(alerted)));
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.of(alerted));
+        // the new details are not affected, so no new alert will arrive to refresh the bell
+        givenModelAnswers(false, "Different country");
+        givenSaveEchoes();
+
+        impactService.evaluateItineraryForNews(itinerary, news);
+
+        verify(impactRepository).delete(alerted);
+        verify(events).publishEvent(new AlertsRemovedEvent(3L));
+    }
+
+    @Test
+    @DisplayName("Should say nothing about alerts when the replaced verdict never had one")
+    void evaluateItineraryForNews_ShouldNotAnnounceRemoval_WhenReplacedVerdictHadNoAlert() {
+        itinerary.setRevision(2L);
+        when(itineraryService.findRevision(1L)).thenReturn(Optional.of(2L));
+        Impact notAlerted = storedImpact("Quake near the trip");
+        notAlerted.setJudgedRevision(1L);
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.of(notAlerted));
+        givenModelAnswers(false, "Different country");
+        givenSaveEchoes();
+
+        impactService.evaluateItineraryForNews(itinerary, news);
+
+        verify(events, never()).publishEvent(any(AlertsRemovedEvent.class));
+    }
+
+    // ===== hasCurrentVerdict =====
+
+    @Test
+    @DisplayName("Should report a current verdict only when it was judged on the details the trip has now")
+    void hasCurrentVerdict_Itinerary_ShouldMatchRevision() {
+        itinerary.setRevision(2L);
+        Impact judgedEarlier = storedImpact("Quake near the trip");
+        judgedEarlier.setJudgedRevision(1L);
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.of(judgedEarlier));
+
+        assertFalse(impactService.hasCurrentVerdict(itinerary, news));
+
+        judgedEarlier.setJudgedRevision(2L);
+        assertTrue(impactService.hasCurrentVerdict(itinerary, news));
+    }
+
+    @Test
+    @DisplayName("Should not count a seed row with no reason, or a missing row, as a current activity verdict")
+    void hasCurrentVerdict_Activity_ShouldNeedAReason() {
+        when(impactRepository.findFirstByNewsIdAndActivityId(5L, 10L))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(storedImpact(null)))
+                .thenReturn(Optional.of(storedImpact("Lifts closed")));
+
+        assertFalse(impactService.hasCurrentVerdict(activity, news));
+        assertFalse(impactService.hasCurrentVerdict(activity, news));
+        assertTrue(impactService.hasCurrentVerdict(activity, news));
+    }
+
+    // ===== findUnchanged =====
+
+    private Impact activityVerdict(Long id, String key) {
+        Impact verdict = storedImpact("Lifts closed");
+        verdict.setId(id);
+        verdict.setActivity(activity);
+        verdict.setItinerary(itinerary);
+        verdict.setVerdictKey(key);
+        return verdict;
+    }
+
+    @Test
+    @DisplayName("Should hand back the stored impact when it is still the verdict that was read")
+    void findUnchanged_ShouldReturnStored_WhenSameVerdict() {
+        Impact seen = activityVerdict(40L, "key-a");
+        Impact stored = activityVerdict(40L, "key-a");
+        when(impactRepository.findById(40L)).thenReturn(Optional.of(stored));
+
+        assertEquals(Optional.of(stored), impactService.findUnchanged(seen));
+    }
+
+    @Test
+    @DisplayName("Should not mistake a new verdict that reused the id for the one that was read")
+    void findUnchanged_ShouldBeEmpty_WhenIdReusedByNewVerdict() {
+        Impact seen = activityVerdict(40L, "key-a");
+        // the edit deleted 40 and sqlite gave the id to the verdict judged on the new details
+        Impact replacement = activityVerdict(40L, "key-b");
+        when(impactRepository.findById(40L)).thenReturn(Optional.of(replacement));
+
+        assertTrue(impactService.findUnchanged(seen).isEmpty());
+    }
+
+    @Test
+    @DisplayName("Should be empty once the impact has been deleted")
+    void findUnchanged_ShouldBeEmpty_WhenDeleted() {
+        when(impactRepository.findById(40L)).thenReturn(Optional.empty());
+
+        assertTrue(impactService.findUnchanged(activityVerdict(40L, "key-a")).isEmpty());
+    }
+
+    @Test
+    @DisplayName("Should be empty when the activity was edited after the verdict was judged")
+    void findUnchanged_ShouldBeEmpty_WhenActivityEditedSince() {
+        Impact seen = activityVerdict(40L, "key-a");
+        Impact stored = activityVerdict(40L, "key-a");
+        stored.setJudgedRevision(0L);
+        activity.setRevision(1L);
+        when(impactRepository.findById(40L)).thenReturn(Optional.of(stored));
+
+        assertTrue(impactService.findUnchanged(seen).isEmpty());
     }
 
     // ===== evaluate (the existing API endpoint, must keep its behaviour) =====

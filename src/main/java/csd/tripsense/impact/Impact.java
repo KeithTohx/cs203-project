@@ -67,6 +67,14 @@ public class Impact {
     @Column(name = "judged_revision")
     private Long judgedRevision;
 
+    // a new random value every time a verdict is written to this row. sqlite hands a deleted row's
+    // id to the next insert, so an id alone cannot tell the verdict someone read from the one that
+    // replaced it. anything worked out from a verdict (eg advice) compares this before it is saved.
+    // null on older rows, which still matches until the row is judged again
+    @Column(name = "verdict_key", length = 36)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String verdictKey;
+
     public boolean wasJudgedOn(long revision) {
         long judgedOn = judgedRevision == null ? 0 : judgedRevision;
         return judgedOn == revision;
@@ -87,6 +95,21 @@ public class Impact {
             fetch = jakarta.persistence.FetchType.LAZY)
     @com.fasterxml.jackson.annotation.JsonIgnore
     private java.util.List<csd.tripsense.alert.Alert> alerts;
+
+    // whether deleting this verdict also takes an alert out of the traveller's bell.
+    // needs an open session, the alerts are loaded lazily
+    public boolean hasAlerts() {
+        return alerts != null && !alerts.isEmpty();
+    }
+
+    // whoever sees this verdict's alerts, which follows the trip like alert ownership does
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public Long ownerId() {
+        if (itinerary == null || itinerary.getUser() == null) {
+            return null;
+        }
+        return itinerary.getUser().getId();
+    }
 
     // advice about this impact makes no sense without it, so it goes too. this is what lets an
     // impact, activity or itinerary be deleted without clearing its recommendations by hand first

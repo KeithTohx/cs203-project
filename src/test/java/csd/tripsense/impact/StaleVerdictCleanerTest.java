@@ -1,8 +1,12 @@
 package csd.tripsense.impact;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -11,14 +15,19 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityEditedEvent;
+import csd.tripsense.alert.Alert;
+import csd.tripsense.alert.AlertsRemovedEvent;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryEditedEvent;
+import csd.tripsense.user.User;
 
 // the edit raises the revisions before this runs, so each test sets the trip and activity up as
 // they are after the edit, and the verdicts with the revision they were judged on
@@ -27,6 +36,7 @@ import csd.tripsense.itinerary.ItineraryEditedEvent;
 class StaleVerdictCleanerTest {
 
     @Mock private ImpactRepository impacts;
+    @Mock private ApplicationEventPublisher events;
 
     @InjectMocks
     private StaleVerdictCleaner cleaner;
@@ -130,5 +140,42 @@ class StaleVerdictCleanerTest {
         cleaner.onItineraryEdited(new ItineraryEditedEvent(7L));
 
         verify(impacts, never()).deleteAll(any());
+        verifyNoInteractions(events);
+    }
+
+    // ===== telling the browser its alerts went =====
+
+    @Test
+    @DisplayName("Should tell the traveller once, after the delete, when cleared verdicts took alerts with them")
+    void onActivityEdited_AlertedVerdictsCleared_AnnouncesRemovalOnce() {
+        User traveller = mock(User.class);
+        when(traveller.getId()).thenReturn(3L);
+        trip.setUser(traveller);
+        skiing.setRevision(2L);
+        Impact firstAlerted = activityVerdict(1L);
+        firstAlerted.setAlerts(List.of(new Alert(firstAlerted)));
+        Impact secondAlerted = activityVerdict(0L);
+        secondAlerted.setAlerts(List.of(new Alert(secondAlerted)));
+        when(impacts.findByActivityId(100L)).thenReturn(List.of(firstAlerted, secondAlerted));
+
+        cleaner.onActivityEdited(new ActivityEditedEvent(100L));
+
+        // published inside the edit's transaction, the stream only sends it once that commits
+        InOrder order = inOrder(impacts, events);
+        order.verify(impacts).deleteAll(List.of(firstAlerted, secondAlerted));
+        order.verify(events, times(1)).publishEvent(new AlertsRemovedEvent(3L));
+    }
+
+    @Test
+    @DisplayName("Should not announce anything when none of the cleared verdicts had an alert")
+    void onActivityEdited_NoAlertsCleared_AnnouncesNothing() {
+        skiing.setRevision(2L);
+        Impact notAlerted = activityVerdict(1L);
+        when(impacts.findByActivityId(100L)).thenReturn(List.of(notAlerted));
+
+        cleaner.onActivityEdited(new ActivityEditedEvent(100L));
+
+        verify(impacts).deleteAll(List.of(notAlerted));
+        verifyNoInteractions(events);
     }
 }

@@ -11,9 +11,10 @@
  * <ul>
  * <li>GET /api/alerts?beforeId=&amp;size=20&amp;unreadOnly=false: saved history, newest first, and
  * unreadCount. Send the response's nextBeforeId back as beforeId to load older alerts.</li>
- * <li>GET /api/alerts/stream: ready/alert SSE events, session cookie required. Fetch history
- * on every ready event to recover any missed messages. Streams expire after 30 minutes
- * and clients can reconnect; heartbeats are sent every 15 seconds.</li>
+ * <li>GET /api/alerts/stream: ready/alert/alerts-changed SSE events, session cookie required. Fetch
+ * history on every ready event to recover any missed messages. alerts-changed means some alerts
+ * were deleted with the verdicts they came from (eg after a trip edit), so fetch history again.
+ * Streams expire after 30 minutes and clients can reconnect; heartbeats are sent every 15 seconds.</li>
  * <li>PATCH /api/alerts/{id} with {"read": true}: marks one alert as read. Idempotent, owner-only,
  * requires the normal CSRF token.</li>
  * <li>PATCH /api/alerts?upToId= with {"read": true}: marks every alert of the user as read. Pass the

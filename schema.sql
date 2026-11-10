@@ -77,6 +77,7 @@ create table impact {
     reason varchar(500),
     rejected boolean,
     judged_revision bigint,    -- the activity's (or, for a whole trip verdict, the trip's) revision the model was shown
+    verdict_key varchar(36),   -- random, new each time the verdict is written, so a reused id is not mistaken for the old verdict
 
     foreign key (user_id) references user(id),
     foreign key (news_id) references news(id),

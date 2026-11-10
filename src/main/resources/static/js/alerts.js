@@ -247,7 +247,7 @@ function stopPolling() {
     state.pollTimer = null;
 }
 
-// both events reload the list, which also catches anything missed while disconnected
+// every event reloads the list, which also catches anything missed while disconnected
 function connectStream() {
     if (!canStream()) return startPolling();
 
@@ -257,6 +257,9 @@ function connectStream() {
         refresh();
     });
     stream.addEventListener("alert", refreshAfterBurst);
+    // alerts deleted on the server, eg after an edit to the trip. no new alert may follow,
+    // and polling is off while the stream is up, so this is the only thing that clears them
+    stream.addEventListener("alerts-changed", refreshAfterBurst);
     stream.addEventListener("error", () => {
         if (stream.readyState !== EventSource.CLOSED) return;
         if (state.stream === stream) state.stream = null;

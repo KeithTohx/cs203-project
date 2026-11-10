@@ -97,7 +97,8 @@ public class NewItemEvaluationListener {
 
     // an edit to what the trip was judged on. StaleVerdictCleaner has already removed the verdicts
     // judged on the old details inside the edit's transaction, so judging it like a new trip only
-    // asks about the pairs that are now missing, and reuses the verdicts that still stand.
+    // asks about the pairs that are now missing, and reuses the verdicts that still stand without
+    // counting them against max-calls.
     // when two edits queue up here, the first run judges the latest details and the second finds
     // nothing missing, so the model is not asked twice. a run that was still judging the old
     // details when the edit committed has its verdicts thrown away at save time, see
@@ -137,10 +138,14 @@ public class NewItemEvaluationListener {
         LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC).minusDays(lookbackDays);
         Progress progress = new Progress();
         for (News news : newsService.getNewsByCountrySince(itinerary.getCountry().getId(), since)) {
-            if (!judge(progress, () -> impactService.evaluateActivityForNews(activity, news))) break;
+            boolean alreadyJudged = impactService.hasCurrentVerdict(activity, news);
+            boolean keepGoing = judge(progress, alreadyJudged,
+                    () -> impactService.evaluateActivityForNews(activity, news));
+            if (!keepGoing) break;
         }
-        log.info("New activity {}: judged {}, skipped {} ({})", activityId, progress.judged,
-                progress.skipped, progress.stopReason == null ? "complete" : progress.stopReason);
+        log.info("New activity {}: judged {}, reused {}, skipped {} ({})", activityId, progress.judged,
+                progress.reused, progress.skipped,
+                progress.stopReason == null ? "complete" : progress.stopReason);
     }
  
     @PreDestroy
@@ -181,17 +186,32 @@ public class NewItemEvaluationListener {
         Progress progress = new Progress();
         outer:
         for (News news : newsList) {
-            if (!judge(progress, () -> impactService.evaluateItineraryForNews(itinerary, news))) break outer;
+            boolean tripJudged = impactService.hasCurrentVerdict(itinerary, news);
+            boolean keepGoing = judge(progress, tripJudged,
+                    () -> impactService.evaluateItineraryForNews(itinerary, news));
+            if (!keepGoing) break outer;
+
             for (Activity activity : activities) {
-                if (!judge(progress, () -> impactService.evaluateActivityForNews(activity, news))) break outer;
+                boolean activityJudged = impactService.hasCurrentVerdict(activity, news);
+                keepGoing = judge(progress, activityJudged,
+                        () -> impactService.evaluateActivityForNews(activity, news));
+                if (!keepGoing) break outer;
             }
         }
-        log.info("New itinerary {}: judged {}, skipped {} ({})", itineraryId, progress.judged,
-                progress.skipped, progress.stopReason == null ? "complete" : progress.stopReason);
+        log.info("New itinerary {}: judged {}, reused {}, skipped {} ({})", itineraryId, progress.judged,
+                progress.reused, progress.skipped,
+                progress.stopReason == null ? "complete" : progress.stopReason);
     }
  
-    // returns false when the run should stop (cap reached, or the model looks to be down)
-    private boolean judge(Progress progress, Runnable call) {
+    // returns false when the run should stop (cap reached, or the model looks to be down).
+    // a pair that already has a verdict for the current details costs no model call, so it is
+    // passed over without touching the cap. after an edit most pairs are like this, and counting
+    // them would use up the cap before the pairs the edit actually cleared were reached
+    private boolean judge(Progress progress, boolean alreadyJudged, Runnable call) {
+        if (alreadyJudged) {
+            progress.reused++;
+            return true;
+        }
         if (progress.judged >= maxCalls) {
             progress.stopReason = "cap reached";
             return false;
@@ -215,6 +235,7 @@ public class NewItemEvaluationListener {
  
     private static final class Progress {
         int judged;
+        int reused;     // already judged on the current details, no model call
         int skipped;
         int failures;   // consecutive
         String stopReason;
