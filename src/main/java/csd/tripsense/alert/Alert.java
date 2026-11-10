@@ -36,7 +36,7 @@ public class Alert {
     @Column(nullable = false)
     private Instant emailNextAttemptAt = Instant.now();
     private Instant emailSentAt;
-    @Column(nullable = false, updatable = false)
+    @Column(nullable = false)
     private String emailDeliveryKey = java.util.UUID.randomUUID().toString();
 
     protected Alert() {}

@@ -121,12 +121,20 @@ public class AlertEmailStore {
     }
 
     private ClaimDecision checkAttemptLimit(EmailGroup group, Instant now) {
-        boolean exhausted = group.members().stream().anyMatch(a -> a.getEmailStatus() == EmailStatus.FAILED
-                || RETRYABLE.contains(a.getEmailStatus()) && a.getEmailAttempts() >= MAX_ATTEMPTS);
+        String deliveryKey = group.state().map(AlertEmailGroup::getDeliveryKey)
+                .orElseGet(() -> group.members().getFirst().getEmailDeliveryKey());
+        boolean exhausted = group.members().stream().anyMatch(a -> deliveryKey.equals(a.getEmailDeliveryKey())
+                && (a.getEmailStatus() == EmailStatus.FAILED
+                || RETRYABLE.contains(a.getEmailStatus()) && a.getEmailAttempts() >= MAX_ATTEMPTS));
         if (!exhausted) return ClaimDecision.PROCEED;
-        // Failure belongs to the news/trip group, including late members.
-        for (Alert member : group.members()) alerts.finishEmail(member.getId(), member.getEmailAttempts(), RETRYABLE,
-                EmailStatus.FAILED, null, now);
+        // Failure belongs to this delivery generation. Older generations remain history
+        // and must not block a new email after an edited plan resets the group key.
+        for (Alert member : group.members()) {
+            if (deliveryKey.equals(member.getEmailDeliveryKey())) {
+                alerts.finishEmail(member.getId(), member.getEmailAttempts(), RETRYABLE,
+                        EmailStatus.FAILED, null, now);
+            }
+        }
         return ClaimDecision.FAIL;
     }
 
@@ -153,17 +161,17 @@ public class AlertEmailStore {
                 && !Boolean.TRUE.equals(a.getImpact().getRejected())).toList();
         if (members.isEmpty()) return Optional.empty();
         var claims = new ArrayList<ClaimedAlert>();
+        Alert leader = members.getFirst();
+        String deliveryKey = deliveryIdentity(group, leader);
         for (Alert member : members) {
             int attempt = member.getEmailAttempts() + 1;
             if (alerts.claimEmail(member.getId(), attempt - 1, RETRYABLE, EmailStatus.SENDING,
-                    now, now.plusSeconds(120)) != 1) {
+                    now, now.plusSeconds(120), deliveryKey) != 1) {
                 // Roll back every claim if another worker acquired any part of this group.
                 throw new OptimisticLockingFailureException("Email group already claimed");
             }
             claims.add(new ClaimedAlert(member.getId(), attempt));
         }
-        Alert leader = members.getFirst();
-        String deliveryKey = deliveryIdentity(group, leader);
         boolean partial = incomplete || targets.countUnresolved(group.tripId(), group.newsId()) > 0
                 || evaluations.countLegacyIncomplete(group.tripId(), group.newsId()) > 0;
         return Optional.of(new Delivery(leader.getId(), claims.getFirst().attempt(), deliveryKey,

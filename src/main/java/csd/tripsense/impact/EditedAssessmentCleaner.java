@@ -17,8 +17,13 @@ public class EditedAssessmentCleaner {
             if (impact.judgedOnCurrentDetails()) continue;
             // Re-evaluated details need a new delivery identity and assessment progress.
             Long trip=impact.getItinerary().getId(), news=impact.getNews().getId();
-            tasks.deleteByTargetIdAndActivity(trip,false);
-            if (impact.getActivity()!=null) tasks.deleteByTargetIdAndActivity(impact.getActivity().getId(),true);
+            // An activity edit only invalidates that activity's evaluation.  Removing the
+            // itinerary task here abandons the other activities' unfinished assessments.
+            if (impact.getActivity() == null) {
+                tasks.deleteByTargetIdAndActivity(trip, false);
+            } else {
+                tasks.deleteByTargetIdAndActivity(impact.getActivity().getId(), true);
+            }
             sql.update("insert into alert_email_group(id,itinerary_id,news_id,delivery_key,delivered,partial) "
                     + "values(?,?,?,?,0,1) on conflict(id) do update set delivery_key=excluded.delivery_key, "
                     + "delivered=0, partial=1, sent_at=null", AlertEmailGroup.key(trip,news), trip,news,

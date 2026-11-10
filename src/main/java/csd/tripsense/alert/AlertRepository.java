@@ -82,6 +82,7 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
     @org.springframework.data.jpa.repository.Modifying
     @Query("""
             update Alert a set a.emailStatus = :sending, a.emailAttempts = a.emailAttempts + 1,
+                               a.emailDeliveryKey = :deliveryKey,
                                a.emailNextAttemptAt = :leaseUntil
             where a.id = :id and a.emailAttempts = :attempts and a.emailStatus in :states
               and a.emailNextAttemptAt <= :now
@@ -89,7 +90,8 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
     int claimEmail(@Param("id") Long id, @Param("attempts") int attempts,
                    @Param("states") java.util.List<EmailStatus> states,
                    @Param("sending") EmailStatus sending,
-                   @Param("now") java.time.Instant now, @Param("leaseUntil") java.time.Instant leaseUntil);
+                   @Param("now") java.time.Instant now, @Param("leaseUntil") java.time.Instant leaseUntil,
+                   @Param("deliveryKey") String deliveryKey);
 
     @org.springframework.data.jpa.repository.Modifying
     @Query("""

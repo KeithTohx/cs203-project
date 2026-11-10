@@ -51,7 +51,7 @@ class AlertEmailStoreTest {
         when(alerts.findById(1L)).thenReturn(Optional.of(alert));
         when(alerts.findEmailGroup(10L, 20L)).thenReturn(List.of(alert));
         when(groups.findById("10:20")).thenReturn(existingGroup ? Optional.of(group) : Optional.empty());
-        when(alerts.claimEmail(eq(1L), eq(0), anyList(), eq(EmailStatus.SENDING), eq(now), any()))
+        when(alerts.claimEmail(eq(1L), eq(0), anyList(), eq(EmailStatus.SENDING), eq(now), any(), anyString()))
                 .thenReturn(1);
         if (!existingGroup) when(groups.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
 
