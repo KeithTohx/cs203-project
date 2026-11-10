@@ -5,6 +5,8 @@ target/
 ### Local database file - the folder is kept by data/.gitkeep ###
 ### data/seed-data.xlsx is NOT ignored, it is the reference sheet for the team ###
 data/*.db
+data/*.db-shm
+data/*.db-wal
 data/*.bak
 
 ### Scratch cache from tools/build-options.py, the generated options.sql is committed ###
