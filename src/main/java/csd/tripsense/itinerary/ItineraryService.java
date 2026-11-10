@@ -62,6 +62,14 @@ public interface ItineraryService {
     Itinerary updateItinerary(Long id, Itinerary newItineraryInfo);
 
     /**
+     * Same as updateItinerary, but can keep the verdicts judged on the old details
+     * @param keepVerdicts true carries the verdicts over to the new details instead of clearing
+     *                     them, for an edit that changes nothing real such as a typo. the trip is
+     *                     still judged against any news it has no verdict for yet
+     */
+    Itinerary updateItinerary(Long id, Itinerary newItineraryInfo, boolean keepVerdicts);
+
+    /**
      * Removes Itinerary by its unique identifier
      * @param id the unique identifier of the Itinerary to remove
      * @throws ItineraryNotFoundException if no Itinerary exists with the given ID

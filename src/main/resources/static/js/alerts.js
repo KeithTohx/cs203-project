@@ -23,6 +23,9 @@ const state = {
     toastTimer: null,
     onAuthLost: () => { },
     redraw: () => { },
+    // what an admin changed in this account's trips. the bell shows these as one alert, however many there are
+    adminChanges: { content: [], unreadCount: 0 },
+    adminChangesLoaded: false,   // the first load only remembers the count, like seenIds for alerts
 };
 
 // ---------------------------------------------------------------- grouping and wording, shared with the alerts page
@@ -221,9 +224,108 @@ const isFromOldSession = session => session !== saveSession;
 // for the alerts page, so its own loads also wait until the server has every read
 export const waitForSaves = () => saveQueue;
 
+// ---------------------------------------------------------------- admin changes, one alert for all of them
+
+export const getAdminChanges = () => state.adminChanges;
+
+export const isAdminChangeUnread = change => change.readAt == null;
+
+// where an admin change goes: its trip while that is still there, otherwise the alerts page
+export const adminChangeLink = change => change.itineraryExists
+    ? `#/itineraries/${Number(change.itineraryId)}`
+    : "#/alerts";
+
+// headed like a news alert, by the news it was about, or by the trip for a change with no news
+export const adminChangeTitle = change => {
+    if (change.newsTitle) return escapeHtml(newsTitleOf(change.newsTitle));
+    if (change.itineraryName) return escapeHtml(change.itineraryName);
+    return "Your trips";
+};
+
+// newest first, for putting admin changes and news alerts in one list
+export const byNewestFirst = (first, second) => new Date(second.createdAt) - new Date(first.createdAt);
+
+// kept apart from the alerts themselves, so a failure here never holds up the alerts or the other way round
+let latestAdminChangesLoad = 0;
+
+async function refreshAdminChanges() {
+    const userId = state.userId;
+    if (userId == null) return;
+    const session = saveSession;
+
+    latestAdminChangesLoad += 1;
+    const thisLoad = latestAdminChangesLoad;
+
+    let page;
+    try {
+        page = await api.adminChanges();
+    } catch (error) {
+        if (!isFromOldSession(session) && state.userId === userId && thisLoad === latestAdminChangesLoad
+                && error.status === 401) sessionEnded();
+        return;   // keeps what was shown, the next check tries again
+    }
+    const isOutdated = isFromOldSession(session) || state.userId !== userId || thisLoad !== latestAdminChangesLoad;
+    if (isOutdated) return;
+
+    const countBefore = state.adminChanges.unreadCount;
+    const isFirstLoad = !state.adminChangesLoaded;
+    state.adminChanges = { content: page?.content ?? [], unreadCount: page?.unreadCount ?? 0 };
+    state.adminChangesLoaded = true;
+    draw();
+
+    const hasNewOnes = !isFirstLoad && state.adminChanges.unreadCount > countBefore;
+    if (hasNewOnes) announceAdminChange();
+    tellListeners({ adminChanges: state.adminChanges });
+}
+
+// marks every admin change read up to the newest one loaded, so one arriving meanwhile stays unread
+export async function markAdminChangesRead() {
+    const upToId = state.adminChanges.content[0]?.id ?? null;
+    if (!state.adminChanges.unreadCount) return;
+
+    const now = new Date().toISOString();
+    for (const change of state.adminChanges.content) change.readAt ??= now;
+    state.adminChanges = { ...state.adminChanges, unreadCount: 0 };
+    draw();
+    tellListeners({ adminChanges: state.adminChanges });
+
+    try {
+        await api.markAdminChangesRead(upToId);
+    } catch (error) {
+        if (error.status === 401) return sessionEnded();
+        throw error;
+    } finally {
+        refreshAdminChanges();   // picks up the real count, and undoes the read if saving failed
+    }
+}
+
+// one change, like opening one news alert. the bell and the alerts page update straight away
+export async function markAdminChangeRead(change) {
+    const stored = state.adminChanges.content.find(candidate => candidate.id === change.id);
+    const isUnread = stored ? isAdminChangeUnread(stored) : isAdminChangeUnread(change);
+    if (!isUnread) return;
+
+    const now = new Date().toISOString();
+    if (stored) stored.readAt = now;
+    change.readAt ??= now;
+    const unreadLeft = Math.max(0, state.adminChanges.unreadCount - 1);
+    state.adminChanges = { ...state.adminChanges, unreadCount: unreadLeft };
+    draw();
+    tellListeners({ adminChanges: state.adminChanges });
+
+    try {
+        await api.markAdminChangeRead(change.id);
+    } catch (error) {
+        if (error.status === 401) return sessionEnded();
+        refreshAdminChanges();   // undoes the read if saving failed
+        throw error;
+    }
+}
+
 async function refresh() {
     const userId = state.userId;
     if (userId == null) return;
+    refreshAdminChanges();
     if (savesRunning > 0) return;   // the queue reloads once saving is done
 
     latestRefresh += 1;
@@ -369,6 +471,9 @@ function connectStream() {
     stream.addEventListener("alerts-changed", () => {
         if (state.stream === stream) refreshAfterRemoval();
     });
+    stream.addEventListener("admin-change", () => {
+        if (state.stream === stream) refreshAdminChanges();
+    });
     stream.addEventListener("error", () => {
         if (state.stream !== stream) return;
         if (stream.readyState === EventSource.CLOSED) state.stream = null;
@@ -484,15 +589,47 @@ const createAlertItem = group => {
     `;
 };
 
-const createPanel = () => {
-    const groups = groupsInBell();
-    const shown = groups.slice(0, MOST_SHOWN);
-    const hasUnread = shown.some(isGroupUnread);
+// one thing an admin changed, in the list with the news alerts. the tag tells them apart
+const createAdminChangeItem = change => {
+    const unread = isAdminChangeUnread(change);
+    const meta = [escapeHtml(change.message), timeTag(change.createdAt)].filter(part => part).join(" · ");
 
-    const list = shown.length
-        ? `<ul>${shown.map(createAlertItem).join("")}</ul>`
+    return `
+        <li${unread ? ` class="is-new"` : ""}>
+            <a href="${adminChangeLink(change)}" data-admin-change-link="${Number(change.id)}">
+                ${unread ? `<span class="sr-only">New: </span>` : ""}
+                <strong>${adminChangeTitle(change)}</strong>
+                <span class="meta"><span class="tag admin">Admin</span> ${meta}</span>
+            </a>
+        </li>
+    `;
+};
+
+// news alerts and admin changes together, newest first
+const bellEntries = () => {
+    const newsEntries = groupsInBell().map(group => ({
+        createdAt: group.createdAt,
+        isUnread: isGroupUnread(group),
+        html: () => createAlertItem(group),
+    }));
+    const changeEntries = state.adminChanges.content.map(change => ({
+        createdAt: change.createdAt,
+        isUnread: isAdminChangeUnread(change),
+        html: () => createAdminChangeItem(change),
+    }));
+    return [...newsEntries, ...changeEntries].sort(byNewestFirst);
+};
+
+const createPanel = () => {
+    const entries = bellEntries();
+    const shown = entries.slice(0, MOST_SHOWN);
+    const hasUnread = entries.some(entry => entry.isUnread);
+
+    const items = shown.map(entry => entry.html()).join("");
+    const list = items
+        ? `<ul>${items}</ul>`
         : `<p class="meta">No alerts right now. News affecting your trips still shows on your itineraries.</p>`;
-    const hiddenCount = groups.length - shown.length;
+    const hiddenCount = entries.length - shown.length;
     const viewAllText = hiddenCount > 0 ? `View all alerts (${hiddenCount} more)` : "View all alerts";
 
     return `
@@ -510,7 +647,9 @@ const createPanel = () => {
 // counts condensed alerts like the panel lists them, so news hitting three activities on one trip counts once.
 // the bell only loads the newest 20, so when the backend has more unread than are loaded a + says there are others
 const createBadgeText = () => {
-    const unreadGroups = groupsInBell().filter(isGroupUnread).length;
+    // each admin change counts on its own, like a news alert
+    const adminChangeCount = state.adminChanges.unreadCount;
+    const unreadGroups = groupsInBell().filter(isGroupUnread).length + adminChangeCount;
     const unreadLoaded = state.alerts.filter(isUnread).length;
     const hasOlderUnread = state.unreadCount > unreadLoaded;
 
@@ -535,6 +674,9 @@ const findFocusSelector = () => {
         const currentId = group ? group.id : Number(alertId);
         return `[data-alert-link="${Number(currentId)}"]`;
     }
+
+    const changeId = focused.dataset.adminChangeLink;
+    if (changeId) return `[data-admin-change-link="${Number(changeId)}"]`;
 
     return focusableSelectors.find(selector => focused.matches(selector)) ?? null;
 };
@@ -645,7 +787,7 @@ function announceNewAlerts(newAlerts) {
 
     // alerts arriving while a pop-up is still up join it, so there is only ever one, grouped like the bell.
     // its text changes in place rather than the whole pop-up sliding in again
-    const shownToast = document.querySelector(".alert-toast:not(.leaving)");
+    const shownToast = document.querySelector(".alert-toast:not(.admin-change-toast):not(.leaving)");
     const alreadyShown = shownToast ? state.toastAlerts : [];
     state.toastAlerts = [...newAlerts, ...alreadyShown];
 
@@ -655,6 +797,47 @@ function announceNewAlerts(newAlerts) {
     // goes on its own, the alert stays in the bell for later. joining it starts the time again
     clearTimeout(state.toastTimer);
     state.toastTimer = setTimeout(() => removeToast(toast), TOAST_SHOWN_MS);
+}
+
+// its own pop-up, so it never gets mixed into the news ones. a second change while it is up
+// only updates its text
+let adminChangeToastTimer = null;
+
+function announceAdminChange() {
+    if (state.isOpen) return;
+
+    const { content, unreadCount } = state.adminChanges;
+    const latest = content[0];
+    const isOne = unreadCount === 1 && latest;
+    const text = isOne
+        ? escapeHtml(latest.message)
+        : `${unreadCount} changes are waiting for you.`;
+
+    // one change goes straight to its trip, like a news alert's pop-up. several, or one whose trip
+    // is gone, go to the alerts page
+    const goesToTrip = isOne && latest.itineraryExists;
+    const link = goesToTrip
+        ? `<a href="${adminChangeLink(latest)}" data-admin-change-link="${Number(latest.id)}">View trip</a>`
+        : `<a href="#/alerts" data-view-all>See what changed</a>`;
+
+    let toast = document.querySelector(".admin-change-toast:not(.leaving)");
+    if (!toast) {
+        toast = createToast();
+        toast.classList.add("admin-change-toast");
+
+        // a pencil rather than the news icon, since this is not about the news
+        const newsIcon = toast.querySelector(":scope > svg");
+        newsIcon?.insertAdjacentHTML("afterend", icon("pencil"));
+        newsIcon?.remove();
+    }
+    toast.querySelector(".alert-toast-body").innerHTML = `
+        <strong>An admin changed your trips</strong>
+        <span class="meta">${text}</span>
+        ${link}
+    `;
+
+    clearTimeout(adminChangeToastTimer);
+    adminChangeToastTimer = setTimeout(() => removeToast(toast), TOAST_SHOWN_MS);
 }
 
 // ---------------------------------------------------------------- panel actions
@@ -673,6 +856,7 @@ function close({ returnFocus = false } = {}) {
 
 // a failure shows itself, since the bell reloads with the alerts still unread
 async function readAll() {
+    markAdminChangesRead().catch(() => { });   // reloads by itself on failure
     const finished = markAllAlertsRead();
     state.slot?.querySelector(".alert-panel h2")?.focus();
 
@@ -687,6 +871,15 @@ async function readAll() {
 function goToTrip(link) {
     const group = findGroup(link.dataset.alertLink);
     if (group) markAlertsRead(group.alerts).catch(() => { });   // the bell reloads by itself on failure
+    close();
+    if (location.hash === link.getAttribute("href")) state.redraw();
+}
+
+// marks the change read on the way to its trip, the same as a news alert
+function goToChange(link) {
+    const id = Number(link.dataset.adminChangeLink);
+    const change = state.adminChanges.content.find(candidate => candidate.id === id);
+    if (change) markAdminChangeRead(change).catch(() => { });   // reloads by itself on failure
     close();
     if (location.hash === link.getAttribute("href")) state.redraw();
 }
@@ -706,6 +899,10 @@ document.addEventListener("click", event => {
 
     const link = event.target.closest("[data-alert-link]");
     if (link) return goToTrip(link);
+
+    // the alerts page handles its own links, this is only for the bell and the pop-ups
+    const changeLink = event.target.closest("[data-admin-change-link]");
+    if (changeLink && !changeLink.closest("#alerts-list")) return goToChange(changeLink);
 
     if (event.target.closest("[data-view-all]")) return close();
 
@@ -758,6 +955,7 @@ export function stopAlerts() {
     historyRetryTimer = null;
     burstLoading = false;
     burstAgain = false;
+    clearTimeout(adminChangeToastTimer);
 
     // saves still running for this account carry on, but no longer hold back the next account's loads
     saveSession += 1;
@@ -781,4 +979,6 @@ export function stopAlerts() {
     removalsReceived = 0;
     removalsCovered = 0;
     state.toastTimer = null;
+    state.adminChanges = { content: [], unreadCount: 0 };
+    state.adminChangesLoaded = false;
 }

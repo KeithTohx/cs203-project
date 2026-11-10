@@ -89,10 +89,17 @@ class AutomaticAlertIntegrationTest {
         n.setUrl("https://example.com/" + UUID.randomUUID()); n.setCountries(Set.of(country));
         n.setPublishedAt(LocalDateTime.now(ZoneOffset.UTC)); return news.saveAndFlush(n);
     }
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static Object modelVerdict(Class<?> type, boolean affected, String reason) throws Exception {
+        var constructor = type.getDeclaredConstructors()[0];
+        constructor.setAccessible(true);
+        Class<?> kind = constructor.getParameterTypes()[1];
+        return constructor.newInstance(reason,
+                Enum.valueOf((Class<Enum>) kind, affected ? "DISASTER" : "NONE"), affected);
+    }
     private void verdict() {
         doAnswer(inv -> {
-            var c = ((Class<?>) inv.getArgument(1)).getDeclaredConstructor(boolean.class, String.class);
-            c.setAccessible(true); return c.newInstance(true, "Access restricted");
+            return modelVerdict(inv.getArgument(1), true, "Access restricted");
         }).when(ai).ask(anyString(), any(Class.class));
     }
     private Itinerary newTrip() {
@@ -161,8 +168,7 @@ class AutomaticAlertIntegrationTest {
 
     @Test void negativeAutomaticAssessmentDoesNotCreateAnAlert() {
         doAnswer(inv -> {
-            var c = ((Class<?>) inv.getArgument(1)).getDeclaredConstructor(boolean.class, String.class);
-            c.setAccessible(true); return c.newInstance(false, "Different dates");
+            return modelVerdict(inv.getArgument(1), false, "Different dates");
         }).when(ai).ask(anyString(), any(Class.class));
         Itinerary trip = newTrip(); listener.processPending();
         assertThat(tasks.count()).isZero();
@@ -305,8 +311,7 @@ class AutomaticAlertIntegrationTest {
                 Activity freshActivity = activity(fresh);
                 assertThat(freshActivity.getId()).isEqualTo(deletedActivity.getId());
             }
-            var c = ((Class<?>) inv.getArgument(1)).getDeclaredConstructor(boolean.class, String.class);
-            c.setAccessible(true); return c.newInstance(true, "Verdict for deleted trip");
+            return modelVerdict(inv.getArgument(1), true, "Verdict for deleted trip");
         }).when(ai).ask(anyString(), any(Class.class));
 
         assertThatThrownBy(() -> {
@@ -332,8 +337,7 @@ class AutomaticAlertIntegrationTest {
             Activity replacement = activity(trip);
             assertThat(replacement.getId()).isEqualTo(deleted.getId());
             assertThat(replacement.getAssessmentIdentity()).isNotEqualTo(deleted.getAssessmentIdentity());
-            var c = ((Class<?>) inv.getArgument(1)).getDeclaredConstructor(boolean.class, String.class);
-            c.setAccessible(true); return c.newInstance(true, "Verdict for deleted activity");
+            return modelVerdict(inv.getArgument(1), true, "Verdict for deleted activity");
         }).when(ai).ask(anyString(), any(Class.class));
 
         assertThatThrownBy(() -> evaluator.evaluateActivityForNews(deleted, article))
@@ -398,8 +402,7 @@ class AutomaticAlertIntegrationTest {
         doAnswer(inv -> {
             entered.countDown();
             if (!release.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("Test timed out");
-            var c = ((Class<?>) inv.getArgument(1)).getDeclaredConstructor(boolean.class, String.class);
-            c.setAccessible(true); return c.newInstance(true, "Access restricted");
+            return modelVerdict(inv.getArgument(1), true, "Access restricted");
         }).when(ai).ask(anyString(), any(Class.class));
         try (var pool = java.util.concurrent.Executors.newFixedThreadPool(2)) {
             var first = pool.submit(() -> evaluator.evaluateItineraryForNews(trip, article));
@@ -467,8 +470,7 @@ class AutomaticAlertIntegrationTest {
         doAnswer(inv -> {
             Activity changes=new Activity(); changes.setName("New activity"); changes.setAddress("Different city");
             activityService.updateActivity(original.getId(),changes);
-            var c=((Class<?>)inv.getArgument(1)).getDeclaredConstructor(boolean.class,String.class);
-            c.setAccessible(true); return c.newInstance(true,"Old details");
+            return modelVerdict(inv.getArgument(1), true, "Old details");
         }).when(ai).ask(anyString(),any(Class.class));
         assertThatThrownBy(() -> evaluator.evaluateActivityForNews(original,article))
                 .isInstanceOf(org.springframework.dao.OptimisticLockingFailureException.class);
@@ -530,8 +532,7 @@ class AutomaticAlertIntegrationTest {
                 var c=type.getDeclaredConstructor(String.class,String.class,Long.class,String.class);
                 c.setAccessible(true); return c.newInstance("HIGH","MONITOR",null,"Advice for the old activity");
             }
-            var c=type.getDeclaredConstructor(boolean.class,String.class);
-            c.setAccessible(true); return c.newInstance(true,"Current details");
+            return modelVerdict(type, true, "Current details");
         }).when(ai).ask(anyString(),any(Class.class));
         advice.generate(trip.getId());
         assertThat(recommendations.findByImpactItineraryId(trip.getId()))

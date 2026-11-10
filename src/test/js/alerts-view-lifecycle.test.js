@@ -24,6 +24,10 @@
         const create = new Function("api", "document", "onAlertsChanged", "waitForSaves", "showError", `
             const groupAlerts=()=>[], isGroupUnread=()=>false, findGroupWithAlert=()=>null;
             const markAlertsRead=async()=>{}, markAllAlertsRead=async()=>{};
+            const getAdminChanges=()=>({content:[],unreadCount:0}), isAdminChangeUnread=change=>change.readAt==null;
+            const markAdminChangeRead=async()=>{}, markAdminChangesRead=async()=>{};
+            const adminChangeLink=()=>'', adminChangeTitle=()=>'', timeTag=()=>'';
+            const byNewestFirst=(first,second)=>new Date(second.createdAt)-new Date(first.createdAt);
             const alertMetaParts=()=>[], alertTitle=()=>'', emptyState=()=>'', escapeHtml=x=>x,
                 hostnameOf=()=>'', safeUrl=()=>null, icon=()=>'';
             ${plain}

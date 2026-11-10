@@ -217,9 +217,12 @@ class AlertIntegrationTest {
         String reason = affected ? "Resort closed" : "Different location";
         when(ai.ask(anyString(), any(Class.class))).thenAnswer(invocation -> {
             Class<?> verdictType = invocation.getArgument(1);
-            var constructor = verdictType.getDeclaredConstructor(boolean.class, String.class);
+            var constructor = verdictType.getDeclaredConstructors()[0];
             constructor.setAccessible(true);
-            return constructor.newInstance(affected, reason);
+            // an impacted answer has to name a kind or the service overrules it
+            Class<?> kind = constructor.getParameterTypes()[1];
+            return constructor.newInstance(reason,
+                    Enum.valueOf((Class<Enum>) kind, affected ? "DISASTER" : "NONE"), affected);
         });
     }
 

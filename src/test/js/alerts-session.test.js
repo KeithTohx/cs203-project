@@ -10,7 +10,7 @@
         const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
         return { promise, resolve, reject };
     };
-    const fixture = (firstRead = null, history = null) => {
+    const fixture = (firstRead = null, history = null, adminHistory = null) => {
         let account = "A";
         const calls = [];
         let refreshCalls = 0;
@@ -26,6 +26,7 @@
             },
         };
         const document = { addEventListener() {}, querySelectorAll: () => [] };
+        if (adminHistory) api.adminChanges = () => adminHistory.promise;
         const createModule = new Function("api", "document", `
             let intervals=0;
             let nextTimer=0, syncListener=null;
@@ -47,6 +48,7 @@
             let authLosses=0;
             state.onAuthLost=()=>{authLosses++;};
             return { markAllAlertsRead, markAlertsRead, stopAlerts, refresh, onAlertsChanged,
+                refreshAdminChanges, getAdminChanges,
                 mount: () => mountAlertBell(null, {id:2}, {onAuthLost:()=>{authLosses++;}, redraw:()=>{}}),
                 invalidate: () => syncListener?.(),
                 flushBurst: () => {const callback=timers.get(burstTimer); timers.delete(burstTimer); return callback?.();},
@@ -311,6 +313,17 @@
         assert(changes.length===1 && changes[0].outOfStep===true,
             "A removal event must invalidate older history even when the bell has identical ids and counts");
         passed.push("reload older history after alerts-changed from an edit");
+    }
+    for (const fails of [false, true]) {
+        const history = deferred(), f = fixture(null, null, history);
+        const pending = f.alerts.refreshAdminChanges();
+        f.switchAccount(); f.alerts.setUser(1);
+        if (fails) history.reject({ status: 401 });
+        else history.resolve({ content: [{ id: 1 }], unreadCount: 1 });
+        await pending;
+        assert(f.alerts.snapshot().authLosses === 0, "An old admin request must not end a new session");
+        assert(f.alerts.getAdminChanges().unreadCount === 0, "An old admin request must not populate a new session");
+        passed.push(`ignore previous-session admin ${fails ? "401" : "history"} after same-account login`);
     }
     globalThis.alertSessionTestResults = { ok: true, passed };
     globalThis.console?.log(`${passed.length} alert session tests passed`);

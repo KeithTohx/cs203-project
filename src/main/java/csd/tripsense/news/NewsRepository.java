@@ -22,6 +22,8 @@ public interface NewsRepository extends JpaRepository<News, Long> {
     // Which of these URLs are already stored? One query for a whole batch of articles.
     List<News> findByUrlIn(Collection<String> urls);
 
+    List<News> findByTitleIn(Collection<String> titles);
+
     // One page of news, newest first.
     Page<News> findAllByOrderByPublishedAtDesc(Pageable pageable);
 

@@ -37,6 +37,12 @@ public class ChatController {
         return chatbotService.history(me.getId(), itineraryId);
     }
 
+    // a page reloaded while an answer was being written polls this until the answer is saved
+    @GetMapping("/status")
+    public ChatStatus status(@PathVariable Long itineraryId, @AuthenticationPrincipal CurrentUser me) {
+        return chatbotService.status(me.getId(), itineraryId);
+    }
+
     @DeleteMapping
     public ResponseEntity<Void> reset(@PathVariable Long itineraryId, @AuthenticationPrincipal CurrentUser me) {
         chatbotService.reset(me.getId(), itineraryId);

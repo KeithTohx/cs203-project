@@ -14,6 +14,9 @@ public interface ActivityRepository extends JpaRepository<Activity, Long> {
 
     List<Activity> findByItineraryIdOrderByDateStart(Long itineraryId);
 
+    // every activity on every one of a user's trips, for the admin console
+    List<Activity> findByItineraryUserIdOrderByDateStart(Long userId);
+
     // Activities in one country that have not finished yet and have no impact row for this news,
     // so one article is never judged twice against the same activity. The itinerary and its user
     // are fetched up front because an Impact needs the user and open-in-view is off.
@@ -33,10 +36,10 @@ public interface ActivityRepository extends JpaRepository<Activity, Long> {
                                       @Param("countryId") Long countryId,
                                       @Param("now") LocalDateTime now);
 
-    // see ItineraryRepository.findRevision
+    // see ItineraryRepository.findRevision, including why this is Number and not Long
     @Query("""
             select coalesce(a.revision, 0L) from Activity a
             where a.id = :id and a.identityKey = :identityKey
             """)
-    Optional<Long> findRevision(@Param("id") Long id, @Param("identityKey") String identityKey);
+    Optional<Number> findRevision(@Param("id") Long id, @Param("identityKey") String identityKey);
 }

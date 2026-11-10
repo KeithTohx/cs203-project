@@ -218,6 +218,21 @@ class ActivityServiceImplTest {
     }
 
     @Test
+    @DisplayName("Should say the edit keeps the verdicts when asked to")
+    void updateActivity_KeepVerdicts_PublishesWithTheChoice() {
+        Activity existing = storedActivity();
+        when(activityRepository.findById(10L)).thenReturn(Optional.of(existing));
+        when(activityRepository.save(any(Activity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Activity changes = sameAs(existing);
+        changes.setName("Ski at Niseko!");
+        activityService.updateActivity(10L, changes, true);
+
+        verify(events).publishEvent(new ActivityEditedEvent(10L, true));
+        assertEquals(1, existing.currentRevision());
+    }
+
+    @Test
     @DisplayName("Should publish an edited event when the activity moves to another trip")
     void updateActivity_ShouldPublish_WhenMovedToAnotherTrip() {
         Activity existing = storedActivity();

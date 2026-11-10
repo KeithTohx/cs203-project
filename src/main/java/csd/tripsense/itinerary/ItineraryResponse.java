@@ -1,5 +1,6 @@
 package csd.tripsense.itinerary;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 
 /**
@@ -16,7 +17,9 @@ public record ItineraryResponse(
         Long userId,
         String username,
         Long countryId,
-        String countryName) {
+        String countryName,
+        // null unless an admin has changed the trip, so the traveller can be shown a note
+        Instant adminEditedAt) {
 
     public static ItineraryResponse from(Itinerary itinerary) {
         return new ItineraryResponse(
@@ -27,6 +30,7 @@ public record ItineraryResponse(
                 itinerary.getUser() == null ? null : itinerary.getUser().getId(),
                 itinerary.getUser() == null ? null : itinerary.getUser().getUsername(),
                 itinerary.getCountry() == null ? null : itinerary.getCountry().getId(),
-                itinerary.getCountry() == null ? null : itinerary.getCountry().getName());
+                itinerary.getCountry() == null ? null : itinerary.getCountry().getName(),
+                itinerary.getAdminEditedAt());
     }
 }

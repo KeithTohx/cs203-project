@@ -130,7 +130,9 @@ public class AlertEmailStore {
         // Failure belongs to this delivery generation. Older generations remain history
         // and must not block a new email after an edited plan resets the group key.
         for (Alert member : group.members()) {
-            if (deliveryKey.equals(member.getEmailDeliveryKey())) {
+            // An unattempted late member still has its own initial key. It belongs to this
+            // delivery generation too, and must inherit the exhausted group's failure.
+            if (deliveryKey.equals(member.getEmailDeliveryKey()) || member.getEmailAttempts() == 0) {
                 alerts.finishEmail(member.getId(), member.getEmailAttempts(), RETRYABLE,
                         EmailStatus.FAILED, null, now);
             }
