@@ -11,6 +11,8 @@ public interface ChatbotService {
 
     List<ChatResponse> history(Long userId, Long itineraryId);
 
+    ChatStatus status(Long userId, Long itineraryId);
+
     void reset(Long userId, Long itineraryId);
     
     /** Deletes every stored conversation of this user, including ones for itineraries that no longer exist. */

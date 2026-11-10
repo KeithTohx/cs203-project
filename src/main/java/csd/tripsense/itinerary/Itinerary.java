@@ -1,6 +1,8 @@
 package csd.tripsense.itinerary;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -70,7 +72,6 @@ public class Itinerary {
         identityKey = UUID.randomUUID().toString();
     }
 
-
     public long currentAssessmentRevision() { return currentRevision(); }
     public void reviseAssessment() { bumpRevision(); }
 
@@ -101,6 +102,11 @@ public class Itinerary {
     @OneToMany(mappedBy="itinerary",cascade=CascadeType.REMOVE)
     @JsonIgnore
     private List<csd.tripsense.impact.EvaluationTarget> alertEvaluationTargets;
+    // when an admin last changed this trip or its activities, for the note the traveller sees.
+    // ignored in request bodies, since travellers post this entity directly and could set it
+    @Column(name = "admin_edited_at")
+    @JsonIgnore
+    private Instant adminEditedAt;
 
     // the foreign keys live on activity and impact (mappedBy), these just let jpa find them.
     // deleting an itinerary deletes its activities and impacts too, instead of leaving rows

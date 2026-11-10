@@ -93,9 +93,16 @@ public class GdeltIngestJob {
 
             // 2. skip articles already stored, or already judged in an earlier run on this file
             Set<String> existing = newsService.findExistingUrls(byUrl.keySet());
-            List<GkgArticle> pending = byUrl.values().stream()
-                    .filter(a -> !existing.contains(a.url()) && !checkedUrls.contains(a.url()))
-                    .toList();
+            // one story reaches us from a dozen outlets under the same headline, so only the
+            // first copy is kept. without this the same quake fills the trip card on its own
+            Set<String> seenTitles = new HashSet<>(newsService.findExistingTitles(
+                    byUrl.values().stream().map(GkgArticle::title).toList()));
+            List<GkgArticle> pending = new ArrayList<>();
+            for (GkgArticle article : byUrl.values()) {
+                if (existing.contains(article.url()) || checkedUrls.contains(article.url())) continue;
+                if (!seenTitles.add(article.title())) continue;
+                pending.add(article);
+            }
 
             // 3. this run's share
             List<GkgArticle> toCheck = pending.size() > maxPerRun ? pending.subList(0, maxPerRun) : pending;

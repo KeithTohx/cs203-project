@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 import csd.tripsense.chat.ChatbotService;
 import csd.tripsense.impact.ImpactRepository;
 import csd.tripsense.itinerary.ItineraryRepository;
+import csd.tripsense.notice.AdminChangeRepository;
 import csd.tripsense.recommendation.RecommendationRepository;
 import csd.tripsense.user.preference.UserPreferenceRepository;
 
@@ -24,12 +25,14 @@ public class UserServiceImpl implements UserService {
     private final ChatbotService chatbotService;
         private final RecommendationRepository recommendationRepository;
     private final UserPreferenceRepository userPreferenceRepository;
+    private final AdminChangeRepository adminChangeRepository;
 
     public UserServiceImpl(UserRepository userRepository, PasswordEncoder passwordEncoder,
                         ItineraryRepository itineraryRepository, ImpactRepository impactRepository,
                         ChatbotService chatbotService,
                         RecommendationRepository recommendationRepository,
-                        UserPreferenceRepository userPreferenceRepository) {
+                        UserPreferenceRepository userPreferenceRepository,
+                        AdminChangeRepository adminChangeRepository) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.itineraryRepository = itineraryRepository;
@@ -37,6 +40,7 @@ public class UserServiceImpl implements UserService {
         this.chatbotService = chatbotService;
         this.recommendationRepository = recommendationRepository;
         this.userPreferenceRepository = userPreferenceRepository;
+        this.adminChangeRepository = adminChangeRepository;
     }
 
     @Override
@@ -155,6 +159,7 @@ public class UserServiceImpl implements UserService {
         itineraryRepository.flush();
 
         userPreferenceRepository.deleteByUserId(userId);                  // references the user, so before it
+        adminChangeRepository.deleteByUserId(userId);                     // what an admin changed for them is about data that is gone
         userRepository.delete(user);
     }
 }

@@ -163,11 +163,15 @@ class EditTriggersEvaluationIntegrationTest {
         return verdict(invocation, true, reason);
     }
 
+    @SuppressWarnings({"unchecked", "rawtypes"})
     private static Object verdict(InvocationOnMock invocation, boolean impacted, String reason) throws Exception {
         Class<?> verdictType = invocation.getArgument(1);
-        var constructor = verdictType.getDeclaredConstructor(boolean.class, String.class);
+        var constructor = verdictType.getDeclaredConstructors()[0];
         constructor.setAccessible(true);
-        return constructor.newInstance(impacted, reason);
+        // an impacted answer has to name a kind, NONE is what the service overrules
+        Class<?> kind = constructor.getParameterTypes()[1];
+        return constructor.newInstance(reason,
+                Enum.valueOf((Class<Enum>) kind, impacted ? "DISASTER" : "NONE"), impacted);
     }
 
     // the recommendation service asks for its own private record: severity, action, option, advice
@@ -229,6 +233,7 @@ class EditTriggersEvaluationIntegrationTest {
         impact.setNews(article);
         impact.setImpacted(true);
         impact.setReason(OLD_REASON);
+        impact.setPromptVersion(Impact.CURRENT_PROMPT_VERSION);
         impact.setVerdictKey(UUID.randomUUID().toString());
         impact = impacts.saveAndFlush(impact);
 

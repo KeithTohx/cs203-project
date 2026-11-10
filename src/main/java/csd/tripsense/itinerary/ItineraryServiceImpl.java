@@ -90,6 +90,12 @@ public class ItineraryServiceImpl implements ItineraryService {
     @Override
     @Transactional
     public Itinerary updateItinerary(Long id, Itinerary newItineraryInfo){
+        return updateItinerary(id, newItineraryInfo, false);
+    }
+
+    @Override
+    @Transactional
+    public Itinerary updateItinerary(Long id, Itinerary newItineraryInfo, boolean keepVerdicts){
         return itineraries.findById(id).map(itinerary -> {
             Long oldCountryId = countryId(itinerary.getCountry());
             String oldName = itinerary.getName();
@@ -119,7 +125,7 @@ public class ItineraryServiceImpl implements ItineraryService {
 
             Itinerary saved = itineraries.save(itinerary);
             if (judgedDetailsChanged) {
-                events.publishEvent(new ItineraryEditedEvent(saved.getId()));
+                events.publishEvent(new ItineraryEditedEvent(saved.getId(), keepVerdicts));
             }
             return saved;
         }).orElseThrow(() -> new ItineraryNotFoundException(id));
@@ -175,7 +181,11 @@ public class ItineraryServiceImpl implements ItineraryService {
 
     @Override
     public Optional<Long> findRevision(Itinerary itinerary) {
-        return itineraries.findRevision(itinerary.getId(), itinerary.getIdentityKey());
+        // sqlite returns the coalesced revision as an Integer, so normalise to Long here. without
+        // this the caller compares an Optional<Integer> against an Optional<Long> and they never
+        // match, which makes every evaluation look like the trip was edited mid-judgement
+        return itineraries.findRevision(itinerary.getId(), itinerary.getIdentityKey())
+                .map(Number::longValue);
     }
 
 }
