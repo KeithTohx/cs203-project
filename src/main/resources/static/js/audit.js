@@ -16,13 +16,22 @@ export const AUDIT_ACTIONS = [
     { value: "ACCOUNT_DELETED", label: "Deleted account" },
     { value: "ROLE_CHANGED", label: "Changed role" },
     { value: "SQL_QUERY", label: "Query database" },
+    { value: "ADMIN_ACCOUNT_VIEWED", label: "Admin viewed account" },
+    { value: "ADMIN_ACTION_REFUSED", label: "Admin action refused" },
+    { value: "IMPACT_REJECTED", label: "Rejected AI verdict" },
+    { value: "IMPACT_RESTORED", label: "Restored AI verdict" },
+    { value: "IMPACT_DELETED", label: "Deleted AI verdict" },
+    { value: "RECOMMENDATION_ACCEPTED", label: "Accepted AI advice" },
+    { value: "RECOMMENDATION_DISMISSED", label: "Dismissed AI advice" },
+    { value: "RECOMMENDATION_REOPENED", label: "Reopened AI advice" },
+    { value: "RECOMMENDATION_REGENERATED", label: "Asked for other AI advice" },
 ];
 
 // the text for an action, or the raw value if the backend sends one this file does not know yet
 const actionLabel = value => AUDIT_ACTIONS.find(action => action.value === value)?.label ?? value;
 
 // the actions that admins should notice, so they stand out in the table
-const WARNING_ACTIONS = ["LOGIN_FAILED", "ACCOUNT_DISABLED", "ACCOUNT_DELETED"];
+const WARNING_ACTIONS = ["LOGIN_FAILED", "ACCOUNT_DISABLED", "ACCOUNT_DELETED", "ADMIN_ACTION_REFUSED"];
 
 // a dropdown of every action, plus "All actions" for no filter
 export const createActionFilter = id => {

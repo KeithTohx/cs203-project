@@ -12,7 +12,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import csd.tripsense.audit.AuditService;
 import csd.tripsense.auth.CurrentUser;
+import csd.tripsense.impact.Impact;
 import csd.tripsense.itinerary.ItineraryAccess;
 import csd.tripsense.itinerary.ItineraryService;
 import jakarta.validation.Valid;
@@ -24,12 +26,15 @@ public class RecommendationController {
 
     private final ItineraryService itineraryService;
     private final ItineraryAccess access;
+    private final AuditService auditService;
 
     public RecommendationController(RecommendationService recommendationService,
-                                    ItineraryService itineraryService, ItineraryAccess access) {
+                                    ItineraryService itineraryService, ItineraryAccess access,
+                                    AuditService auditService) {
         this.recommendationService = recommendationService;
         this.itineraryService = itineraryService;
         this.access = access;
+        this.auditService = auditService;
     }
 
     /**
@@ -75,8 +80,10 @@ public class RecommendationController {
     public RecommendationResponse decide(@PathVariable Long id,
             @Valid @RequestBody StatusRequest request,
             @AuthenticationPrincipal CurrentUser me) {
-        return RecommendationResponse.from(
-                recommendationService.decide(id, request.status(), me));
+        Recommendation decided = recommendationService.decide(id, request.status(), me);
+        auditService.record(decisionAction(request.status()), me.getId(), me.getEmail(),
+                ownerId(decided), describe(decided));
+        return RecommendationResponse.from(decided);
     }
 
     /**
@@ -89,7 +96,11 @@ public class RecommendationController {
     @PostMapping("/recommendation/{id}/regenerate")
     public RecommendationResponse regenerate(@PathVariable Long id,
             @AuthenticationPrincipal CurrentUser me) {
-        return RecommendationResponse.from(recommendationService.regenerate(id, me));
+        Recommendation fresh = recommendationService.regenerate(id, me);
+        String details = "turned down recommendation " + id + ", offered instead " + describe(fresh);
+        auditService.record(AuditService.RECOMMENDATION_REGENERATED, me.getId(), me.getEmail(),
+                ownerId(fresh), details);
+        return RecommendationResponse.from(fresh);
     }
 
     /**
@@ -104,5 +115,31 @@ public class RecommendationController {
             @AuthenticationPrincipal CurrentUser me) {
         return recommendationService.getHistory(impactId, me).stream()
                 .map(RecommendationResponse::from).toList();
+    }
+
+    private static String decisionAction(RecommendationStatus status) {
+        return switch (status) {
+            case ACCEPTED -> AuditService.RECOMMENDATION_ACCEPTED;
+            case DISMISSED -> AuditService.RECOMMENDATION_DISMISSED;
+            case PENDING -> AuditService.RECOMMENDATION_REOPENED;
+        };
+    }
+
+    private static Long ownerId(Recommendation recommendation) {
+        Impact impact = recommendation.getImpact();
+        if (impact == null) {
+            return null;
+        }
+        return impact.ownerId();
+    }
+
+    // what the AI suggested and for which impact, so the entry reads on its own in the admin trail
+    private static String describe(Recommendation recommendation) {
+        Impact impact = recommendation.getImpact();
+        String impactId = impact == null ? "unknown" : String.valueOf(impact.getId());
+
+        return "recommendation " + recommendation.getId() + " on impact " + impactId
+                + " (" + recommendation.getSeverity() + ", " + recommendation.getAction() + "): "
+                + recommendation.getAdvice();
     }
 }

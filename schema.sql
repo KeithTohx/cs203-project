@@ -34,6 +34,8 @@ create table itinerary {
     name varchar,
     date_start timestamp,
     date_end timestamp,
+    revision bigint,           -- goes up when the name, country or dates change; null reads as 0
+    identity_key varchar(36),  -- random, set once on insert, so a new trip that reuses a deleted id is not mistaken for it
 
     foreign key (user_id) references user(id),
     foreign key (country_id) references country(id)
@@ -49,6 +51,8 @@ create table activity {
     date_start timestamp,
     date_end timestamp,
     category varchar,          -- ActivityCategory, null on rows made before it existed
+    revision bigint,           -- goes up when the name, address, start, trip or trip's country change; null reads as 0
+    identity_key varchar(36),  -- random, set once on insert, see itinerary.identity_key
 
     foreign key (itinerary_id) references itinerary(id),
     foreign key (country_id) references country(id)
@@ -74,6 +78,8 @@ create table impact {
     impacted boolean,
     reason varchar(500),
     rejected boolean,
+    judged_revision bigint,    -- the activity's (or, for a whole trip verdict, the trip's) revision the model was shown
+    verdict_key varchar(36),   -- random, new each time the verdict is written, so a reused id is not mistaken for the old verdict
 
     foreign key (user_id) references user(id),
     foreign key (news_id) references news(id),

@@ -147,6 +147,29 @@ class UserControllerTest {
                 .andExpect(status().isOk());
     }
 
+    @Test
+    void getByUsername_asAdmin_forSomeoneElse_isTracedAsAnAdminOverride() throws Exception {
+        User john = new User("john@example.com", "john", "hash", "USER");
+        when(userService.getByUsername("john")).thenReturn(john);
+
+        mockMvc.perform(get("/api/user/john").principal(caller("admin@example.com", "ADMIN")))
+                .andExpect(status().isOk());
+
+        verify(auditService).record(eq(AuditService.ADMIN_ACCOUNT_VIEWED), any(), eq("admin@example.com"),
+                any(), eq("viewed account 'john'"));
+    }
+
+    @Test
+    void getByUsername_ownAccount_isNotTraced() throws Exception {
+        when(userService.getByUsername("john"))
+                .thenReturn(new User("john@example.com", "john", "hash", "USER"));
+
+        mockMvc.perform(get("/api/user/john").principal(caller("john@example.com", "USER")))
+                .andExpect(status().isOk());
+
+        verify(auditService, never()).record(eq(AuditService.ADMIN_ACCOUNT_VIEWED), any(), any(), any(), any());
+    }
+
     // ---------- PATCH /api/user/me (change username) ----------
 
     @Test

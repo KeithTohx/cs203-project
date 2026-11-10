@@ -250,7 +250,38 @@ class AdminControllerTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.message").value("last enabled admin"));
         verify(sessionService, never()).expireSessionsFor(anyLong());
-        verify(auditService, never()).record(any(), any(), any(), any(), any());
+
+        // the attempt is traced, but no role change is recorded since none happened
+        verify(auditService).record(eq(AuditService.ADMIN_ACTION_REFUSED), eq(3L), eq("admin@example.com"),
+                eq(4L), contains("tried to change role to USER user 4: last enabled admin"));
+        verify(auditService, never()).record(eq(AuditService.ROLE_CHANGED), any(), any(), any(), any());
+    }
+
+    @Test
+    void disableUser_refusedBySafetyRule_isTracedAsRefused_andNothingElseHappens() throws Exception {
+        when(adminService.disableUser(3L, 3L)).thenThrow(new AccountRuleException(
+                AccountRuleException.Kind.INVALID_INPUT, "admins cannot disable their own account"));
+
+        mockMvc.perform(post("/api/admin/users/3/disable"))
+                .andExpect(status().isBadRequest());
+
+        verify(sessionService, never()).expireSessionsFor(anyLong());
+        verify(auditService).record(eq(AuditService.ADMIN_ACTION_REFUSED), eq(3L), eq("admin@example.com"),
+                eq(3L), contains("admins cannot disable their own account"));
+        verify(auditService, never()).record(eq(AuditService.ACCOUNT_DISABLED), any(), any(), any(), any());
+    }
+
+    @Test
+    void deleteUser_refusedBySafetyRule_isTracedAsRefused() throws Exception {
+        when(adminService.deleteUser(4L, 3L)).thenThrow(new AccountRuleException(
+                AccountRuleException.Kind.CONFLICT, "admin accounts must be demoted first"));
+
+        mockMvc.perform(delete("/api/admin/users/4"))
+                .andExpect(status().isConflict());
+
+        verify(sessionService, never()).expireSessionsFor(anyLong());
+        verify(auditService).record(eq(AuditService.ADMIN_ACTION_REFUSED), eq(3L), eq("admin@example.com"),
+                eq(4L), contains("tried to delete user 4"));
     }
 
 }
