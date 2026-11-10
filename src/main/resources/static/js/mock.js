@@ -274,6 +274,9 @@ const removeAccount = account => {
     for (const itinerary of ownedItineraries) removeItinerary(itinerary);
 
     delete PREFERENCES[account.id];
+    // declared further down, which is fine since this only runs once the whole file has loaded
+    const theirChanges = ADMIN_CHANGES.filter(change => change.userId === account.id);
+    for (const change of theirChanges) ADMIN_CHANGES.splice(ADMIN_CHANGES.indexOf(change), 1);
     USERS.splice(USERS.indexOf(account), 1);
 };
 
@@ -350,6 +353,7 @@ const clearImpacts = (itineraryId, belongs, cause) => {
         record("IMPACT_CLEARED", me.id, me.email, ownerId, clearedDetails(itineraryId, impact, cause));
         removeImpact(itineraryId, impact);
     }
+    return stale.length;
 };
 
 // like the backend's checks on dates sent to the admin console
@@ -357,6 +361,31 @@ const endsBeforeItStarts = ({ dateStart, dateEnd }) => dateStart && dateEnd && d
 
 // recorded against the owner, so it shows up on their admin page
 const recordByAdmin = (action, ownerId, details) => record(action, me.id, me.email, ownerId, `${details} (by admin)`);
+
+// what the traveller is told, like the backend's AdminChangeService. an admin's own trips are left out
+const ADMIN_CHANGES = [];
+const tellOwner = (ownerId, message) => {
+    if (ownerId == null || ownerId === me.id) return;
+    const nextId = Math.max(0, ...ADMIN_CHANGES.map(change => change.id)) + 1;
+    ADMIN_CHANGES.push({ id: nextId, userId: ownerId, message, createdAt: new Date().toISOString(), readAt: null });
+};
+
+// the same wording as AdminDataController
+const tripNameOf = itineraryId => ITINERARIES.find(itinerary => itinerary.id === Number(itineraryId))?.name ?? "?";
+const activityOnTrip = activity => `the activity '${activity.name}' on '${tripNameOf(activity.itineraryId)}'`;
+const placeOfImpact = (itineraryId, impact) => impact.activityId == null
+    ? `your trip '${tripNameOf(itineraryId)}'`
+    : `the activity '${impact.activityName}' on '${tripNameOf(itineraryId)}'`;
+const newsNameOf = impact => NEWS[impact.newsId]?.title ? `'${NEWS[impact.newsId].title}'` : "article";
+const clearedNote = count => {
+    if (!count) return "";
+    const checks = count === 1 ? "1 news check on it was cleared" : `${count} news checks on it were cleared`;
+    return ` ${checks}, and it will be checked against the news again.`;
+};
+const markEditedByAdmin = itineraryId => {
+    const itinerary = ITINERARIES.find(candidate => candidate.id === Number(itineraryId));
+    if (itinerary) itinerary.adminEditedAt = new Date().toISOString();
+};
 
 export const mockApi = {
     // like the backend: a disabled account gets the same answer as a wrong password, so nothing is given away
@@ -592,11 +621,13 @@ export const mockApi = {
 
         const nextId = Math.max(0, ...ITINERARIES.map(itinerary => itinerary.id)) + 1;
         const itinerary = makeItinerary(nextId, Number(userId), name, country.name, dateStart, dateEnd);
+        itinerary.adminEditedAt = new Date().toISOString();
         ITINERARIES.push(itinerary);
         recordByAdmin("ITINERARY_CREATED", itinerary.userId, `itinerary ${itinerary.id} '${itinerary.name}'`);
+        tellOwner(itinerary.userId, `An admin added the trip '${itinerary.name}'.`);
         return respondWith(itinerary);
     },
-    adminUpdateItinerary: (id, { name, countryId, dateStart, dateEnd }) => {
+    adminUpdateItinerary: (id, { name, countryId, dateStart, dateEnd, keepImpacts }) => {
         const notAdmin = requireAdmin();
         if (notAdmin) return notAdmin;
 
@@ -606,17 +637,22 @@ export const mockApi = {
         if (!country) return fail(400, `no country with id ${countryId}`);
         if (endsBeforeItStarts({ dateStart, dateEnd })) return fail(400, "the end cannot be before the start");
 
-        const judgedFieldsChanged = country.id !== itinerary.countryId
-            || dateStart !== itinerary.dateStart
-            || dateEnd !== itinerary.dateEnd;
-        // activity verdicts were judged on the activity alone, so only the whole trip ones go
-        if (judgedFieldsChanged) {
-            const cause = `itinerary ${itinerary.id} '${name}' changed country or dates`;
-            clearImpacts(itinerary.id, impact => impact.activityId == null, cause);
+        const countryChanged = country.id !== itinerary.countryId;
+        const renamed = name !== itinerary.name;
+        const datesChanged = dateStart !== itinerary.dateStart || dateEnd !== itinerary.dateEnd;
+        // like ItineraryServiceImpl: a new name or dates only clear the whole trip verdicts, a new
+        // country clears the activity ones too, unless the admin chose to keep them
+        let clearedCount = 0;
+        if ((countryChanged || renamed || datesChanged) && !keepImpacts) {
+            const cause = `itinerary ${itinerary.id} '${name}' changed name, country or dates`;
+            const isOutOfDate = impact => countryChanged || impact.activityId == null;
+            clearedCount = clearImpacts(itinerary.id, isOutOfDate, cause);
         }
 
         Object.assign(itinerary, { name, dateStart, dateEnd, countryId: country.id, countryName: country.name });
+        markEditedByAdmin(itinerary.id);
         recordByAdmin("ITINERARY_UPDATED", itinerary.userId, `itinerary ${itinerary.id} '${itinerary.name}'`);
+        tellOwner(itinerary.userId, `An admin edited your trip '${itinerary.name}'.${clearedNote(clearedCount)}`);
         return respondWith(itinerary);
     },
     adminDeleteItinerary: id => {
@@ -628,6 +664,7 @@ export const mockApi = {
 
         removeItinerary(itinerary);
         recordByAdmin("ITINERARY_DELETED", itinerary.userId, `itinerary ${itinerary.id} '${itinerary.name}'`);
+        tellOwner(itinerary.userId, `An admin deleted your trip '${itinerary.name}'.`);
         return respondWith(null);
     },
     adminActivities: itineraryId => {
@@ -657,10 +694,12 @@ export const mockApi = {
         const nextId = Math.max(0, ...ACTIVITIES.map(activity => activity.id)) + 1;
         const activity = { ...makeActivity(nextId, Number(itineraryId), name, address, dateStart, dateEnd), category };
         ACTIVITIES.push(activity);
+        markEditedByAdmin(activity.itineraryId);
         recordByAdmin("ACTIVITY_CREATED", ownerId, `activity ${activity.id} '${activity.name}'`);
+        tellOwner(ownerId, `An admin added ${activityOnTrip(activity)}.`);
         return respondWith(activity);
     },
-    adminUpdateActivity: (id, { name, address, dateStart, dateEnd, category }) => {
+    adminUpdateActivity: (id, { name, address, dateStart, dateEnd, category, keepImpacts }) => {
         const notAdmin = requireAdmin();
         if (notAdmin) return notAdmin;
 
@@ -671,13 +710,16 @@ export const mockApi = {
         const judgedFieldsChanged = name !== activity.name
             || (address || null) !== (activity.address || null)
             || dateStart !== activity.dateStart;
-        if (judgedFieldsChanged) {
+        let clearedCount = 0;
+        if (judgedFieldsChanged && !keepImpacts) {
             const cause = `activity ${activity.id} '${name}' changed name, address or start`;
-            clearImpacts(activity.itineraryId, impact => impact.activityId === activity.id, cause);
+            clearedCount = clearImpacts(activity.itineraryId, impact => impact.activityId === activity.id, cause);
         }
 
         Object.assign(activity, { name, address, dateStart, dateEnd, category });
+        markEditedByAdmin(activity.itineraryId);
         recordByAdmin("ACTIVITY_UPDATED", ownerOfItinerary(activity.itineraryId), `activity ${activity.id} '${activity.name}'`);
+        tellOwner(ownerOfItinerary(activity.itineraryId), `An admin edited ${activityOnTrip(activity)}.${clearedNote(clearedCount)}`);
         return respondWith(activity);
     },
     // the impacts on it go too, with their alerts and recommendations
@@ -692,7 +734,9 @@ export const mockApi = {
         for (const impact of onActivity) removeImpact(activity.itineraryId, impact);
 
         ACTIVITIES.splice(ACTIVITIES.indexOf(activity), 1);
+        markEditedByAdmin(activity.itineraryId);
         recordByAdmin("ACTIVITY_DELETED", ownerOfItinerary(activity.itineraryId), `activity ${activity.id} '${activity.name}'`);
+        tellOwner(ownerOfItinerary(activity.itineraryId), `An admin deleted ${activityOnTrip(activity)}.`);
         return respondWith(null);
     },
     adminImpacts: userId => {
@@ -744,6 +788,7 @@ export const mockApi = {
             ALERTS.push({ id: nextAlertId, impactId: impact.id, createdAt: new Date().toISOString(), readAt: null });
         }
         recordByAdmin("IMPACT_CREATED", ownerId, `impact ${impact.id} (${impacted ? "impacted" : "not impacted"})`);
+        tellOwner(ownerId, `An admin linked the news ${newsNameOf(impact)} to ${placeOfImpact(itineraryId, impact)}.`);
         return respondWith(adminImpact(Number(itineraryId), impact));
     },
     adminUpdateImpact: (id, { impacted, reason, rejected }) => {
@@ -758,6 +803,8 @@ export const mockApi = {
 
         Object.assign(entry.impact, { impacted, reason, rejected: Boolean(rejected) });
         recordByAdmin("IMPACT_UPDATED", ownerOfItinerary(entry.itineraryId), `impact ${entry.impact.id} (${impacted ? "impacted" : "not impacted"})`);
+        tellOwner(ownerOfItinerary(entry.itineraryId),
+            `An admin changed how the news ${newsNameOf(entry.impact)} affects ${placeOfImpact(entry.itineraryId, entry.impact)}.`);
         return respondWith(adminImpact(entry.itineraryId, entry.impact));
     },
     adminDeleteImpact: id => {
@@ -769,6 +816,8 @@ export const mockApi = {
 
         removeImpact(entry.itineraryId, entry.impact);
         recordByAdmin("IMPACT_DELETED", ownerOfItinerary(entry.itineraryId), `impact ${entry.impact.id}`);
+        tellOwner(ownerOfItinerary(entry.itineraryId),
+            `An admin removed the news ${newsNameOf(entry.impact)} from ${placeOfImpact(entry.itineraryId, entry.impact)}.`);
         return respondWith(null);
     },
     adminRecommendations: userId => {
@@ -800,6 +849,7 @@ export const mockApi = {
         RECOMMENDATIONS[entry.itineraryId].push(recommendation);
 
         recordByAdmin("RECOMMENDATION_CREATED", ownerOfItinerary(entry.itineraryId), `recommendation ${recommendation.id} (${action})`);
+        tellOwner(ownerOfItinerary(entry.itineraryId), `An admin added a suggestion for ${placeOfImpact(entry.itineraryId, entry.impact)}.`);
         return respondWith(adminRecommendation(recommendation));
     },
     adminUpdateRecommendation: (id, { severity, action, advice, optionId, status }) => {
@@ -827,6 +877,7 @@ export const mockApi = {
         });
 
         recordByAdmin("RECOMMENDATION_UPDATED", ownerOfItinerary(entry.itineraryId), `recommendation ${recommendation.id} (${action})`);
+        tellOwner(ownerOfItinerary(entry.itineraryId), `An admin changed a suggestion for ${placeOfImpact(entry.itineraryId, recommendation)}.`);
         return respondWith(adminRecommendation(recommendation));
     },
     adminDeleteRecommendation: id => {
@@ -839,6 +890,7 @@ export const mockApi = {
         const list = RECOMMENDATIONS[entry.itineraryId];
         list.splice(list.indexOf(entry.recommendation), 1);
         recordByAdmin("RECOMMENDATION_DELETED", ownerOfItinerary(entry.itineraryId), `recommendation ${entry.recommendation.id} (${entry.recommendation.action})`);
+        tellOwner(ownerOfItinerary(entry.itineraryId), `An admin removed a suggestion for ${placeOfImpact(entry.itineraryId, entry.recommendation)}.`);
         return respondWith(null);
     },
     // like the backend: not on yourself, and the last enabled admin cannot be made a user
@@ -916,6 +968,27 @@ export const mockApi = {
         if (!alert || !visibleAlert(alert)) return fail(404, "Alert not found.");
         alert.readAt ??= new Date().toISOString();
         return respondWith(visibleAlert(alert));
+    },
+    // like the backend: the newest 20 of this user's admin changes, and how many are unread
+    adminChanges: () => {
+        const notLoggedIn = requireLogin();
+        if (notLoggedIn) return notLoggedIn;
+
+        const mine = newestFirst(ADMIN_CHANGES.filter(change => change.userId === me.id));
+        const unreadCount = mine.filter(change => change.readAt == null).length;
+        return respondWith({ content: mine.slice(0, 20), unreadCount });
+    },
+    markAdminChangesRead: (upToId = null) => {
+        const notLoggedIn = requireLogin();
+        if (notLoggedIn) return notLoggedIn;
+
+        const now = new Date().toISOString();
+        const mine = ADMIN_CHANGES.filter(change => change.userId === me.id);
+        for (const change of mine) {
+            const isCovered = upToId == null || change.id <= upToId;
+            if (isCovered) change.readAt ??= now;
+        }
+        return respondWith({ unreadCount: mine.filter(change => change.readAt == null).length });
     },
     // like the backend: every unread alert of this user up to upToId, whichever page it is on,
     // and the unreadCount left afterwards since newer alerts stay unread

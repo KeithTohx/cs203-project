@@ -4,7 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.inOrder;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -18,14 +19,14 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mockito.InOrder;
+import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 import csd.tripsense.activity.Activity;
-import csd.tripsense.activity.ActivityCreatedEvent;
+import csd.tripsense.activity.ActivityCategory;
 import csd.tripsense.activity.ActivityRepository;
 import csd.tripsense.activity.ActivityService;
 import csd.tripsense.alert.Alert;
@@ -35,7 +36,6 @@ import csd.tripsense.country.CountryRepository;
 import csd.tripsense.impact.Impact;
 import csd.tripsense.impact.ImpactRepository;
 import csd.tripsense.itinerary.Itinerary;
-import csd.tripsense.itinerary.ItineraryCreatedEvent;
 import csd.tripsense.itinerary.ItineraryRepository;
 import csd.tripsense.itinerary.ItineraryService;
 import csd.tripsense.news.News;
@@ -173,6 +173,7 @@ class AdminDataServiceImplTest {
         Impact impact = new Impact();
         impact.setId(id);
         impact.setUser(owner);
+        impact.setItinerary(new Itinerary());
         when(impacts.findById(id)).thenReturn(Optional.of(impact));
         return impact;
     }
@@ -273,47 +274,41 @@ class AdminDataServiceImplTest {
     }
 
     @Test
-    @DisplayName("Should move the activities to the new country when an itinerary changes country")
-    void updateItinerary_NewCountry_ActivitiesFollow() {
+    @DisplayName("Should edit an itinerary through the traveller path, with the new details and the keep choice")
+    void updateItinerary_GoesThroughTheTravellerPath() {
         Itinerary trip = savedTrip(10L, owner);
-        Activity activity = savedActivity(20L, trip);
-        when(activities.findByItineraryIdOrderByDateStart(10L)).thenReturn(List.of(activity));
+        when(itineraryService.updateItinerary(eq(10L), any(Itinerary.class), anyBoolean())).thenReturn(trip);
+        LocalDateTime newStart = LocalDateTime.of(2026, 12, 2, 0, 0);
 
-        Country thailand = new Country();
-        thailand.setId(2L);
-        when(countries.findById(2L)).thenReturn(Optional.of(thailand));
+        service.updateItinerary(10L, new AdminItineraryRequest("  Beach Trip ", 1L, newStart, null, true));
 
-        service.updateItinerary(10L, new AdminItineraryRequest("Beach Trip", 2L, null, null));
-
-        assertThat(activity.getCountry()).isSameAs(thailand);
-        verify(activities).saveAll(List.of(activity));
+        // the itinerary service decides what the edit makes out of date, see ItineraryServiceImplTest
+        ArgumentCaptor<Itinerary> details = ArgumentCaptor.forClass(Itinerary.class);
+        verify(itineraryService).updateItinerary(eq(10L), details.capture(), eq(true));
+        assertThat(details.getValue().getName()).isEqualTo("Beach Trip");
+        assertThat(details.getValue().getCountry()).isSameAs(japan);
+        assertThat(details.getValue().getDateStart()).isEqualTo(newStart);
+        verify(itineraries, never()).save(any());
+        verify(impacts, never()).deleteAll(any());
     }
 
     @Test
-    @DisplayName("Should drop the whole trip verdicts made for the old country and judge the trip again")
-    void updateItinerary_NewCountry_ClearsWholeTripVerdictsAndJudgesAgain() {
+    @DisplayName("Should clear the verdicts unless the admin asks to keep them")
+    void updateItinerary_WithoutKeepImpacts_DoesNotKeep() {
         Itinerary trip = savedTrip(10L, owner);
-        Impact wholeTrip = impactOn(null);
-        Impact onActivity = impactOn(savedActivity(20L, trip));
-        when(impacts.findByItineraryId(10L)).thenReturn(List.of(wholeTrip, onActivity));
+        when(itineraryService.updateItinerary(eq(10L), any(Itinerary.class), anyBoolean())).thenReturn(trip);
 
-        Country france = new Country();
-        france.setId(2L);
-        when(countries.findById(2L)).thenReturn(Optional.of(france));
+        service.updateItinerary(10L, new AdminItineraryRequest("Japan Ski Trip", 1L, null, null));
 
-        AdminEdit<Itinerary> edit = service.updateItinerary(10L, new AdminItineraryRequest("Japan Ski Trip", 2L, null, null));
-
-        // the activity verdict was judged on the activity alone, so it stays
-        InOrder order = inOrder(impacts, events);
-        order.verify(impacts).deleteAll(List.of(wholeTrip));
-        order.verify(events).publishEvent(new ItineraryCreatedEvent(10L));
-        assertThat(edit.clearedVerdicts()).hasSize(1);
+        verify(itineraryService).updateItinerary(eq(10L), any(Itinerary.class), eq(false));
     }
 
     @Test
-    @DisplayName("Should clear a verdict the traveller saw when the dates change, and sum up what they had been told")
-    void updateItinerary_NewDates_SumsUpWhatWasCleared() {
-        savedTrip(10L, owner);
+    @DisplayName("Should sum up the verdicts the edit cleared, while they were still there")
+    void updateItinerary_SumsUpWhatTheEditCleared() {
+        Itinerary trip = savedTrip(10L, owner);
+        when(itineraryService.updateItinerary(eq(10L), any(Itinerary.class), anyBoolean())).thenReturn(trip);
+
         Impact seen = impactOn(null);
         seen.setId(70L);
         seen.setUser(owner);
@@ -323,15 +318,17 @@ class AdminDataServiceImplTest {
         seen.setRejected(true);
         seen.setAlerts(List.of(new Alert(seen)));
         seen.setRecommendations(List.of(new Recommendation()));
-        when(impacts.findByItineraryId(10L)).thenReturn(List.of(seen));
+        Impact stillCurrent = impactOn(savedActivity(20L, trip));
+        stillCurrent.setId(71L);
+
+        // StaleVerdictCleaner deletes the stale one during the edit, so the second lookup misses it
+        when(impacts.findByItineraryId(10L)).thenReturn(List.of(seen, stillCurrent), List.of(stillCurrent));
 
         AdminEdit<Itinerary> edit = service.updateItinerary(10L, new AdminItineraryRequest("Japan Ski Trip", 1L,
                 LocalDateTime.of(2026, 12, 2, 0, 0), null));
 
-        verify(impacts).deleteAll(List.of(seen));
-        verify(events).publishEvent(new ItineraryCreatedEvent(10L));
-
         // the row is gone, so this summary is all the audit log will have
+        assertThat(edit.clearedVerdicts()).hasSize(1);
         ClearedVerdict cleared = edit.clearedVerdicts().get(0);
         assertThat(cleared.impactId()).isEqualTo(70L);
         assertThat(cleared.ownerId()).isEqualTo(4L);
@@ -343,14 +340,16 @@ class AdminDataServiceImplTest {
     }
 
     @Test
-    @DisplayName("Should keep the verdicts when only the itinerary's name changes")
-    void updateItinerary_OnlyName_KeepsVerdicts() {
-        savedTrip(10L, owner);
+    @DisplayName("Should report nothing cleared when every verdict is still there after the edit")
+    void updateItinerary_NothingCleared_ReportsNothing() {
+        Itinerary trip = savedTrip(10L, owner);
+        when(itineraryService.updateItinerary(eq(10L), any(Itinerary.class), anyBoolean())).thenReturn(trip);
+        Impact verdict = impactOn(null);
+        verdict.setId(70L);
+        when(impacts.findByItineraryId(10L)).thenReturn(List.of(verdict));
 
-        AdminEdit<Itinerary> edit = service.updateItinerary(10L, new AdminItineraryRequest("Renamed Trip", 1L, null, null));
+        AdminEdit<Itinerary> edit = service.updateItinerary(10L, new AdminItineraryRequest("Japan Ski Trip", 1L, null, null));
 
-        verify(impacts, never()).deleteAll(any());
-        verify(events, never()).publishEvent(any(Object.class));
         assertThat(edit.clearedVerdicts()).isEmpty();
     }
 
@@ -394,34 +393,72 @@ class AdminDataServiceImplTest {
     }
 
     @Test
-    @DisplayName("Should drop an activity's verdicts and judge it again when its address changes")
-    void updateActivity_NewAddress_ClearsVerdictsAndJudgesAgain() {
+    @DisplayName("Should edit an activity through the traveller path, keeping it on its trip")
+    void updateActivity_GoesThroughTheTravellerPath() {
         Activity activity = savedActivity(20L, savedTrip(10L, owner));
+        when(activityService.updateActivity(eq(20L), any(Activity.class), anyBoolean())).thenReturn(activity);
+
+        service.updateActivity(20L, new AdminActivityRequest("Ski at Niseko", "  Hakuba ", null, null, null, true));
+
+        // no itinerary on the details, so the activity service leaves it where it is
+        ArgumentCaptor<Activity> details = ArgumentCaptor.forClass(Activity.class);
+        verify(activityService).updateActivity(eq(20L), details.capture(), eq(true));
+        assertThat(details.getValue().getItinerary()).isNull();
+        assertThat(details.getValue().getAddress()).isEqualTo("Hakuba");
+        verify(activities, never()).save(any());
+        verify(impacts, never()).deleteAll(any());
+    }
+
+    @Test
+    @DisplayName("Should set the category itself, since the activity service leaves it alone")
+    void updateActivity_SetsTheCategory() {
+        Activity activity = savedActivity(20L, savedTrip(10L, owner));
+        when(activityService.updateActivity(eq(20L), any(Activity.class), anyBoolean())).thenReturn(activity);
+
+        Activity updated = service.updateActivity(20L,
+                new AdminActivityRequest("Ski at Niseko", null, null, null, ActivityCategory.values()[0])).updated();
+
+        assertThat(updated.getCategory()).isEqualTo(ActivityCategory.values()[0]);
+    }
+
+    @Test
+    @DisplayName("Should sum up the activity verdicts the edit cleared")
+    void updateActivity_SumsUpWhatTheEditCleared() {
+        Activity activity = savedActivity(20L, savedTrip(10L, owner));
+        when(activityService.updateActivity(eq(20L), any(Activity.class), anyBoolean())).thenReturn(activity);
         Impact unseen = impactOn(activity);
+        unseen.setId(70L);
         Impact rejected = impactOn(activity);
+        rejected.setId(71L);
         rejected.setRejected(true);
-        List<Impact> itsImpacts = List.of(unseen, rejected);
-        when(impacts.findByActivityId(20L)).thenReturn(itsImpacts);
+        when(impacts.findByActivityId(20L)).thenReturn(List.of(unseen, rejected), List.of());
 
         AdminEdit<Activity> edit = service.updateActivity(20L,
                 new AdminActivityRequest("Ski at Niseko", "Hakuba", null, null, null));
 
-        InOrder order = inOrder(impacts, events);
-        order.verify(impacts).deleteAll(itsImpacts);
-        order.verify(events).publishEvent(new ActivityCreatedEvent(20L));
-        assertThat(edit.clearedVerdicts()).hasSize(2);
+        assertThat(edit.clearedVerdicts()).extracting(ClearedVerdict::impactId).containsExactly(70L, 71L);
     }
 
     @Test
-    @DisplayName("Should keep an activity's verdicts when nothing the model was asked about changes")
-    void updateActivity_OnlyEndTime_KeepsVerdicts() {
-        savedActivity(20L, savedTrip(10L, owner));
+    @DisplayName("Should mark the trip as changed by an admin when an admin edits, adds or deletes its activities")
+    void activityChanges_MarkTheTripAsEditedByAdmin() {
+        Itinerary trip = savedTrip(10L, owner);
+        savedActivity(20L, trip);
 
-        service.updateActivity(20L, new AdminActivityRequest("Ski at Niseko", null, null,
-                LocalDateTime.of(2026, 12, 16, 17, 0), null));
+        service.deleteActivity(20L);
 
-        verify(impacts, never()).deleteAll(any());
-        verify(events, never()).publishEvent(any(Object.class));
+        assertThat(trip.getAdminEditedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("Should mark the trip as changed by an admin when an admin edits it")
+    void updateItinerary_MarksTheTripAsEditedByAdmin() {
+        Itinerary trip = savedTrip(10L, owner);
+        when(itineraryService.updateItinerary(eq(10L), any(Itinerary.class), anyBoolean())).thenReturn(trip);
+
+        service.updateItinerary(10L, new AdminItineraryRequest("Japan Ski Trip v2", 1L, null, null));
+
+        assertThat(trip.getAdminEditedAt()).isNotNull();
     }
 
     // ---------- impacts ----------
@@ -444,6 +481,36 @@ class AdminDataServiceImplTest {
         assertThat(created.getRejected()).isFalse();
         assertThat(created.getAlertEligible()).isFalse();
         verify(events, never()).publishEvent(any(Object.class));
+    }
+
+    @Test
+    @DisplayName("Should stamp an admin's new verdict with the activity's current revision, so it counts as current")
+    void createImpact_StampsTheCurrentRevision() {
+        Itinerary trip = savedTrip(10L, owner);
+        trip.bumpRevision();
+        Activity activity = savedActivity(20L, trip);
+        activity.bumpRevision();
+        activity.bumpRevision();
+        savedNews(30L);
+
+        Impact created = service.createImpact(4L,
+                new AdminImpactRequest(30L, 10L, 20L, true, "Lifts are closed", null, false));
+
+        assertThat(created.isJudgedOnCurrentDetails()).isTrue();
+        assertThat(created.getVerdictKey()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("Should give an edited verdict a new key, so advice drafted from the old one is out of date")
+    void updateImpact_GivesANewVerdictKey() {
+        Impact impact = savedImpact(70L);
+        impact.setReason("Lifts are closed");
+        impact.setVerdictKey("old-key");
+
+        Impact updated = service.updateImpact(70L, new AdminImpactUpdateRequest(false, "Lifts reopened", false));
+
+        assertThat(updated.getVerdictKey()).isNotEqualTo("old-key");
+        assertThat(updated.isJudgedOnCurrentDetails()).isTrue();
     }
 
     @Test

@@ -16,5 +16,18 @@ public record AdminItineraryRequest(
         Long countryId,
 
         LocalDateTime dateStart,
-        LocalDateTime dateEnd) {
+        LocalDateTime dateEnd,
+
+        // on an edit, true keeps the impacts even when the name, country or dates change, eg when the
+        // edit only fixes a typo. new news is still checked. ignored on create
+        Boolean keepImpacts) {
+
+    // without keepImpacts, so an edit clears what it makes out of date
+    public AdminItineraryRequest(String name, Long countryId, LocalDateTime dateStart, LocalDateTime dateEnd) {
+        this(name, countryId, dateStart, dateEnd, null);
+    }
+
+    public boolean keepsImpacts() {
+        return Boolean.TRUE.equals(keepImpacts);
+    }
 }

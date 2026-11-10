@@ -15,6 +15,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.time.LocalDateTime;
 import java.util.List;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -23,10 +24,13 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.method.annotation.AuthenticationPrincipalArgumentResolver;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityCategory;
 import csd.tripsense.impact.Impact;
@@ -46,6 +50,7 @@ class RecommendationControllerMainTest {
 
     @Mock private csd.tripsense.itinerary.ItineraryService itineraryService;
     @Mock private csd.tripsense.itinerary.ItineraryAccess access;
+    @Mock private csd.tripsense.audit.AuditService auditService;
 
     @InjectMocks
     private RecommendationController controller;
@@ -55,12 +60,21 @@ class RecommendationControllerMainTest {
     @BeforeEach
     void setUp() {
         // standalone = only this controller, no Spring context, no database. the resolver is
-        // needed so @AuthenticationPrincipal binds instead of being treated as a request body,
-        // nobody is logged in here so it hands the controller a null and the mocked service
-        // decides what comes back
+        // needed so @AuthenticationPrincipal binds instead of being treated as a request body.
+        // someone is logged in, as in the running app, so a decision can be traced to them, and
+        // the mocked service decides what comes back
+        CurrentUser john = new CurrentUser(1L, "john@example.com", "john", null, "USER", true);
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(john, null, john.getAuthorities()));
+
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setCustomArgumentResolvers(new AuthenticationPrincipalArgumentResolver())
                 .build();
+    }
+
+    @AfterEach
+    void logOut() {
+        SecurityContextHolder.clearContext();
     }
 
     // ---------------------------------------------------------------- helpers

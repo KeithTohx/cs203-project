@@ -2,8 +2,11 @@ package csd.tripsense.activity;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.context.ApplicationEventPublisher;
 
 import csd.tripsense.itinerary.Itinerary;
@@ -43,6 +46,11 @@ public class ActivityServiceImpl implements ActivityService {
     }
 
     @Override
+    public Optional<Long> findRevision(Activity activity) {
+        return activities.findRevision(activity.getId(), activity.getIdentityKey());
+    }
+
+    @Override
     public Activity addActivity(Activity activity) {
         Itinerary itinerary = itineraryService.getItineraryById(activity.getItinerary().getId());
         activity.setItinerary(itinerary);
@@ -52,9 +60,23 @@ public class ActivityServiceImpl implements ActivityService {
         return saved;
     }
 
+    // one transaction, so the new revision and the cleared verdicts go with the edit, and the
+    // re-evaluation only starts once all of it has committed
     @Override
+    @Transactional
     public Activity updateActivity(Long id, Activity newActivityInfo) {
+        return updateActivity(id, newActivityInfo, false);
+    }
+
+    @Override
+    @Transactional
+    public Activity updateActivity(Long id, Activity newActivityInfo, boolean keepVerdicts) {
         return activities.findById(id).map(activity -> {
+            Long oldItineraryId = itineraryId(activity.getItinerary());
+            String oldName = activity.getName();
+            String oldAddress = activity.getAddress();
+            LocalDateTime oldStart = activity.getDateStart();
+
             Itinerary itinerary = newActivityInfo.getItinerary() == null
                     ? activity.getItinerary()
                     : itineraryService.getItineraryById(newActivityInfo.getItinerary().getId());
@@ -64,8 +86,32 @@ public class ActivityServiceImpl implements ActivityService {
             activity.setAddress(newActivityInfo.getAddress());
             activity.setDateStart(newActivityInfo.getDateStart());
             activity.setDateEnd(newActivityInfo.getDateEnd());
-            return activities.save(activity);
+
+            // the model was asked about the name, address and start. a move to another trip also
+            // counts, since its verdicts still point at the old itinerary and may be about news
+            // from another country
+            boolean judgedFieldsChanged = !Objects.equals(oldName, activity.getName())
+                    || !Objects.equals(oldAddress, activity.getAddress())
+                    || !Objects.equals(oldStart, activity.getDateStart());
+            boolean movedTrip = !Objects.equals(oldItineraryId, itineraryId(activity.getItinerary()));
+            boolean judgedDetailsChanged = judgedFieldsChanged || movedTrip;
+            if (judgedDetailsChanged) {
+                activity.bumpRevision();
+            }
+
+            Activity saved = activities.save(activity);
+            if (judgedDetailsChanged) {
+                events.publishEvent(new ActivityEditedEvent(saved.getId(), keepVerdicts));
+            }
+            return saved;
         }).orElseThrow(() -> new ActivityNotFoundException(id));
+    }
+
+    private static Long itineraryId(Itinerary itinerary) {
+        if (itinerary == null) {
+            return null;
+        }
+        return itinerary.getId();
     }
 
     @Override

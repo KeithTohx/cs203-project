@@ -36,8 +36,9 @@ public interface AdminDataService {
     @PreAuthorize("hasRole('ADMIN')")
     Itinerary createItinerary(Long userId, AdminItineraryRequest request);
 
-    // a new country or new dates clear the whole trip verdicts, which come back in the result
-    // for the audit log, and the trip is judged again
+    // the same edit a traveller makes (ItineraryService.updateItinerary): a new name or dates clear
+    // the whole trip verdicts, and a new country clears the activity ones as well, unless the request
+    // keeps them. what was cleared comes back in the result for the audit log
     @PreAuthorize("hasRole('ADMIN')")
     AdminEdit<Itinerary> updateItinerary(Long itineraryId, AdminItineraryRequest request);
 
@@ -58,7 +59,8 @@ public interface AdminDataService {
     @PreAuthorize("hasRole('ADMIN')")
     Activity createActivity(Long itineraryId, AdminActivityRequest request);
 
-    // same for a new name, address or start, which clear the verdicts on this activity
+    // same as above through ActivityService.updateActivity: a new name, address or start clears
+    // the verdicts on this activity
     @PreAuthorize("hasRole('ADMIN')")
     AdminEdit<Activity> updateActivity(Long activityId, AdminActivityRequest request);
 

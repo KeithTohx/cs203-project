@@ -93,6 +93,9 @@ public class ImpactEvaluationJob {
                         impactService.evaluateItineraryForNews(itinerary, news);
                         judged++;
                         failures = 0;
+                    } catch (EditedDuringEvaluationException e) {
+                        // not the model failing, the edit has queued its own run for the new details
+                        skipped++;
                     } catch (Exception e) {
                         skipped++;
                         if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }
@@ -105,6 +108,9 @@ public class ImpactEvaluationJob {
                         impactService.evaluateActivityForNews(activity, news);
                         judged++;
                         failures = 0;
+                    } catch (EditedDuringEvaluationException e) {
+                        // not the model failing, the edit has queued its own run for the new details
+                        skipped++;
                     } catch (Exception e) {
                         skipped++;
                         if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }

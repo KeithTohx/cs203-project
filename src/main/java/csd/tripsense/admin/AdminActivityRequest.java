@@ -20,5 +20,17 @@ public record AdminActivityRequest(
         LocalDateTime dateEnd,
 
         // optional, the recommendation rules skip activities without one
-        ActivityCategory category) {
+        ActivityCategory category,
+
+        // same as on an itinerary: true keeps the impacts on a name, address or start change
+        Boolean keepImpacts) {
+
+    public AdminActivityRequest(String name, String address, LocalDateTime dateStart, LocalDateTime dateEnd,
+                                ActivityCategory category) {
+        this(name, address, dateStart, dateEnd, category, null);
+    }
+
+    public boolean keepsImpacts() {
+        return Boolean.TRUE.equals(keepImpacts);
+    }
 }

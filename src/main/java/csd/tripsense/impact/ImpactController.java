@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import csd.tripsense.audit.AuditService;
 import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.chat.ChatService;
 import csd.tripsense.itinerary.ItineraryAccess;
@@ -28,14 +29,16 @@ public class ImpactController {
     private ItineraryAccess access;
     private final ItineraryService itineraries;
     private final ActivityService activities;
+    private final AuditService auditService;
 
     public ImpactController(ImpactService impactService, ChatService chatService, ItineraryAccess access,
-                            ItineraryService itineraries, ActivityService activities) {
+                            ItineraryService itineraries, ActivityService activities, AuditService auditService) {
         this.impactService = impactService;
         this.chatService = chatService;
         this.access = access;
         this.itineraries = itineraries;
         this.activities = activities;
+        this.auditService = auditService;
     }
 
     /**
@@ -109,8 +112,12 @@ public class ImpactController {
      */
     @DeleteMapping("/impact/{id}")
     public void deleteImpact(@PathVariable Long id, @AuthenticationPrincipal CurrentUser me){
-        access.requireAccess(impactService.getImpact(id), me);
+        Impact impact = access.requireAccess(impactService.getImpact(id), me);
+        Long ownerId = impact.ownerId();
+        String description = describe(impact);   // read before it is gone
+
         impactService.deleteImpact(id);
+        auditService.record(AuditService.IMPACT_DELETED, me.getId(), me.getEmail(), ownerId, description);
     }
 
     /**
@@ -126,8 +133,16 @@ public class ImpactController {
                                        @AuthenticationPrincipal CurrentUser me) {
         Impact impact = impactService.getImpact(id);
         access.requireAccess(impact, me);
+        boolean wasRejected = Boolean.TRUE.equals(impact.getRejected());
 
         Impact updated = impactService.setRejected(id, request.rejected());
+
+        // only a real change is an override, sending the same answer twice is not worth a line
+        boolean changed = wasRejected != request.rejected();
+        if (changed) {
+            String action = request.rejected() ? AuditService.IMPACT_REJECTED : AuditService.IMPACT_RESTORED;
+            auditService.record(action, me.getId(), me.getEmail(), updated.ownerId(), describe(updated));
+        }
         return ImpactResponse.from(updated);
     }
 
@@ -157,4 +172,17 @@ public class ImpactController {
         return chatService.ask(prompt);
     }
 
+    // what the AI decided and about what, so the audit entry still makes sense once the verdict is gone
+    private static String describe(Impact impact) {
+        String trip = impact.getItinerary() == null
+                ? "no itinerary"
+                : "itinerary " + impact.getItinerary().getId() + " '" + impact.getItinerary().getName() + "'";
+        String judged = impact.getActivity() == null
+                ? "whole trip"
+                : "activity '" + impact.getActivity().getName() + "'";
+        String verdict = Boolean.TRUE.equals(impact.getImpacted()) ? "affected" : "not affected";
+
+        return "impact " + impact.getId() + " on " + trip + ", " + judged
+                + ". AI said " + verdict + ": " + impact.getReason();
+    }
 }

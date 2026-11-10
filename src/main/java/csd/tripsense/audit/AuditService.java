@@ -43,13 +43,27 @@ public class AuditService {
     public static final String ACTIVITY_DELETED = "ACTIVITY_DELETED";
     public static final String IMPACT_CREATED = "IMPACT_CREATED";
     public static final String IMPACT_UPDATED = "IMPACT_UPDATED";
-    public static final String IMPACT_DELETED = "IMPACT_DELETED";
     // an out of date verdict an edit removed, kept apart from IMPACT_DELETED so the log shows
     // which verdicts went because the trip changed rather than because someone deleted them
     public static final String IMPACT_CLEARED = "IMPACT_CLEARED";
     public static final String RECOMMENDATION_CREATED = "RECOMMENDATION_CREATED";
     public static final String RECOMMENDATION_UPDATED = "RECOMMENDATION_UPDATED";
     public static final String RECOMMENDATION_DELETED = "RECOMMENDATION_DELETED";
+
+    // a person overriding what the AI decided. the details keep what the AI said, so the trail still
+    // shows what was overridden after the verdict or advice itself is gone
+    public static final String IMPACT_REJECTED = "IMPACT_REJECTED";
+    public static final String IMPACT_RESTORED = "IMPACT_RESTORED";
+    public static final String IMPACT_DELETED = "IMPACT_DELETED";
+    public static final String RECOMMENDATION_ACCEPTED = "RECOMMENDATION_ACCEPTED";
+    public static final String RECOMMENDATION_DISMISSED = "RECOMMENDATION_DISMISSED";
+    public static final String RECOMMENDATION_REOPENED = "RECOMMENDATION_REOPENED";
+    public static final String RECOMMENDATION_REGENERATED = "RECOMMENDATION_REGENERATED";
+
+    // an admin going past the rules that apply to everyone else: reading someone else's account, or
+    // trying an account change the safety rules refused (eg demoting the last admin)
+    public static final String ADMIN_ACCOUNT_VIEWED = "ADMIN_ACCOUNT_VIEWED";
+    public static final String ADMIN_ACTION_REFUSED = "ADMIN_ACTION_REFUSED";
 
     private static final Logger log = LoggerFactory.getLogger(AuditService.class);
 

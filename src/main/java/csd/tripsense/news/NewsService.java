@@ -57,4 +57,8 @@ public interface NewsService {
        */
       List<News> getNewsByCountrySince(Long countryId, LocalDateTime since);
 
+      // the articles with these ids that are about one country, however old. used to judge again
+      // the articles whose verdicts an edit cleared. ids that no longer exist are left out
+      List<News> getNewsByIdsAboutCountry(Collection<Long> newsIds, Long countryId);
+
 }

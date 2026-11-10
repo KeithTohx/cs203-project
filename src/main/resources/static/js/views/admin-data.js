@@ -92,6 +92,21 @@ const createCheckbox = (name, label, checked) => `
 
 const plainChoices = values => values.map(value => ({ value, label: value }));
 
+// only on an edit form, a new record has no impacts to keep
+const createKeepImpactsField = (record, whatClears) => {
+    if (!record) return "";
+
+    return `
+        <div class="span-all">
+            ${createCheckbox("keepImpacts", "Keep its impacts (for a small fix, like a typo)", false)}
+            <p class="meta hint">Otherwise changing ${escapeHtml(whatClears)} clears its impacts and checks it against the news again.</p>
+        </div>
+    `;
+};
+
+// false on a create form, which has no checkbox
+const keepsImpacts = inputs => Boolean(inputs.keepImpacts?.checked);
+
 const severityTag = severity => {
     const tagClass = { HIGH: "tag bad", MEDIUM: "tag warn", LOW: "tag" }[severity] ?? "tag";
     return `<span class="${tagClass}">${escapeHtml(severity)}</span>`;
@@ -385,6 +400,7 @@ const itineraryConfig = (userId, lookups, view, getState) => ({
             ${createSelect("countryId", "Country", countryChoices, itinerary?.countryId, { emptyLabel: "Pick a country", required: true })}
             ${createInput("dateStart", "Start date", `type="date" value="${toDateInput(itinerary?.dateStart)}"`)}
             ${createInput("dateEnd", "End date", `type="date" value="${toDateInput(itinerary?.dateEnd)}"`)}
+            ${createKeepImpactsField(itinerary, "the name, country or dates")}
         `;
     },
     readForm: (inputs, itinerary) => {
@@ -394,6 +410,7 @@ const itineraryConfig = (userId, lookups, view, getState) => ({
             countryId: Number(inputs.countryId.value),
             dateStart: keepIfUntouched(inputs.dateStart.value, itinerary?.dateStart, toDateInput, fromDateInput),
             dateEnd: keepIfUntouched(inputs.dateEnd.value, itinerary?.dateEnd, toDateInput, fromDateInput),
+            keepImpacts: keepsImpacts(inputs),
         };
     },
     create: body => api.adminAddItinerary(userId, body),
@@ -422,6 +439,7 @@ const activityConfig = view => ({
         ${createInput("dateStart", "Starts", `type="datetime-local" value="${toDateTimeInput(activity?.dateStart)}"`)}
         ${createInput("dateEnd", "Ends", `type="datetime-local" value="${toDateTimeInput(activity?.dateEnd)}"`)}
         ${createSelect("category", "Category", CATEGORIES, activity?.category, { emptyLabel: "None" })}
+        ${createKeepImpactsField(activity, "the name, address or start")}
     `,
     readForm: (inputs, activity) => {
         checkEndNotBeforeStart(inputs.dateStart.value, inputs.dateEnd.value);
@@ -431,6 +449,7 @@ const activityConfig = view => ({
             dateStart: keepIfUntouched(inputs.dateStart.value, activity?.dateStart, toDateTimeInput, fromDateTimeInput),
             dateEnd: keepIfUntouched(inputs.dateEnd.value, activity?.dateEnd, toDateTimeInput, fromDateTimeInput),
             category: inputs.category.value || null,
+            keepImpacts: keepsImpacts(inputs),
         };
     },
     create: body => api.adminAddActivity(view.selectedItineraryId, body),
@@ -834,9 +853,12 @@ export async function mountUserData(container, userId, onAuthLost, { onChange = 
         <h2 class="form-section">Trip data</h2>
         <p class="meta hint">
             Everything this account owns, for testing. Open an itinerary to see its activities, with the
-            impacts on each one under it. Changes are recorded in the activity below, and new itineraries
-            and activities are checked against recent news, like a traveller's. Changing a trip's country
-            or dates, or an activity's name, address or start, clears the impacts on it and checks it again.
+            impacts on each one under it. Changes are recorded in the activity below, and the traveller
+            gets an alert saying what an admin changed. New itineraries and activities are checked against
+            recent news, like a traveller's, and edits work the same as a traveller's too. Changing a trip's
+            name or dates clears its whole trip impacts, changing its country clears every impact on it, and
+            changing an activity's name, address or start clears the impacts on that activity, unless you
+            tick "Keep its impacts". Each is checked again.
             Each cleared impact, with its verdict and reason, is kept in the activity below.
         </p>
         ${createSectionCard("itineraries", "Itineraries", "Add itinerary")}

@@ -1,6 +1,8 @@
 package csd.tripsense.impact;
 
 import java.util.List;
+import java.util.Optional;
+
 import csd.tripsense.activity.Activity;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.news.News;
@@ -127,4 +129,19 @@ public interface ImpactService {
      * @throws RuntimeException if the model call fails
      */
     Impact evaluateActivityForNews(Activity activity, News news);
+
+    // whether this trip already has a whole trip verdict for this news, judged on the trip's
+    // current details. when it does, evaluateItineraryForNews returns it without asking the model,
+    // so a caller with a budget of model calls can pass over the pair without counting it
+    boolean hasCurrentVerdict(Itinerary itinerary, News news);
+
+    // same as above, but for one activity
+    boolean hasCurrentVerdict(Activity activity, News news);
+
+    // reloads an impact and checks it is still the verdict the caller read earlier, and that its
+    // trip or activity has not been edited since. the id is not enough on its own, since sqlite can
+    // give a deleted impact's id to the verdict that replaces it, so the verdict key is compared too.
+    // call it inside the transaction that saves whatever was worked out from the impact, so the
+    // answer still holds at the save. empty when the impact changed or is gone
+    Optional<Impact> findUnchanged(Impact seen);
 }

@@ -1,6 +1,7 @@
 package csd.tripsense.admin;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -32,6 +33,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.audit.AuditService;
+import csd.tripsense.notice.AdminChangeService;
 import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.country.Country;
 import csd.tripsense.impact.Impact;
@@ -50,6 +52,7 @@ class AdminDataControllerTest {
 
     private AdminDataService adminData;
     private AuditService auditService;
+    private AdminChangeService adminChanges;
     private MockMvc mockMvc;
 
     private final CurrentUser admin = new CurrentUser(3L, "admin@example.com", "admin", null, "ADMIN", true);
@@ -58,7 +61,8 @@ class AdminDataControllerTest {
     void setUp() {
         adminData = mock(AdminDataService.class);
         auditService = mock(AuditService.class);
-        mockMvc = MockMvcBuilders.standaloneSetup(new AdminDataController(adminData, auditService))
+        adminChanges = mock(AdminChangeService.class);
+        mockMvc = MockMvcBuilders.standaloneSetup(new AdminDataController(adminData, auditService, adminChanges))
                 .setControllerAdvice(new AdminDataExceptionHandler())
                 .setCustomArgumentResolvers(new AuthenticationPrincipalArgumentResolver())
                 .build();
@@ -245,6 +249,56 @@ class AdminDataControllerTest {
                 eq(4L), contains("itinerary 10"));
         verify(auditService).record(eq(AuditService.IMPACT_CLEARED), eq(3L), eq("admin@example.com"),
                 eq(4L), contains("impact 70 on news 30 'Rail strike': impacted, rejected by the traveller, had an alert"));
+    }
+
+    @Test
+    @DisplayName("Should tell the owner in their own words what an itinerary edit changed and cleared")
+    void updateItinerary_TellsOwner() throws Exception {
+        Itinerary updated = trip(10L, account(4L, "bob"));
+        ClearedVerdict cleared = new ClearedVerdict(70L, 4L, 30L, "Rail strike", true,
+                "Trains are not running", false, true, 0);
+        when(adminData.updateItinerary(eq(10L), any())).thenReturn(new AdminEdit<>(updated, List.of(cleared)));
+
+        mockMvc.perform(put("/api/admin/itineraries/10")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name": "Japan Ski Trip", "countryId": 2}
+                                """))
+                .andExpect(status().isOk());
+
+        // one notice for the whole edit, however many checks it cleared
+        verify(adminChanges).record(4L, 3L,
+                "An admin edited your trip 'Japan Ski Trip'. 1 news check on it was cleared, "
+                        + "and it will be checked against the news again.");
+    }
+
+    @Test
+    @DisplayName("Should pass keepImpacts through to the service")
+    void updateItinerary_KeepImpacts_IsPassedOn() throws Exception {
+        Itinerary updated = trip(10L, account(4L, "bob"));
+        when(adminData.updateItinerary(eq(10L), any())).thenReturn(new AdminEdit<>(updated, List.of()));
+
+        mockMvc.perform(put("/api/admin/itineraries/10")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name": "Japan Ski Trip", "countryId": 2, "keepImpacts": true}
+                                """))
+                .andExpect(status().isOk());
+
+        verify(adminData).updateItinerary(eq(10L), argThat(AdminItineraryRequest::keepsImpacts));
+        verify(adminChanges).record(4L, 3L, "An admin edited your trip 'Japan Ski Trip'.");
+    }
+
+    @Test
+    @DisplayName("Should tell the owner which activity was deleted, and on which trip")
+    void deleteActivity_TellsOwner() throws Exception {
+        Activity deleted = activityOn(20L, trip(10L, account(4L, "bob")));
+        when(adminData.deleteActivity(20L)).thenReturn(deleted);
+
+        mockMvc.perform(delete("/api/admin/activities/20"))
+                .andExpect(status().isNoContent());
+
+        verify(adminChanges).record(4L, 3L, "An admin deleted the activity 'Ski at Niseko' on 'Japan Ski Trip'.");
     }
 
     @Test

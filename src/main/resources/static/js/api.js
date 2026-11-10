@@ -87,7 +87,13 @@ const realApi = {
     const query = upToId == null ? "" : `?${new URLSearchParams({upToId})}`;
     return request(`/api/alerts${query}`, "PATCH", {read: true});
   },
-  alertStreamUrl:"/api/alerts/stream",                                                // server-sent events: "ready" on connect, "alert" when one is saved
+  alertStreamUrl:"/api/alerts/stream",                                                // server-sent events: "ready" on connect, "alert" when one is saved, "admin-change" when an admin changed your trips
+  // what an admin changed in your trips, the bell shows them as one alert
+  adminChanges:() => request("/api/user/me/admin-changes"),                           // -> {content: [{id, message, createdAt, readAt}], unreadCount}, newest 20
+  markAdminChangesRead:(upToId = null) => {
+    const query = upToId == null ? "" : `?${new URLSearchParams({upToId})}`;
+    return request(`/api/user/me/admin-changes${query}`, "PATCH");                    // -> {unreadCount}
+  },
   setImpactRejected:(id, rejected) => request(`/api/impact/${id}`, "PATCH", {rejected}),   // true = "not relevant to me", false = restore -> the impact
   itineraryRecommendations:id => request(`/api/itinerary/${id}/recommendation`),       // -> the stored ones, worst first. never calls the model
   generateRecommendations:itineraryId => request("/api/recommendation/generate", "POST", {itineraryId}),   // slow: asks the model once per impact without one -> every current one, worst first

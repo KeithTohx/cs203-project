@@ -4,6 +4,7 @@ import { escapeHtml, findToastShelf, newsTitleOf, timeTag } from "./util.js";
 import { icon } from "./icons.js";
 
 const CHECK_EVERY_MS = 60_000;
+const BELL_PAGE_SIZE = 20;
 const MOST_SHOWN = 10;
 const TOAST_SHOWN_MS = 7000;
 
@@ -16,11 +17,14 @@ const state = {
     pollTimer: null,
     slot: null,
     isOpen: false,
-    seenIds: null,       // alerts already loaded, so only ones arriving later pop up. null until the first load
+    seenKeys: null,      // alerts already loaded (see alertKey), so only ones arriving later pop up. null until the first load
     toastAlerts: [],     // what the pop-up on screen is showing, so later alerts can join it
     toastTimer: null,
     onAuthLost: () => { },
     redraw: () => { },
+    // what an admin changed in this account's trips. the bell shows these as one alert, however many there are
+    adminChanges: { content: [], unreadCount: 0 },
+    adminChangesLoaded: false,   // the first load only remembers the count, like seenIds for alerts
 };
 
 // ---------------------------------------------------------------- grouping and wording, shared with the alerts page
@@ -98,13 +102,43 @@ export const findGroupWithAlert = (groups, id) => {
 
 const findGroup = id => findGroupWithAlert(groupsInBell(), id);
 
-// the same alerts in the same order, each still read or unread as before
+// sqlite hands a deleted alert's id to the next one, eg when a trip edit replaces a verdict, so the id alone
+// cannot tell an alert from the one that replaced it. when it was made can
+const alertKey = alert => `${alert.id}@${alert.createdAt}`;
+
+// everything the bell and the alerts page draw from one alert, so a changed reason or name redraws too
+const drawnContent = alert => [
+    alertKey(alert),
+    isUnread(alert),
+    alert.reason,
+    alert.newsTitle,
+    alert.itineraryName,
+    alert.activityName,
+].join("\u0000");
+
+// the same alerts in the same order, each drawn exactly as before
 const isSameList = (oldAlerts, newAlerts) => {
     if (oldAlerts.length !== newAlerts.length) return false;
 
     return oldAlerts.every((alert, index) => {
         const other = newAlerts[index];
-        return alert.id === other.id && isUnread(alert) === isUnread(other);
+        return drawnContent(alert) === drawnContent(other);
+    });
+};
+
+// an alert the old list had that the new one is missing, though it would still fit in it. the list is newest
+// first and only ever loses alerts off its end as newer ones push in, so anything else was deleted or replaced
+const hasLostAlerts = (oldAlerts, newAlerts) => {
+    const newKeys = new Set(newAlerts.map(alertKey));
+    const isFullPage = newAlerts.length >= BELL_PAGE_SIZE;
+    const oldestLoadedId = newAlerts.length ? newAlerts[newAlerts.length - 1].id : null;
+
+    return oldAlerts.some(alert => {
+        const stillThere = newKeys.has(alertKey(alert));
+        if (stillThere) return false;
+
+        const couldHaveDroppedOffTheEnd = isFullPage && alert.id < oldestLoadedId;
+        return !couldHaveDroppedOffTheEnd;
     });
 };
 
@@ -118,6 +152,13 @@ function sessionEnded() {
 
 // counts every refresh started, so a slow older one cannot land on top of a newer one
 let latestRefresh = 0;
+
+// counts the server's "alerts-changed" events, and how many of them a landed reload has covered. a reload
+// that started after one of these always redraws and tells the alerts page to reload, even when the ids,
+// read states and count all look the same, since a replacement alert can match the deleted one on all three.
+// a reload that started before the event cannot cover it, so it leaves it for the next one
+let removalsReceived = 0;
+let removalsCovered = 0;
 
 // pages with alerts of their own, so they keep up with the bell. each change carries unreadCount and one of
 // newAlerts (with outOfStep, set when the count moved for some other reason), readIds, readUpToId (null for all)
@@ -174,29 +215,96 @@ const isFromOldSession = session => session !== saveSession;
 // for the alerts page, so its own loads also wait until the server has every read
 export const waitForSaves = () => saveQueue;
 
+// ---------------------------------------------------------------- admin changes, one alert for all of them
+
+export const getAdminChanges = () => state.adminChanges;
+
+// kept apart from the alerts themselves, so a failure here never holds up the alerts or the other way round
+let latestAdminChangesLoad = 0;
+
+async function refreshAdminChanges() {
+    const userId = state.userId;
+    if (userId == null) return;
+
+    latestAdminChangesLoad += 1;
+    const thisLoad = latestAdminChangesLoad;
+
+    let page;
+    try {
+        page = await api.adminChanges();
+    } catch (error) {
+        if (error.status === 401) sessionEnded();
+        return;   // keeps what was shown, the next check tries again
+    }
+    const isOutdated = state.userId !== userId || thisLoad !== latestAdminChangesLoad;
+    if (isOutdated) return;
+
+    const countBefore = state.adminChanges.unreadCount;
+    const isFirstLoad = !state.adminChangesLoaded;
+    state.adminChanges = { content: page?.content ?? [], unreadCount: page?.unreadCount ?? 0 };
+    state.adminChangesLoaded = true;
+    draw();
+
+    const hasNewOnes = !isFirstLoad && state.adminChanges.unreadCount > countBefore;
+    if (hasNewOnes) announceAdminChange();
+    tellListeners({ adminChanges: state.adminChanges });
+}
+
+// marks every admin change read up to the newest one loaded, so one arriving meanwhile stays unread
+export async function markAdminChangesRead() {
+    const upToId = state.adminChanges.content[0]?.id ?? null;
+    if (!state.adminChanges.unreadCount) return;
+
+    const now = new Date().toISOString();
+    for (const change of state.adminChanges.content) change.readAt ??= now;
+    state.adminChanges = { ...state.adminChanges, unreadCount: 0 };
+    draw();
+    tellListeners({ adminChanges: state.adminChanges });
+
+    try {
+        await api.markAdminChangesRead(upToId);
+    } catch (error) {
+        if (error.status === 401) return sessionEnded();
+        throw error;
+    } finally {
+        refreshAdminChanges();   // picks up the real count, and undoes the read if saving failed
+    }
+}
+
 async function refresh() {
     const userId = state.userId;
     if (userId == null) return;
+    refreshAdminChanges();
     if (savesRunning > 0) return;   // the queue reloads once saving is done
 
     latestRefresh += 1;
     const thisRefresh = latestRefresh;
+    const removalsAtStart = removalsReceived;
 
     try {
-        const page = await api.alerts({ size: 20 });
+        const page = await api.alerts({ size: BELL_PAGE_SIZE });
         const switchedAccount = state.userId !== userId;   // logged out or switched account while waiting
         const isOutdated = thisRefresh !== latestRefresh;   // a newer refresh has started since
         const savingStarted = savesRunning > 0;             // this may be from before the save, the reload after it is not
         if (switchedAccount || isOutdated || savingStarted) return;
 
         const countBefore = state.unreadCount;
-        const isFirstLoad = state.seenIds == null;
+        const isFirstLoad = state.seenKeys == null;
         const loadedAlerts = page?.content ?? [];
         const loadedCount = page?.unreadCount ?? 0;
 
+        const coversRemoval = removalsAtStart > removalsCovered;
+        if (coversRemoval) removalsCovered = removalsAtStart;
+
+        // alerts deleted or replaced on the server, eg after a trip edit. a replacement can come back with the
+        // same id, read state and count as the alert it replaced, so this looks at what each alert says too
+        const lostAlerts = !isFirstLoad && hasLostAlerts(state.alerts, loadedAlerts);
+        const removedOnServer = coversRemoval || lostAlerts;
+
         // most checks find nothing new, and redrawing anyway would make screen readers read the bell out again
         const sameCount = loadedCount === countBefore;
-        const nothingChanged = !isFirstLoad && sameCount && isSameList(state.alerts, loadedAlerts);
+        const sameAlerts = sameCount && isSameList(state.alerts, loadedAlerts);
+        const nothingChanged = !isFirstLoad && !removedOnServer && sameAlerts;
 
         state.alerts = loadedAlerts;
         state.unreadCount = loadedCount;
@@ -205,12 +313,13 @@ async function refresh() {
         const newAlerts = findNewAlerts();
         announceNewAlerts(newAlerts);
 
-        // new alerts only ever add to the count, so any other change came from somewhere else,
-        // eg reads in another tab. the first load has nothing to compare with, so it never counts
+        // new alerts only ever add to the count, so any other change came from somewhere else, eg reads in
+        // another tab or alerts deleted on the server. the first load has nothing to compare with, so it never counts
         const countChanged = state.unreadCount !== countBefore;
         const expectedCount = countBefore + newAlerts.length;
-        const outOfStep = !isFirstLoad && state.unreadCount !== expectedCount;
-        if (newAlerts.length || countChanged) tellListeners({ newAlerts, outOfStep });
+        const countOutOfStep = state.unreadCount !== expectedCount;
+        const outOfStep = !isFirstLoad && (countOutOfStep || removedOnServer);
+        if (newAlerts.length || countChanged || outOfStep) tellListeners({ newAlerts, outOfStep });
     } catch (error) {
         // a failed load keeps the last alerts and tries again on the next event or check
         if (error.status === 401) sessionEnded();
@@ -225,6 +334,12 @@ let burstTimer = null;
 const refreshAfterBurst = () => {
     clearTimeout(burstTimer);
     burstTimer = setTimeout(refresh, ALERT_BURST_MS);
+};
+
+// counted before waiting, so the reload after the burst knows it has to redraw whatever it finds
+const refreshAfterRemoval = () => {
+    removalsReceived += 1;
+    refreshAfterBurst();
 };
 
 const canStream = () => Boolean(api.alertStreamUrl) && typeof EventSource !== "undefined";
@@ -247,7 +362,7 @@ function stopPolling() {
     state.pollTimer = null;
 }
 
-// both events reload the list, which also catches anything missed while disconnected
+// every event reloads the list, which also catches anything missed while disconnected
 function connectStream() {
     if (!canStream()) return startPolling();
 
@@ -257,6 +372,10 @@ function connectStream() {
         refresh();
     });
     stream.addEventListener("alert", refreshAfterBurst);
+    // alerts deleted on the server, eg after an edit to the trip. no new alert may follow,
+    // and polling is off while the stream is up, so this is the only thing that clears them
+    stream.addEventListener("alerts-changed", refreshAfterRemoval);
+    stream.addEventListener("admin-change", refreshAdminChanges);
     stream.addEventListener("error", () => {
         if (stream.readyState !== EventSource.CLOSED) return;
         if (state.stream === stream) state.stream = null;
@@ -358,13 +477,34 @@ const createAlertItem = group => {
     `;
 };
 
+// every unread admin change in one entry, the alerts page lists them one by one
+const createAdminChangeItem = () => {
+    const { content, unreadCount } = state.adminChanges;
+    if (!unreadCount) return "";
+
+    const changes = unreadCount === 1 ? "1 change" : `${unreadCount} changes`;
+    const meta = [changes, timeTag(content[0]?.createdAt)].filter(part => part).join(" · ");
+
+    return `
+        <li class="is-new">
+            <a href="#/alerts" data-admin-changes-link>
+                <span class="sr-only">New: </span>
+                <strong>An admin changed your trips</strong>
+                <span class="meta">${meta}</span>
+            </a>
+        </li>
+    `;
+};
+
 const createPanel = () => {
     const groups = groupsInBell();
     const shown = groups.slice(0, MOST_SHOWN);
-    const hasUnread = shown.some(isGroupUnread);
+    const adminChangeItem = createAdminChangeItem();
+    const hasUnread = shown.some(isGroupUnread) || Boolean(adminChangeItem);
 
-    const list = shown.length
-        ? `<ul>${shown.map(createAlertItem).join("")}</ul>`
+    const items = adminChangeItem + shown.map(createAlertItem).join("");
+    const list = items
+        ? `<ul>${items}</ul>`
         : `<p class="meta">No alerts right now. News affecting your trips still shows on your itineraries.</p>`;
     const hiddenCount = groups.length - shown.length;
     const viewAllText = hiddenCount > 0 ? `View all alerts (${hiddenCount} more)` : "View all alerts";
@@ -384,7 +524,9 @@ const createPanel = () => {
 // counts condensed alerts like the panel lists them, so news hitting three activities on one trip counts once.
 // the bell only loads the newest 20, so when the backend has more unread than are loaded a + says there are others
 const createBadgeText = () => {
-    const unreadGroups = groupsInBell().filter(isGroupUnread).length;
+    // admin changes count as one, however many there are
+    const adminChangeCount = state.adminChanges.unreadCount ? 1 : 0;
+    const unreadGroups = groupsInBell().filter(isGroupUnread).length + adminChangeCount;
     const unreadLoaded = state.alerts.filter(isUnread).length;
     const hasOlderUnread = state.unreadCount > unreadLoaded;
 
@@ -396,7 +538,7 @@ const createBadgeText = () => {
 
 // the bell is drawn from scratch, so whatever had focus inside it is remembered as a selector and found again.
 // these are the things in the bell that can take focus
-const focusableSelectors = ["#alert-button", "[data-bell-read-all]", "[data-view-all]", ".alert-panel h2"];
+const focusableSelectors = ["#alert-button", "[data-bell-read-all]", "[data-view-all]", "[data-admin-changes-link]", ".alert-panel h2"];
 
 const findFocusSelector = () => {
     const focused = document.activeElement;
@@ -458,13 +600,14 @@ function draw() {
 
 // new since the last load. the first load only remembers what is there,
 // so logging in or reloading never pops up alerts that were already waiting
+// a replacement alert that reused a deleted one's id still counts as new, since its key differs
 function findNewAlerts() {
-    const isFirstLoad = state.seenIds == null;
-    const seenIds = state.seenIds ?? new Set();
+    const isFirstLoad = state.seenKeys == null;
+    const seenKeys = state.seenKeys ?? new Set();
 
-    const unseen = state.alerts.filter(alert => !seenIds.has(alert.id));
-    for (const alert of state.alerts) seenIds.add(alert.id);
-    state.seenIds = seenIds;
+    const unseen = state.alerts.filter(alert => !seenKeys.has(alertKey(alert)));
+    for (const alert of state.alerts) seenKeys.add(alertKey(alert));
+    state.seenKeys = seenKeys;
 
     if (isFirstLoad) return [];
     return unseen.filter(isUnread);
@@ -518,7 +661,7 @@ function announceNewAlerts(newAlerts) {
 
     // alerts arriving while a pop-up is still up join it, so there is only ever one, grouped like the bell.
     // its text changes in place rather than the whole pop-up sliding in again
-    const shownToast = document.querySelector(".alert-toast:not(.leaving)");
+    const shownToast = document.querySelector(".alert-toast:not(.admin-change-toast):not(.leaving)");
     const alreadyShown = shownToast ? state.toastAlerts : [];
     state.toastAlerts = [...newAlerts, ...alreadyShown];
 
@@ -528,6 +671,39 @@ function announceNewAlerts(newAlerts) {
     // goes on its own, the alert stays in the bell for later. joining it starts the time again
     clearTimeout(state.toastTimer);
     state.toastTimer = setTimeout(() => removeToast(toast), TOAST_SHOWN_MS);
+}
+
+// its own pop-up, so it never gets mixed into the news ones. a second change while it is up
+// only updates its text
+let adminChangeToastTimer = null;
+
+function announceAdminChange() {
+    if (state.isOpen) return;
+
+    const { content, unreadCount } = state.adminChanges;
+    const latest = content[0];
+    const text = unreadCount === 1 && latest
+        ? escapeHtml(latest.message)
+        : `${unreadCount} changes are waiting for you.`;
+
+    let toast = document.querySelector(".admin-change-toast:not(.leaving)");
+    if (!toast) {
+        toast = createToast();
+        toast.classList.add("admin-change-toast");
+
+        // a pencil rather than the news icon, since this is not about the news
+        const newsIcon = toast.querySelector(":scope > svg");
+        newsIcon?.insertAdjacentHTML("afterend", icon("pencil"));
+        newsIcon?.remove();
+    }
+    toast.querySelector(".alert-toast-body").innerHTML = `
+        <strong>An admin changed your trips</strong>
+        <span class="meta">${text}</span>
+        <a href="#/alerts" data-view-all>See what changed</a>
+    `;
+
+    clearTimeout(adminChangeToastTimer);
+    adminChangeToastTimer = setTimeout(() => removeToast(toast), TOAST_SHOWN_MS);
 }
 
 // ---------------------------------------------------------------- panel actions
@@ -546,6 +722,7 @@ function close({ returnFocus = false } = {}) {
 
 // a failure shows itself, since the bell reloads with the alerts still unread
 async function readAll() {
+    markAdminChangesRead().catch(() => { });   // reloads by itself on failure
     const finished = markAllAlertsRead();
     state.slot?.querySelector(".alert-panel h2")?.focus();
 
@@ -580,7 +757,7 @@ document.addEventListener("click", event => {
     const link = event.target.closest("[data-alert-link]");
     if (link) return goToTrip(link);
 
-    if (event.target.closest("[data-view-all]")) return close();
+    if (event.target.closest("[data-view-all], [data-admin-changes-link]")) return close();
 
     if (state.isOpen && !event.target.closest(".alert-bell")) close();
 });
@@ -620,6 +797,7 @@ export function stopAlerts() {
     clearInterval(state.pollTimer);
     clearTimeout(state.toastTimer);
     clearTimeout(burstTimer);
+    clearTimeout(adminChangeToastTimer);
 
     // saves still running for this account carry on, but no longer hold back the next account's loads
     saveSession += 1;
@@ -634,7 +812,13 @@ export function stopAlerts() {
     state.stream = null;
     state.pollTimer = null;
     state.isOpen = false;
-    state.seenIds = null;
+    state.seenKeys = null;
     state.toastAlerts = [];
+
+    // the next account starts with nothing to cover
+    removalsReceived = 0;
+    removalsCovered = 0;
     state.toastTimer = null;
+    state.adminChanges = { content: [], unreadCount: 0 };
+    state.adminChangesLoaded = false;
 }

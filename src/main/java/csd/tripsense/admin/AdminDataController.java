@@ -23,6 +23,7 @@ import csd.tripsense.impact.Impact;
 import csd.tripsense.impact.ImpactResponse;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryResponse;
+import csd.tripsense.notice.AdminChangeService;
 import csd.tripsense.recommendation.Recommendation;
 import csd.tripsense.recommendation.RecommendationResponse;
 import csd.tripsense.user.User;
@@ -32,7 +33,7 @@ import jakarta.validation.Valid;
 
 // the admin console's data endpoints. like the rest of /api/admin, USER gets 403 and
 // logged out gets 401. every change is written to the audit log against the account that owns
-// the data, so it shows up on that user's admin page
+// the data, so it shows up on that user's admin page, and the owner is told about it in the app
 @RestController
 @RequestMapping("/api/admin")
 @Tag(name = "Admin console", description = "Read and change any account's trip data, mainly for testing")
@@ -40,10 +41,13 @@ public class AdminDataController {
 
     private final AdminDataService adminData;
     private final AuditService auditService;
+    private final AdminChangeService adminChanges;
 
-    public AdminDataController(AdminDataService adminData, AuditService auditService) {
+    public AdminDataController(AdminDataService adminData, AuditService auditService,
+                               AdminChangeService adminChanges) {
         this.adminData = adminData;
         this.auditService = auditService;
+        this.adminChanges = adminChanges;
     }
 
     // ---------- accounts ----------
@@ -77,6 +81,7 @@ public class AdminDataController {
         Itinerary created = adminData.createItinerary(userId, request);
 
         recordByAdmin(AuditService.ITINERARY_CREATED, admin, userId, describe(created));
+        tellOwner(userId, admin, "An admin added the trip " + quote(created.getName()) + ".");
         return ResponseEntity.status(HttpStatus.CREATED).body(ItineraryResponse.from(created));
     }
 
@@ -90,7 +95,10 @@ public class AdminDataController {
         Itinerary updated = edit.updated();
 
         recordByAdmin(AuditService.ITINERARY_UPDATED, admin, ownerOf(updated), describe(updated));
-        recordCleared(edit.clearedVerdicts(), admin, describe(updated) + " changed country or dates");
+        recordCleared(edit.clearedVerdicts(), admin, describe(updated) + " changed name, country or dates");
+        String message = "An admin edited your trip " + quote(updated.getName()) + "."
+                + clearedNote(edit.clearedVerdicts());
+        tellOwner(ownerOf(updated), admin, message);
         return ItineraryResponse.from(updated);
     }
 
@@ -102,6 +110,7 @@ public class AdminDataController {
         Itinerary deleted = adminData.deleteItinerary(id);
 
         recordByAdmin(AuditService.ITINERARY_DELETED, admin, ownerOf(deleted), describe(deleted));
+        tellOwner(ownerOf(deleted), admin, "An admin deleted your trip " + quote(deleted.getName()) + ".");
         return ResponseEntity.noContent().build();
     }
 
@@ -128,6 +137,7 @@ public class AdminDataController {
         Activity created = adminData.createActivity(itineraryId, request);
 
         recordByAdmin(AuditService.ACTIVITY_CREATED, admin, ownerOf(created.getItinerary()), describe(created));
+        tellOwner(ownerOf(created.getItinerary()), admin, "An admin added " + activityOnTrip(created) + ".");
         return ResponseEntity.status(HttpStatus.CREATED).body(ActivityResponse.from(created));
     }
 
@@ -142,6 +152,8 @@ public class AdminDataController {
 
         recordByAdmin(AuditService.ACTIVITY_UPDATED, admin, ownerOf(updated.getItinerary()), describe(updated));
         recordCleared(edit.clearedVerdicts(), admin, describe(updated) + " changed name, address or start");
+        String message = "An admin edited " + activityOnTrip(updated) + "." + clearedNote(edit.clearedVerdicts());
+        tellOwner(ownerOf(updated.getItinerary()), admin, message);
         return ActivityResponse.from(updated);
     }
 
@@ -152,6 +164,7 @@ public class AdminDataController {
         Activity deleted = adminData.deleteActivity(id);
 
         recordByAdmin(AuditService.ACTIVITY_DELETED, admin, ownerOf(deleted.getItinerary()), describe(deleted));
+        tellOwner(ownerOf(deleted.getItinerary()), admin, "An admin deleted " + activityOnTrip(deleted) + ".");
         return ResponseEntity.noContent().build();
     }
 
@@ -174,6 +187,7 @@ public class AdminDataController {
         Impact created = adminData.createImpact(userId, request);
 
         recordByAdmin(AuditService.IMPACT_CREATED, admin, userId, describe(created));
+        tellOwner(userId, admin, "An admin linked the news " + newsOf(created) + " to " + placeOf(created) + ".");
         return ResponseEntity.status(HttpStatus.CREATED).body(ImpactResponse.from(created));
     }
 
@@ -186,6 +200,8 @@ public class AdminDataController {
         Impact updated = adminData.updateImpact(id, request);
 
         recordByAdmin(AuditService.IMPACT_UPDATED, admin, ownerOf(updated), describe(updated));
+        tellOwner(ownerOf(updated), admin,
+                "An admin changed how the news " + newsOf(updated) + " affects " + placeOf(updated) + ".");
         return ImpactResponse.from(updated);
     }
 
@@ -196,6 +212,8 @@ public class AdminDataController {
         Impact deleted = adminData.deleteImpact(id);
 
         recordByAdmin(AuditService.IMPACT_DELETED, admin, ownerOf(deleted), describe(deleted));
+        tellOwner(ownerOf(deleted), admin,
+                "An admin removed the news " + newsOf(deleted) + " from " + placeOf(deleted) + ".");
         return ResponseEntity.noContent().build();
     }
 
@@ -216,6 +234,8 @@ public class AdminDataController {
         Recommendation created = adminData.createRecommendation(impactId, request);
 
         recordByAdmin(AuditService.RECOMMENDATION_CREATED, admin, ownerOf(created.getImpact()), describe(created));
+        tellOwner(ownerOf(created.getImpact()), admin,
+                "An admin added a suggestion for " + placeOf(created.getImpact()) + ".");
         return ResponseEntity.status(HttpStatus.CREATED).body(RecommendationResponse.from(created));
     }
 
@@ -228,6 +248,8 @@ public class AdminDataController {
         Recommendation updated = adminData.updateRecommendation(id, request);
 
         recordByAdmin(AuditService.RECOMMENDATION_UPDATED, admin, ownerOf(updated.getImpact()), describe(updated));
+        tellOwner(ownerOf(updated.getImpact()), admin,
+                "An admin changed a suggestion for " + placeOf(updated.getImpact()) + ".");
         return RecommendationResponse.from(updated);
     }
 
@@ -239,6 +261,8 @@ public class AdminDataController {
         Recommendation deleted = adminData.deleteRecommendation(id);
 
         recordByAdmin(AuditService.RECOMMENDATION_DELETED, admin, ownerOf(deleted.getImpact()), describe(deleted));
+        tellOwner(ownerOf(deleted.getImpact()), admin,
+                "An admin removed a suggestion for " + placeOf(deleted.getImpact()) + ".");
         return ResponseEntity.noContent().build();
     }
 
@@ -263,6 +287,49 @@ public class AdminDataController {
             auditService.record(AuditService.IMPACT_CLEARED, admin.getId(), admin.getEmail(),
                     verdict.ownerId(), verdict.auditDetails(cause));
         }
+    }
+
+    // the traveller's side of the same change, in their words rather than the log's ids
+    private void tellOwner(Long ownerId, CurrentUser admin, String message) {
+        adminChanges.record(ownerId, admin.getId(), message);
+    }
+
+    // an edit that cleared news checks says so, since alerts and suggestions may have gone with them
+    private static String clearedNote(List<ClearedVerdict> cleared) {
+        if (cleared.isEmpty()) {
+            return "";
+        }
+        String checks = cleared.size() == 1
+                ? "1 news check on it was cleared"
+                : cleared.size() + " news checks on it were cleared";
+        return " " + checks + ", and it will be checked against the news again.";
+    }
+
+    private static String quote(String name) {
+        return "'" + name + "'";
+    }
+
+    private static String activityOnTrip(Activity activity) {
+        String tripName = activity.getItinerary() == null ? "your trip" : quote(activity.getItinerary().getName());
+        return "the activity " + quote(activity.getName()) + " on " + tripName;
+    }
+
+    private static String newsOf(Impact impact) {
+        if (impact.getNews() == null || impact.getNews().getTitle() == null) {
+            return "article";
+        }
+        return quote(impact.getNews().getTitle());
+    }
+
+    // what an impact is about: one activity, or the whole trip
+    private static String placeOf(Impact impact) {
+        if (impact.getActivity() != null) {
+            return activityOnTrip(impact.getActivity());
+        }
+        if (impact.getItinerary() != null) {
+            return "your trip " + quote(impact.getItinerary().getName());
+        }
+        return "your trip";
     }
 
     private static Long ownerOf(Itinerary itinerary) {

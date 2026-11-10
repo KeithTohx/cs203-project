@@ -1,10 +1,14 @@
 package csd.tripsense.admin;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -13,7 +17,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import csd.tripsense.activity.Activity;
-import csd.tripsense.activity.ActivityCreatedEvent;
 import csd.tripsense.activity.ActivityNotFoundException;
 import csd.tripsense.activity.ActivityRepository;
 import csd.tripsense.activity.ActivityService;
@@ -24,7 +27,6 @@ import csd.tripsense.impact.Impact;
 import csd.tripsense.impact.ImpactNotFoundException;
 import csd.tripsense.impact.ImpactRepository;
 import csd.tripsense.itinerary.Itinerary;
-import csd.tripsense.itinerary.ItineraryCreatedEvent;
 import csd.tripsense.itinerary.ItineraryNotFoundException;
 import csd.tripsense.itinerary.ItineraryRepository;
 import csd.tripsense.itinerary.ItineraryService;
@@ -120,6 +122,7 @@ public class AdminDataServiceImpl implements AdminDataService {
         Itinerary itinerary = new Itinerary();
         itinerary.setUser(owner);
         applyItinerary(itinerary, request);
+        markEditedByAdmin(itinerary);
 
         // the same path a traveller's new trip takes, so it is judged against recent news the same way
         return itineraryService.addItinerary(itinerary);
@@ -128,38 +131,22 @@ public class AdminDataServiceImpl implements AdminDataService {
     @Override
     @Transactional
     public AdminEdit<Itinerary> updateItinerary(Long itineraryId, AdminItineraryRequest request) {
-        Itinerary itinerary = findItinerary(itineraryId);
-        Long oldCountryId = itinerary.getCountry() == null ? null : itinerary.getCountry().getId();
-        LocalDateTime oldStart = itinerary.getDateStart();
-        LocalDateTime oldEnd = itinerary.getDateEnd();
+        findItinerary(itineraryId);
 
-        applyItinerary(itinerary, request);
-        Itinerary saved = itineraries.save(itinerary);
+        // summed up now, while every verdict is still there to look at
+        List<Impact> before = impacts.findByItineraryId(itineraryId);
+        List<ClearedVerdict> summaries = before.stream()
+                .map(ClearedVerdict::of)
+                .toList();
 
-        // activities carry their own copy of the country, so they follow the itinerary
-        List<Activity> itsActivities = activities.findByItineraryIdOrderByDateStart(itineraryId);
-        for (Activity activity : itsActivities) {
-            activity.setCountry(saved.getCountry());
-        }
-        activities.saveAll(itsActivities);
+        // the same edit a traveller makes, so the itinerary service decides what the change makes
+        // out of date and the impact package clears and judges it again
+        Itinerary newDetails = new Itinerary();
+        applyItinerary(newDetails, request);
+        Itinerary saved = itineraryService.updateItinerary(itineraryId, newDetails, request.keepsImpacts());
+        markEditedByAdmin(saved);
 
-        // the whole trip verdicts were made for the old country and dates, and the evaluator reuses
-        // any stored verdict without asking again, so those go and the trip is judged again.
-        // activity verdicts stay, since the model was only asked about the activity's own name,
-        // address and start
-        boolean countryChanged = !Objects.equals(oldCountryId, request.countryId());
-        boolean datesChanged = !Objects.equals(oldStart, saved.getDateStart())
-                || !Objects.equals(oldEnd, saved.getDateEnd());
-        List<ClearedVerdict> cleared = List.of();
-        if (countryChanged || datesChanged) {
-            List<Impact> wholeTripImpacts = impacts.findByItineraryId(itineraryId).stream()
-                    .filter(impact -> impact.getActivity() == null)
-                    .toList();
-            cleared = clearStaleVerdicts(wholeTripImpacts);
-
-            events.publishEvent(new ItineraryCreatedEvent(saved.getId()));
-        }
-
+        List<ClearedVerdict> cleared = goneSince(summaries, impacts.findByItineraryId(itineraryId));
         return new AdminEdit<>(saved, cleared);
     }
 
@@ -209,6 +196,7 @@ public class AdminDataServiceImpl implements AdminDataService {
         Activity activity = new Activity();
         activity.setItinerary(itinerary);
         applyActivity(activity, request);
+        markEditedByAdmin(itinerary);
 
         // same as for a new itinerary. this also copies the itinerary's country onto the activity
         return activityService.addActivity(activity);
@@ -217,25 +205,23 @@ public class AdminDataServiceImpl implements AdminDataService {
     @Override
     @Transactional
     public AdminEdit<Activity> updateActivity(Long activityId, AdminActivityRequest request) {
-        Activity activity = findActivity(activityId);
-        String oldName = activity.getName();
-        String oldAddress = activity.getAddress();
-        LocalDateTime oldStart = activity.getDateStart();
+        findActivity(activityId);
 
-        applyActivity(activity, request);
-        Activity saved = activities.save(activity);
+        List<Impact> before = impacts.findByActivityId(activityId);
+        List<ClearedVerdict> summaries = before.stream()
+                .map(ClearedVerdict::of)
+                .toList();
 
-        // same as for an itinerary. the model was asked about the name, address and start time,
-        // so a change to any of them makes the stored verdicts out of date
-        boolean judgedFieldsChanged = !Objects.equals(oldName, saved.getName())
-                || !Objects.equals(oldAddress, saved.getAddress())
-                || !Objects.equals(oldStart, saved.getDateStart());
-        List<ClearedVerdict> cleared = List.of();
-        if (judgedFieldsChanged) {
-            cleared = clearStaleVerdicts(impacts.findByActivityId(activityId));
-            events.publishEvent(new ActivityCreatedEvent(saved.getId()));
-        }
+        // no itinerary on the new details, so the activity stays on its trip
+        Activity newDetails = new Activity();
+        applyActivity(newDetails, request);
+        Activity saved = activityService.updateActivity(activityId, newDetails, request.keepsImpacts());
 
+        // the activity service leaves the category alone, nothing is judged on it
+        saved.setCategory(request.category());
+        markEditedByAdmin(saved.getItinerary());
+
+        List<ClearedVerdict> cleared = goneSince(summaries, impacts.findByActivityId(activityId));
         return new AdminEdit<>(saved, cleared);
     }
 
@@ -243,20 +229,31 @@ public class AdminDataServiceImpl implements AdminDataService {
     @Transactional
     public Activity deleteActivity(Long activityId) {
         Activity activity = findActivity(activityId);
+        markEditedByAdmin(activity.getItinerary());
 
         activities.delete(activity);   // cascades to its impacts, and their alerts and recommendations
         return activity;
     }
 
-    // drops out of date verdicts, with their alerts and recommendations, so the evaluator asks
-    // again. each one is summed up first so the controller can keep it in the audit log: the news
-    // behind it may be too old for the re-evaluation to look at, so the log is all that is left
-    private List<ClearedVerdict> clearStaleVerdicts(List<Impact> outOfDate) {
-        List<ClearedVerdict> cleared = outOfDate.stream()
-                .map(ClearedVerdict::of)
+    // the note on the traveller's trip. the itinerary is managed here, so it is saved on commit
+    private static void markEditedByAdmin(Itinerary itinerary) {
+        if (itinerary == null) {
+            return;
+        }
+        itinerary.setAdminEditedAt(Instant.now());
+    }
+
+    // the verdicts StaleVerdictCleaner removed during the edit, so the controller can keep them in
+    // the audit log: the news behind one may be too old to be judged again, so the log is all that
+    // is left. the lookup after the edit flushes the delete first, so it only finds what stayed
+    private static List<ClearedVerdict> goneSince(List<ClearedVerdict> before, List<Impact> after) {
+        Set<Long> stillThere = after.stream()
+                .map(Impact::getId)
+                .collect(Collectors.toSet());
+
+        return before.stream()
+                .filter(verdict -> !stillThere.contains(verdict.impactId()))
                 .toList();
-        impacts.deleteAll(outOfDate);
-        return cleared;
     }
 
     private void applyActivity(Activity activity, AdminActivityRequest request) {
@@ -337,6 +334,7 @@ public class AdminDataServiceImpl implements AdminDataService {
         impact.setReason(reason);
         impact.setRejected(rejected);
         impact.setAlertEligible(wantsAlert);
+        stampAsCurrent(impact);
         Impact saved = impacts.save(impact);
 
         // the alert listener runs after this transaction commits, the same way it does for the evaluator
@@ -364,7 +362,20 @@ public class AdminDataServiceImpl implements AdminDataService {
         impact.setImpacted(request.impacted());
         impact.setReason(reason);
         impact.setRejected(Boolean.TRUE.equals(request.rejected()));
+        stampAsCurrent(impact);
         return impacts.save(impact);
+    }
+
+    // without the current revision a verdict reads as judged on older details, so the evaluator
+    // would replace it and advice could not be drafted from it. a new verdict key on every write
+    // tells advice drafted from the old verdict that it has changed, see ImpactServiceImpl.findUnchanged
+    private static void stampAsCurrent(Impact impact) {
+        long revision = impact.getActivity() != null
+                ? impact.getActivity().currentRevision()
+                : impact.getItinerary().currentRevision();
+
+        impact.setJudgedRevision(revision);
+        impact.setVerdictKey(UUID.randomUUID().toString());
     }
 
     @Override
