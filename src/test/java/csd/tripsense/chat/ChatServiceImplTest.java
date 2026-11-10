@@ -26,7 +26,8 @@ class ChatServiceImplTest {
         chatClient = mock(ChatClient.class, RETURNS_DEEP_STUBS);
         ChatClient.Builder builder = mock(ChatClient.Builder.class);
         when(builder.build()).thenReturn(chatClient);
-        chatService = new ChatServiceImpl(builder);
+        // 0 turns the rate limiter off, so the tests do not wait
+        chatService = new ChatServiceImpl(builder, 0);
     }
 
     // ===== PLAIN TEXT ANSWERS =====
@@ -85,5 +86,40 @@ class ChatServiceImplTest {
         RuntimeException error = assertThrows(RuntimeException.class,
                 () -> chatService.ask("Judge this", Verdict.class));
         assertEquals("Connection refused", error.getMessage());
+    }
+
+    @Test
+    @DisplayName("Should let calls straight through when the rate limit is off")
+    void ask_ShouldNotWait_WhenRateLimitIsZero() {
+        when(chatClient.prompt().user(anyString()).call().content()).thenReturn("ok");
+        ChatServiceImpl noLimit = new ChatServiceImpl(builderFor(chatClient), 0);
+
+        long start = System.currentTimeMillis();
+        for (int call = 0; call < 20; call++) {
+            noLimit.ask("anything");
+        }
+
+        assertTrue(System.currentTimeMillis() - start < 1000, "no limit should mean no waiting");
+    }
+
+    @Test
+    @DisplayName("Should allow up to the limit without waiting, so a small run is not slowed down")
+    void ask_ShouldNotWait_UntilTheLimitIsReached() {
+        when(chatClient.prompt().user(anyString()).call().content()).thenReturn("ok");
+        ChatServiceImpl limited = new ChatServiceImpl(builderFor(chatClient), 5);
+
+        long start = System.currentTimeMillis();
+        for (int call = 0; call < 5; call++) {
+            limited.ask("anything");
+        }
+
+        // the sixth would block for the rest of the minute, so it is deliberately not made here
+        assertTrue(System.currentTimeMillis() - start < 1000, "the first five should go straight out");
+    }
+
+    private static ChatClient.Builder builderFor(ChatClient client) {
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        when(builder.build()).thenReturn(client);
+        return builder;
     }
 }

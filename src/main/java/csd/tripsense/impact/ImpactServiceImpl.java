@@ -102,9 +102,9 @@ public class ImpactServiceImpl implements ImpactService {
         }
 
         // a verdict the user rejected does not count, the user knows their trip better than the model
-        boolean tripImpacted = tripResult.impacted() && !tripResult.rejected();
+        boolean tripImpacted = tripResult.impacted() && !Boolean.TRUE.equals(tripResult.rejected());
         boolean anyActivityImpacted = results.stream()
-                .anyMatch(result -> result.impacted() && !result.rejected());
+                .anyMatch(result -> result.impacted() && !Boolean.TRUE.equals(result.rejected()));
         boolean anyImpacted = tripImpacted || anyActivityImpacted;
 
         return new EvaluateResponse(itinerary.getId(), news.getId(), news.getTitle(),

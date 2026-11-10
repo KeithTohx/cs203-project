@@ -1,7 +1,7 @@
 // admin only: one account's details and activity, with role changes, disable, enable and delete
 import { api } from "../api.js";
 import { createActionFilter, createAuditTable } from "../audit.js";
-import { confirmTwice, createPager, escapeHtml, flash, showError } from "../util.js";
+import { confirmTwice, createPager, escapeHtml, flash, loading, noMatches, showError } from "../util.js";
 
 // what the hint under the details says, depending on what can be done to the account
 const describeAccountRules = (account, isSelf) => {
@@ -80,7 +80,7 @@ const createDangerZone = account => `
 export async function showAdminUser(root, user, onAuthLost, id) {
     const userId = Number(id);
     const isSelf = userId === user.id;
-    root.innerHTML = `<div class="msg">Loading…</div>`;
+    root.innerHTML = loading();
 
     // a deleted account 404s but its activity is kept
     const [accountResult, activityResult] = await Promise.allSettled([
@@ -124,7 +124,7 @@ export async function showAdminUser(root, user, onAuthLost, id) {
     const drawActivity = result => {
         const nothingMatched = !result.content.length && actionFilter.value;
         if (nothingMatched) {
-            activity.innerHTML = `<p class="meta">Nothing matches this filter.</p>`;
+            activity.innerHTML = noMatches();
             return;
         }
         activity.innerHTML = createAuditTable(result.content) + createPager(result);

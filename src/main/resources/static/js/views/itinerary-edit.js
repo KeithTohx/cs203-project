@@ -1,11 +1,11 @@
 // Create/edit screen for an itinerary and its activities, all saved with one Save. On success: show a message back on #/itineraries.
 // The backend's PUT replaces the whole record, so related records (user, country, itinerary) are sent back as {id}.
 import { api } from "../api.js";
-import { confirmTwice, escapeHtml, flash, formPage, showError, sortByStart } from "../util.js";
+import { confirmTwice, escapeHtml, flash, formPage, loading, showError, sortByStart } from "../util.js";
 import { icon } from "../icons.js";
 
 const ITINERARIES_LINK = "#/itineraries";
-const showLoading = root => { root.innerHTML = `<div class="msg">Loading…</div>`; };
+const showLoading = root => { root.innerHTML = loading(); };
 const showNotFound = root => {
     root.innerHTML = `<div class="msg">That itinerary wasn't found. <a href="${ITINERARIES_LINK}">Back to itineraries</a></div>`;
 };
@@ -47,6 +47,27 @@ function checkEndNotBeforeStart(start, end, what = "The end") {
 
 // Component: one editable activity on the timeline. Fields look like text until hovered or focused.
 // `activity` is null for a new one; `key` keeps input ids unique.
+// the same list as ActivityCategory on the server. an activity with no kind gets no
+// alternatives suggested, so the form asks for one
+const CATEGORIES = [
+    ["SKI_SNOW", "Ski or snow"],
+    ["BEACH_WATER", "Beach or water"],
+    ["OUTDOOR_NATURE", "Outdoors or nature"],
+    ["SIGHTSEEING", "Sightseeing"],
+    ["MUSEUM_GALLERY", "Museum or gallery"],
+    ["FOOD_DINING", "Food or dining"],
+    ["SHOPPING", "Shopping"],
+    ["WELLNESS_SPA", "Wellness or spa"],
+];
+
+const createCategorySelect = (activity, key) => `
+    <label class="sr-only" for="activity-${key}-category">What kind of activity</label>
+    <select id="activity-${key}-category" data-field="category" class="inline-edit category" required>
+        <option value="">What kind of activity?</option>
+        ${CATEGORIES.map(([value, label]) =>
+            `<option value="${value}"${activity?.category === value ? " selected" : ""}>${label}</option>`).join("")}
+    </select>`;
+
 const createActivityRow = (activity, key) => {
     const field = (name, label, attributes) => `
         <label class="sr-only" for="activity-${key}-${name}">${label}</label>
@@ -59,6 +80,7 @@ const createActivityRow = (activity, key) => {
                     aria-label="Remove ${escapeHtml(activity?.name || "new activity")}">×</button>
             </div>
             ${field("address", "Address", `value="${escapeHtml(activity?.address)}" placeholder="Add an address" maxlength="200"`)}
+            ${createCategorySelect(activity, key)}
             <div class="inline-range">
                 ${field("dateStart", "Starts", `type="datetime-local" value="${toDateTimeInput(activity?.dateStart)}"`)}
                 <span aria-hidden="true">to</span>
@@ -138,6 +160,7 @@ export async function showEditItinerary(root, user, onAuthLost, itineraryId, sta
                         itinerary: { id: null },   // filled in once the itinerary is saved
                         name: activityName,
                         address: value("address").trim() || null,
+                        category: value("category") || null,
                         dateStart: fromDateTimeInput(value("dateStart")),
                         dateEnd: fromDateTimeInput(value("dateEnd")),
                     },

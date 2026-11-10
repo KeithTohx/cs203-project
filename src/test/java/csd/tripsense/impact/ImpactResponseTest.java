@@ -83,10 +83,21 @@ class ImpactResponseTest {
     }
 
     @Test
-    @DisplayName("Should report not rejected when rejected is null")
-    void from_ShouldNotBeRejected_WhenRejectedIsNull() {
-        // rows saved before the column existed have null, and clients should not have to handle that
+    @DisplayName("Should stay null when the user has not looked at the impact")
+    void from_ShouldKeepNull_WhenRejectedIsNull() {
+        // null is its own state: the page needs to tell "not looked at" from "confirmed"
         Impact impact = new Impact();
+
+        ImpactResponse response = ImpactResponse.from(impact);
+
+        assertNull(response.rejected());
+    }
+
+    @Test
+    @DisplayName("Should report confirmed when the user said it affects them")
+    void from_ShouldBeConfirmed_WhenRejectedIsFalse() {
+        Impact impact = new Impact();
+        impact.setRejected(false);
 
         ImpactResponse response = ImpactResponse.from(impact);
 

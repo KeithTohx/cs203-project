@@ -1,6 +1,6 @@
 // admin only: every account, searched and paged on the backend
 import { api } from "../api.js";
-import { createPager, debounce, escapeHtml, showError } from "../util.js";
+import { createPager, debounce, escapeHtml, loading, noMatches, pageHead, showError } from "../util.js";
 
 const PAGE_SIZES = [10, 20];
 
@@ -72,9 +72,9 @@ const findById = async search => {
 
 export async function showAdminUsers(root, user, onAuthLost) {
     root.innerHTML = `
-        <h1>Users</h1>
+        ${pageHead("Users")}
         <div class="card">
-            <div class="row">
+            <div class="row filters">
                 <label for="user-search" class="sr-only">Search users</label>
                 <input id="user-search" type="search" placeholder="Search by ID, username or email" autocomplete="off">
                 <div class="filter">
@@ -82,9 +82,7 @@ export async function showAdminUsers(root, user, onAuthLost) {
                 </div>
             </div>
             <p class="meta" id="user-count" role="status"></p>
-            <div id="user-list">
-                <div class="msg">Loading…</div>
-            </div>
+            <div id="user-list">${loading()}</div>
         </div>
     `;
 
@@ -140,7 +138,7 @@ export async function showAdminUsers(root, user, onAuthLost) {
         const hasAny = showIdMatch || result.content.length > 0;
         userList.innerHTML = hasAny
             ? idMatchSection + pagedList
-            : `<p class="meta">No users match your search.</p>`;
+            : noMatches("No user");
     };
 
     // a new search or page size always starts again from the first page

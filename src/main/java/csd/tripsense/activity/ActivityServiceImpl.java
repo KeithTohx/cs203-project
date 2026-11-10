@@ -64,6 +64,9 @@ public class ActivityServiceImpl implements ActivityService {
             activity.setAddress(newActivityInfo.getAddress());
             activity.setDateStart(newActivityInfo.getDateStart());
             activity.setDateEnd(newActivityInfo.getDateEnd());
+            // without this an edit wiped the category, and no category means no shortlist,
+            // so the advice could never name a replacement
+            activity.setCategory(newActivityInfo.getCategory());
             return activities.save(activity);
         }).orElseThrow(() -> new ActivityNotFoundException(id));
     }

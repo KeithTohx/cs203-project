@@ -52,6 +52,31 @@ export const takeFlash = () => {
 // gives back { form, errorMessage } so a view can wire up extra buttons, eg Delete.
 // formClass sets the form's width, "narrow" (default) or "wide".
 // submitLabel and submitClass change the main button, for forms that do something other than save
+// component: the title of a page with its main action beside it. every screen uses this, so the
+// action always sits in the same place instead of hiding inside the first card
+export const pageHead = (title, actions = "") => `
+    <div class="row page-head">
+        <h1>${escapeHtml(title)}</h1>
+        ${actions}
+    </div>
+`;
+
+// the placeholder every screen shows while it waits, so they all wait the same way
+export const loading = (what = "") => `<div class="msg">Loading${what ? " " + escapeHtml(what) : ""}…</div>`;
+
+// component: a scrollable table. the admin user list and the audit log are the same shell
+export const dataTable = (headers, rows) => `
+    <div class="table-scroll">
+        <table class="data-table">
+            <thead><tr>${headers.map(head => `<th>${head}</th>`).join("")}</tr></thead>
+            <tbody>${rows.map(cells => `<tr>${cells.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>
+        </table>
+    </div>
+`;
+
+// what a filtered list says when the filter matches nothing. one wording instead of four
+export const noMatches = (what = "Nothing") => `<p class="meta">${escapeHtml(what)} matches these filters.</p>`;
+
 export function formPage(root, { title, fieldsHtml, onSubmit, onAuthLost, cancelLink, extraActions = "", formClass = "narrow",
                                  submitLabel = "Save", submitClass = "" }) {
     const submitClassAttribute = ` class="${submitClass || "primary"}"`;

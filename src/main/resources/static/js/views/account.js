@@ -1,7 +1,7 @@
 // read-only summary, each section links to its own edit page
 import { api } from "../api.js";
 import { labelFor } from "../preference-options.js";
-import { escapeHtml } from "../util.js";
+import { escapeHtml, loading, pageHead } from "../util.js";
 
 // "With family, with children and elderly travellers", or just "On my own"
 const describeTravelGroup = preferences => {
@@ -45,7 +45,7 @@ const createPreferenceCard = () => `
             <a class="btn" href="#/account/preferences">Edit</a>
         </div>
         <div id="preference-summary">
-            <p class="meta">Loading…</p>
+            ${loading()}
         </div>
     </section>
 `;
@@ -57,7 +57,7 @@ export function showAccount(root, user, onAuthLost) {
         : "Permanently removes your account, itineraries and chat history.";
 
     root.innerHTML = `
-        <h1>Your account</h1>
+        ${pageHead("Your account")}
         <section class="card">
             <div class="row">
                 <h2>Details</h2>

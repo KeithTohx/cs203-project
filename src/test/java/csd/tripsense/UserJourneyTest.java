@@ -126,6 +126,8 @@ class UserJourneyTest {
         earthquake = newsRepository.saveAndFlush(earthquake);
 
         Impact impact = new Impact();
+        // confirmed by the traveller, which is what makes it eligible for advice
+        impact.setRejected(false);
         impact.setUser(traveller);
         impact.setItinerary(itinerary);
         impact.setActivity(skiDay);

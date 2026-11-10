@@ -108,6 +108,11 @@ public class RecommendationServiceImpl implements RecommendationService {
 
         List<Recommendation> made = new ArrayList<>();
         for (Impact impact : impactService.findImpacted(userId, itineraryId)) {
+            // only news the traveller confirmed affects them. rejected is null until they look,
+            // so this also stops one press asking the model about every story on the trip
+            if (!Boolean.FALSE.equals(impact.getRejected())) {
+                continue;
+            }
             made.add(forImpact(itinerary, impact, prefs, version));
         }
         markStale(made, prefs);

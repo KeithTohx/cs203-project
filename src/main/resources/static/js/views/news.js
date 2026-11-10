@@ -1,6 +1,6 @@
 // stored news, newest first, with older stories on demand and a filter for news affecting your trips
 import { api } from "../api.js";
-import { emptyState, escapeHtml, hostnameOf, newsTitleOf, safeUrl, showError, timeTag } from "../util.js";
+import { emptyState, escapeHtml, hostnameOf, loading, newsTitleOf, pageHead, safeUrl, showError, timeTag } from "../util.js";
 import { icon } from "../icons.js";
 
 // small enough to read through, and the backend caps a page at 100 anyway
@@ -94,13 +94,11 @@ export async function showNews(root, user, reauth) {
     };
 
     root.innerHTML = `
-        <h1>News</h1>
-        <p class="meta">Travel news the system has picked up, newest first. New stories are added automatically.</p>
+        ${pageHead("News")}
+        <p class="meta page-intro">Travel news the system has picked up, newest first. New stories are added automatically.</p>
         <div id="news-switch"></div>
         <ul class="news-list" id="news-list"></ul>
-        <div id="news-status" role="status">
-            <div class="msg">Loading…</div>
-        </div>
+        <div id="news-status" role="status">${loading()}</div>
         <p class="pager">
             <button class="ghost" type="button" id="load-more" hidden>Load older news</button>
         </p>
