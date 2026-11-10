@@ -472,6 +472,7 @@ class ImpactServiceImplTest {
     @DisplayName("Should delete the impact when it exists")
     void deleteImpact_ShouldDelete_WhenImpactExists() {
         when(impactRepository.existsById(3L)).thenReturn(true);
+        when(impactRepository.findById(3L)).thenReturn(Optional.of(rejectableImpact(3L, null, false)));
 
         impactService.deleteImpact(3L);
 

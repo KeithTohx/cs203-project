@@ -80,8 +80,11 @@ class RecommendationServiceImplTest {
         itineraryService = mock(ItineraryService.class);
         chatService = mock(ChatService.class);
         preferenceService = mock(PreferenceService.class);
+        var writeGuard = mock(RecommendationWriteGuard.class);
+        org.mockito.Mockito.lenient().when(writeGuard.saveIfCurrent(any(), any())).thenAnswer(inv ->
+                ((java.util.function.Supplier<Recommendation>) inv.getArgument(1)).get());
         service = new RecommendationServiceImpl(recommendations, options, impactService,
-                itineraryService, chatService, preferenceService, new csd.tripsense.itinerary.ItineraryAccess(mock(csd.tripsense.user.UserRepository.class)));
+                itineraryService, chatService, preferenceService, new csd.tripsense.itinerary.ItineraryAccess(mock(csd.tripsense.user.UserRepository.class)), writeGuard);
 
         // deep stubs so we can say "its user has id 1 and its country is Japan" without building a
         // Country object, which this test has no reason to know about

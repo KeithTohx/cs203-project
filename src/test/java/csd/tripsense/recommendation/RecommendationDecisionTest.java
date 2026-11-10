@@ -81,8 +81,11 @@ class RecommendationDecisionTest {
         PreferenceService preferenceService = mock(PreferenceService.class);
         preferences = new UserPreference(null);
         lenient().when(preferenceService.getPreferences(anyLong())).thenReturn(preferences);
+        var writeGuard = mock(RecommendationWriteGuard.class);
+        lenient().when(writeGuard.saveIfCurrent(any(), any())).thenAnswer(inv ->
+                ((java.util.function.Supplier<Recommendation>) inv.getArgument(1)).get());
         service = new RecommendationServiceImpl(recommendations, options, impactService,
-                itineraryService, chatService, preferenceService, access);
+                itineraryService, chatService, preferenceService, access, writeGuard);
 
         User owner = mock(User.class);
         when(owner.getId()).thenReturn(karwei.getId());

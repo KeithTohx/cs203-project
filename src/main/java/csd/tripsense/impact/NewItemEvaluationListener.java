@@ -56,6 +56,12 @@ public class NewItemEvaluationListener {
     @TransactionalEventListener(phase=TransactionPhase.AFTER_COMMIT,fallbackExecution=true)
     public void onActivityCreated(ActivityCreatedEvent event) { enqueue(event.activityId(),true); }
 
+    @TransactionalEventListener(phase=TransactionPhase.AFTER_COMMIT,fallbackExecution=true)
+    public void onItineraryEdited(ItineraryEditedEvent event) { enqueue(event.itineraryId(),false); }
+
+    @TransactionalEventListener(phase=TransactionPhase.AFTER_COMMIT,fallbackExecution=true)
+    public void onActivityEdited(ActivityEditedEvent event) { enqueue(event.activityId(),true); }
+
     private void enqueue(Long targetId,boolean activity) {
         if (!enabled) return;
         try { queue.enqueue(targetId,activity); }

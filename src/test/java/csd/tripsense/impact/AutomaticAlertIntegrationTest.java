@@ -54,7 +54,11 @@ class AutomaticAlertIntegrationTest {
     @Autowired ActivityService activityService;
     @Autowired ImpactRepository impacts;
     @Autowired ImpactService evaluator;
-    @Autowired ImpactEvaluationQueue queue;
+    @MockitoSpyBean ImpactEvaluationQueue queue;
+    @Autowired PendingEvaluationRequestRepository requests;
+    @Autowired EvaluationRequestRecovery requestRecovery;
+    @Autowired csd.tripsense.recommendation.RecommendationService advice;
+    @Autowired csd.tripsense.recommendation.RecommendationRepository recommendations;
     @Autowired AssessmentSourceGuard sourceGuard;
     @Autowired PendingImpactEvaluationRepository tasks;
     @Autowired AlertService alerts;
@@ -73,6 +77,7 @@ class AutomaticAlertIntegrationTest {
         // Keep real transactional event handling, but drive the worker deterministically in tests.
         doNothing().when(listener).retryPending();
         tasks.deleteAll();
+        requests.deleteAll();
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         owner = users.saveAndFlush(new User(suffix + "@example.com", "user" + suffix, "long-enough-hash", "USER"));
         country = new Country(); country.setName("Country " + suffix); country = countries.saveAndFlush(country);
@@ -129,6 +134,7 @@ class AutomaticAlertIntegrationTest {
         var tx = new TransactionTemplate(transactions);
         Long id = tx.execute(status -> { var trip = newTrip(); status.setRollbackOnly(); return trip.getId(); });
         assertThat(trips.findById(id)).isEmpty();
+        assertThat(requests.findById(PendingEvaluationRequest.key(id,false))).isEmpty();
         assertThat(tasks.count()).isZero();
         listener.processPending(); verifyNoInteractions(ai);
     }
@@ -443,5 +449,117 @@ class AutomaticAlertIntegrationTest {
         verify(ai,times(1)).ask(anyString(),any(Class.class));
         var alert=alerts.list(owner.getId(),false,null,20).content().getFirst();
         assertThat(email.claim(alert.id(),Instant.now().plusSeconds(1)).orElseThrow().partialAssessment()).isFalse();
+    }
+
+    @Test void editedDuringModelCallDiscardsOldVerdictThenEvaluatesNewDetails() {
+        Itinerary trip=newTrip(); Activity original=activity(trip);
+        tasks.deleteAll();
+        doAnswer(inv -> {
+            Activity changes=new Activity(); changes.setName("New activity"); changes.setAddress("Different city");
+            activityService.updateActivity(original.getId(),changes);
+            var c=((Class<?>)inv.getArgument(1)).getDeclaredConstructor(boolean.class,String.class);
+            c.setAccessible(true); return c.newInstance(true,"Old details");
+        }).when(ai).ask(anyString(),any(Class.class));
+        assertThatThrownBy(() -> evaluator.evaluateActivityForNews(original,article))
+                .isInstanceOf(org.springframework.dao.OptimisticLockingFailureException.class);
+        assertThat(alerts.list(owner.getId(),false,null,20).content()).isEmpty();
+        verdict(); listener.processPending();
+        assertThat(impacts.findFirstByNewsIdAndActivityId(article.getId(),original.getId()))
+                .hasValueSatisfying(i -> assertThat(i.getJudgedRevision()).isEqualTo(1));
+    }
+
+    @Test void committedSchedulingRequestRecoversAfterQueueInsertFails() {
+        // This article also lies outside the ingest job's shorter three-day window.
+        article.setPublishedAt(LocalDateTime.now(ZoneOffset.UTC).minusDays(4)); news.saveAndFlush(article);
+        doThrow(new org.springframework.dao.DataAccessResourceFailureException("temporary failure"))
+                .when(queue).enqueue(anyLong(),eq(false));
+        Itinerary trip=newTrip();
+        assertThat(tasks.count()).isZero();
+        assertThat(requests.findById(PendingEvaluationRequest.key(trip.getId(),false))).isPresent();
+        doCallRealMethod().when(queue).enqueue(anyLong(),eq(false));
+        requestRecovery.recover(); listener.processPending();
+        assertThat(requests.findById(PendingEvaluationRequest.key(trip.getId(),false))).isEmpty();
+        assertThat(impacts.findByItineraryId(trip.getId())).hasSize(1);
+    }
+
+    @Test void countryEditClearsOldVerdictsAdviceAndRequeuesBothScopes() {
+        Itinerary trip=newTrip(); Activity original=activity(trip);
+        listener.processPending();
+        var oldImpact=impacts.findFirstByNewsIdAndActivityId(article.getId(),original.getId()).orElseThrow();
+        var oldAdvice=new csd.tripsense.recommendation.Recommendation(); oldAdvice.setImpact(oldImpact);
+        oldAdvice.setAction(csd.tripsense.recommendation.Action.MONITOR);
+        oldAdvice.setSeverity(csd.tripsense.recommendation.Severity.HIGH);
+        oldAdvice.setStatus(csd.tripsense.recommendation.RecommendationStatus.PENDING);
+        recommendations.saveAndFlush(oldAdvice);
+        Country destination=new Country(); destination.setName("Destination "+UUID.randomUUID());
+        destination=countries.saveAndFlush(destination);
+        News destinationArticle=article("Destination disruption"); destinationArticle.setCountries(Set.of(destination));
+        destinationArticle=news.saveAndFlush(destinationArticle);
+        Itinerary changes=new Itinerary(); changes.setName(trip.getName()); changes.setCountry(destination);
+        changes.setDateStart(trip.getDateStart()); changes.setDateEnd(trip.getDateEnd());
+        itineraryService.updateItinerary(trip.getId(),changes);
+        assertThat(impacts.findByItineraryId(trip.getId())).isEmpty();
+        assertThat(recommendations.findByImpactItineraryId(trip.getId())).isEmpty();
+        listener.processPending();
+        Long expectedArticle=destinationArticle.getId();
+        assertThat(activities.findById(original.getId()).orElseThrow().getCountry().getId()).isEqualTo(destination.getId());
+        assertThat(impacts.findByItineraryId(trip.getId())).hasSize(2)
+                .allSatisfy(i -> { assertThat(i.getNews().getId()).isEqualTo(expectedArticle);
+                    assertThat(i.getJudgedRevision()).isEqualTo(1); });
+    }
+
+
+    @Test void adviceInFlightCannotBeAttachedToReplacementVerdict() {
+        Itinerary trip=newTrip(); Activity original=activity(trip); listener.processPending();
+        doAnswer(inv -> {
+            Class<?> type=inv.getArgument(1);
+            if (type.getSimpleName().equals("Suggestion")) {
+                Activity changes=new Activity(); changes.setName("Changed activity"); changes.setAddress("New location");
+                activityService.updateActivity(original.getId(),changes);
+                evaluator.evaluateActivityForNews(activities.findById(original.getId()).orElseThrow(),article);
+                var c=type.getDeclaredConstructor(String.class,String.class,Long.class,String.class);
+                c.setAccessible(true); return c.newInstance("HIGH","MONITOR",null,"Advice for the old activity");
+            }
+            var c=type.getDeclaredConstructor(boolean.class,String.class);
+            c.setAccessible(true); return c.newInstance(true,"Current details");
+        }).when(ai).ask(anyString(),any(Class.class));
+        assertThatThrownBy(() -> advice.generate(trip.getId()))
+                .isInstanceOf(org.springframework.dao.OptimisticLockingFailureException.class);
+        assertThat(recommendations.findByImpactItineraryId(trip.getId()))
+                .noneMatch(r -> "Advice for the old activity".equals(r.getAdvice()));
+    }
+
+    @Test void renameCanSendFreshTripAlertWithoutResendingUnchangedActivity() {
+        Itinerary trip=newTrip(); Activity original=activity(trip); listener.processPending();
+        var initial=alerts.list(owner.getId(),false,null,20).content();
+        var first=email.claim(initial.getFirst().id(),Instant.now().plusSeconds(1)).orElseThrow();
+        email.sent(first,Instant.now());
+        Long activityVerdict=impacts.findFirstByNewsIdAndActivityId(article.getId(),original.getId()).orElseThrow().getId();
+        Itinerary changes=new Itinerary(); changes.setName("Renamed trip"); changes.setCountry(trip.getCountry());
+        changes.setDateStart(trip.getDateStart()); changes.setDateEnd(trip.getDateEnd());
+        itineraryService.updateItinerary(trip.getId(),changes); listener.processPending();
+        assertThat(impacts.findFirstByNewsIdAndActivityId(article.getId(),original.getId()).orElseThrow().getId())
+                .isEqualTo(activityVerdict);
+        var fresh=alerts.list(owner.getId(),false,null,20).content().stream()
+                .filter(a -> a.activityId()==null).findFirst().orElseThrow();
+        var followup=email.claim(fresh.id(),Instant.now().plusSeconds(2)).orElseThrow();
+        assertThat(followup.key()).isNotEqualTo(first.key());
+        assertThat(followup.relatedAlerts()).hasSize(1);
+        assertThat(followup.alert().itineraryName()).isEqualTo("Renamed trip");
+    }
+
+    @Test void readInvalidationsArePublishedOnlyAfterCommit() {
+        Itinerary trip=newTrip(); listener.processPending(); clearInvocations(streams);
+        new TransactionTemplate(transactions).executeWithoutResult(status -> {
+            alerts.markAllRead(owner.getId(),null);
+            verify(streams,never()).onChanged(any());
+            status.setRollbackOnly();
+        });
+        verify(streams,never()).onChanged(any());
+        new TransactionTemplate(transactions).executeWithoutResult(status -> {
+            alerts.markAllRead(owner.getId(),null);
+            verify(streams,never()).onChanged(any());
+        });
+        verify(streams).onChanged(argThat(e -> e.userId().equals(owner.getId())));
     }
 }

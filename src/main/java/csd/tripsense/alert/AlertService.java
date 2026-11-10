@@ -51,6 +51,7 @@ public class AlertService {
         requireActiveAccount(userId);
         Alert alert = alerts.findOwned(id, userId).orElseThrow(() -> new AlertNotFoundException(id));
         alert.markRead();
+        events.publishEvent(new AlertsChangedEvent(userId));
         return AlertResponse.from(alerts.save(alert));
     }
 
@@ -60,6 +61,7 @@ public class AlertService {
         Alert anchor = alerts.findOwned(id, userId).orElseThrow(() -> new AlertNotFoundException(id));
         alerts.markGroupRead(userId, anchor.getImpact().getItinerary().getId(),
                 anchor.getImpact().getNews().getId(), id, Instant.now());
+        events.publishEvent(new AlertsChangedEvent(userId));
         return new UnreadCount(alerts.countUnread(userId));
     }
 
@@ -73,6 +75,7 @@ public class AlertService {
         requireActiveAccount(userId);
         Instant now = Instant.now();
         alerts.markAllReadForUser(userId, upToId, now);
+        events.publishEvent(new AlertsChangedEvent(userId));
         return new UnreadCount(alerts.countUnread(userId));
     }
 

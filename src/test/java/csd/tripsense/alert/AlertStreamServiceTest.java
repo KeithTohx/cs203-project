@@ -407,4 +407,14 @@ class AlertStreamServiceTest {
                     .toList();
         }
     }
+
+    @Test void historyInvalidationReachesEveryDeviceOfTheOwner() {
+        streamService.subscribe(1L,loggedInSession(1L));
+        streamService.subscribe(1L,loggedInSession(1L));
+        streamService.subscribe(2L,loggedInSession(2L));
+        streamService.onChanged(new AlertsChangedEvent(1L));
+        assertEquals(2,emitters.get(0).readyEvents());
+        assertEquals(2,emitters.get(1).readyEvents());
+        assertEquals(1,emitters.get(2).readyEvents());
+    }
 }

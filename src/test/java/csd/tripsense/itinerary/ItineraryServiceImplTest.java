@@ -341,6 +341,9 @@ class ItineraryServiceImplTest {
     void deleteItinerary_ShouldDelete_WhenFound() {
         // Arrange
         when(itineraryRepository.existsById(1L)).thenReturn(true);
+        Itinerary itinerary = new Itinerary();
+        itinerary.setUser(new User("owner@example.com", "owner", "hash", "USER"));
+        when(itineraryRepository.findById(1L)).thenReturn(Optional.of(itinerary));
 
         // Act
         itineraryService.deleteItinerary(1L);

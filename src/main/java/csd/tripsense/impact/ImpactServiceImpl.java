@@ -79,17 +79,23 @@ public class ImpactServiceImpl implements ImpactService {
     }
 
     @Override
+    @org.springframework.transaction.annotation.Transactional
     public void deleteImpact(Long id){
         if (!impacts.existsById(id)) {
             throw new ImpactNotFoundException(id);
         }
+        Impact removed = getImpact(id);
+        Long userId = removed.getItinerary().getUser().getId();
         impacts.deleteById(id);
+        events.publishEvent(new csd.tripsense.alert.AlertsChangedEvent(userId));
     }
 
     @Override
+    @org.springframework.transaction.annotation.Transactional
     public Impact setRejected(Long id, boolean rejected) {
         Impact impact = getImpact(id);
         impact.setRejected(rejected);
+        events.publishEvent(new csd.tripsense.alert.AlertsChangedEvent(impact.getItinerary().getUser().getId()));
         return impacts.save(impact);
     }
 
@@ -246,6 +252,7 @@ public class ImpactServiceImpl implements ImpactService {
 
     private Impact save(Impact impact, Itinerary itinerary, News news, Activity activity,
                         Verdict verdict) {
+        impact.setJudgedRevision(activity == null ? itinerary.currentAssessmentRevision() : activity.currentAssessmentRevision());
         impact.setUser(itinerary.getUser());
         impact.setNews(news);
         impact.setItinerary(itinerary);

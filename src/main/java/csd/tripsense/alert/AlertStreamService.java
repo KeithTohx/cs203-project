@@ -83,6 +83,13 @@ public class AlertStreamService {
         }
     }
 
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onChanged(AlertsChangedEvent event) {
+        Set<Connection> recipients = connections.get(event.userId());
+        if (recipients != null) recipients.forEach(connection -> send(connection,
+                SseEmitter.event().name("ready").data("Alert history changed. Reload saved history.")));
+    }
+
     // Package-private for deterministic tests without timing assertions.
     void deliver(AlertCreatedEvent event) {
         Set<Connection> recipients = connections.get(event.userId());

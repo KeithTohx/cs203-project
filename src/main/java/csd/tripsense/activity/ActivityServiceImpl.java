@@ -54,8 +54,13 @@ public class ActivityServiceImpl implements ActivityService {
     }
 
     @Override
+    @org.springframework.transaction.annotation.Transactional
     public Activity updateActivity(Long id, Activity newActivityInfo) {
         return activities.findById(id).map(activity -> {
+            boolean changed = !java.util.Objects.equals(activity.getName(), newActivityInfo.getName())
+                    || !java.util.Objects.equals(activity.getAddress(), newActivityInfo.getAddress())
+                    || !java.util.Objects.equals(activity.getDateStart(), newActivityInfo.getDateStart());
+            Long oldTrip = activity.getItinerary().getId();
             Itinerary itinerary = newActivityInfo.getItinerary() == null
                     ? activity.getItinerary()
                     : itineraryService.getItineraryById(newActivityInfo.getItinerary().getId());
@@ -65,15 +70,23 @@ public class ActivityServiceImpl implements ActivityService {
             activity.setAddress(newActivityInfo.getAddress());
             activity.setDateStart(newActivityInfo.getDateStart());
             activity.setDateEnd(newActivityInfo.getDateEnd());
-            return activities.save(activity);
+            changed |= !java.util.Objects.equals(oldTrip, itinerary.getId());
+            if (changed) activity.reviseAssessment();
+            Activity saved = activities.save(activity);
+            if (changed) events.publishEvent(new ActivityEditedEvent(saved.getId()));
+            return saved;
         }).orElseThrow(() -> new ActivityNotFoundException(id));
     }
 
     @Override
+    @org.springframework.transaction.annotation.Transactional
     public void deleteActivity(Long id) {
         if (!activities.existsById(id)) {
             throw new ActivityNotFoundException(id);
         }
+        var removed = activities.findById(id).orElseThrow();
+        Long userId = removed.getItinerary().getUser().getId();
         activities.deleteById(id);
+        events.publishEvent(new csd.tripsense.alert.AlertsChangedEvent(userId));
     }
 }

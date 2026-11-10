@@ -11,7 +11,7 @@ public class ImpactAssessmentIndex {
         // The dependency ensures Hibernate has added the nullable assessment_key column first.
         entityManagerFactory.getMetamodel().entity(Impact.class);
         database.execute("CREATE UNIQUE INDEX IF NOT EXISTS uk_impact_assessment_key ON impact (assessment_key)");
-        for (String table : new String[]{"itinerary", "activity"}) {
+        for (String table : new String[]{"itinerary", "activity", "impact"}) {
             // Backfill existing sources and cover raw SQL fixtures inserted after startup.
             database.execute("create trigger if not exists initialize_" + table + "_assessment_identity "
                     + "after insert on " + table + " when new.assessment_identity is null begin "

@@ -305,6 +305,7 @@ function connectStream() {
     stream.addEventListener("ready", () => {
         if (state.stream !== stream) return;
         recovering = false;
+        historyRevision += 1;
         stopPolling();
         refresh();
     });

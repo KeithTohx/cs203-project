@@ -88,7 +88,7 @@ class NewItemEvaluationListenerTest {
 
     // Drive the production durable worker directly, so no background thread or database is needed.
     private NewItemEvaluationListener listener(boolean enabled, int lookbackDays, int maxCalls) {
-        var queue=new ImpactEvaluationQueue(tasks,itineraries,activities,newsRepository,lookbackDays);
+        var queue=new ImpactEvaluationQueue(tasks,itineraries,activities,newsRepository,mock(PendingEvaluationRequestRepository.class),lookbackDays);
         var listener=new NewItemEvaluationListener(queue,tasks,itineraries,activities,newsRepository,impacts,
                 impactService,progress,enabled,maxCalls) {
             @Override public void retryPending() { /* The test explicitly drains persisted work below. */ }

@@ -19,27 +19,39 @@ public class ImpactEvaluationQueue {
     private final ActivityRepository activities;
     private final NewsRepository news;
     private final int lookbackDays;
+    private final PendingEvaluationRequestRepository requests;
 
     public ImpactEvaluationQueue(PendingImpactEvaluationRepository tasks, ItineraryRepository trips,
-            ActivityRepository activities, NewsRepository news,
+            ActivityRepository activities, NewsRepository news, PendingEvaluationRequestRepository requests,
             @Value("${impact.eval.new-itinerary.news-lookback-days:5}") int lookbackDays) {
         this.tasks = tasks; this.trips = trips; this.activities = activities; this.news = news;
+        this.requests = requests;
         this.lookbackDays = Math.max(1, lookbackDays);
     }
 
     /** Runs after source commit; a scheduling failure cannot roll back the saved trip/activity. */
     @Transactional(propagation=org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public void enqueue(Long id, boolean activity) {
-        if (tasks.existsByTargetIdAndActivity(id, activity)) return;
+        String requestKey = PendingEvaluationRequest.key(id, activity);
+        var request = requests.findById(requestKey);
+        if (tasks.existsByTargetIdAndActivity(id, activity)) {
+            requests.deleteById(requestKey);
+            return;
+        }
         Itinerary trip = activity
                 ? activities.findById(id).map(a -> a.getItinerary()).orElse(null)
                 : trips.findById(id).orElse(null);
         if (trip == null || trip.getCountry() == null || !trip.getUser().isEnabled()
-                || trip.getDateEnd() != null && trip.getDateEnd().isBefore(LocalDateTime.now())) return;
+                || trip.getDateEnd() != null && trip.getDateEnd().isBefore(LocalDateTime.now())) {
+            requests.deleteById(requestKey);
+            return;
+        }
         var articles = news.findByCountryIdSince(trip.getCountry().getId(),
-                LocalDateTime.now(ZoneOffset.UTC).minusDays(lookbackDays)).stream()
+                LocalDateTime.ofInstant(request.map(PendingEvaluationRequest::getRequestedAt)
+                        .orElseGet(Instant::now), ZoneOffset.UTC).minusDays(lookbackDays)).stream()
                 .map(n -> n.getId()).distinct().sorted().toList();
         if (!articles.isEmpty()) tasks.save(new PendingImpactEvaluation(id, activity, articles));
+        requests.deleteById(requestKey);
     }
 
     /** A short transaction; AI calls never hold a database transaction open. */

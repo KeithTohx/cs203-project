@@ -62,13 +62,14 @@ public class RecommendationServiceImpl implements RecommendationService {
     private final ChatService chatService;
     private final PreferenceService preferenceService;
     private final ItineraryAccess access;
+    private final RecommendationWriteGuard writeGuard;
 
     public RecommendationServiceImpl(RecommendationRepository recommendations,
                                      ActivityOptionRepository options,
                                      ImpactService impactService,
                                      ItineraryService itineraryService,
                                      ChatService chatService,
-                                     PreferenceService preferenceService, ItineraryAccess access) {
+                                     PreferenceService preferenceService, ItineraryAccess access, RecommendationWriteGuard writeGuard) {
         this.recommendations = recommendations;
         this.options = options;
         this.impactService = impactService;
@@ -76,6 +77,7 @@ public class RecommendationServiceImpl implements RecommendationService {
         this.chatService = chatService;
         this.preferenceService = preferenceService;
         this.access = access;
+        this.writeGuard = writeGuard;
     }
 
     /** the shape we ask the model to answer in */
@@ -557,7 +559,7 @@ public class RecommendationServiceImpl implements RecommendationService {
         // the version the advice was written for, taken before the model ran (see generate).
         // createdAt is only when it was saved, and is no use for deciding whether it is current
         target.setPreferencesVersion(version);
-        return recommendations.save(target);
+        return writeGuard.saveIfCurrent(impact, () -> recommendations.save(target));
     }
 
     /**

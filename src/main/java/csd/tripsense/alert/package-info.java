@@ -7,7 +7,7 @@
  * before this feature are excluded. Trip/activity impacts are separate notifications;
  * grouping different news articles about one event belongs to CS203-26.
  *
- * <p>API contract for future frontend integration (frontend files are unchanged):
+ * <p>API contract for frontend integration:
  * <ul>
  * <li>GET /api/alerts?beforeId=&amp;size=20&amp;unreadOnly=false: saved history, newest first, and
  * unreadCount. Send the response's nextBeforeId back as beforeId to load older alerts.</li>
@@ -68,13 +68,15 @@
  *
  * <p>After itinerary/activity creation commits, a separate transaction queues recent
  * country-matched news. A queue failure is logged without rolling back the saved trip/activity;
- * a crash or failure before queuing can leave that item without a task. Once queued, the new-item
+ * the source transaction records a durable scheduling request, so a crash or failure before queuing is retried. Once queued, the new-item
  * worker resumes saved progress after failures, restarts, or its per-pass AI limit; its article
  * snapshot does not expire with the news lookback.
  * Deleting a source removes its pending tasks atomically through SQLite triggers, including
  * cascading deletions. New tasks have unique identities so an obsolete worker cannot advance
  * or delete a replacement task after SQLite reuses the source id.
- * In-flight model results also validate immutable trip/activity identities under the same
+ * Edits increment assessment revisions, clear obsolete verdicts and their advice/alerts, and queue fresh assessments.
+ * Reads, rejections, edits and deletions invalidate live history across devices after commit.
+ * In-flight model results also validate revisions and immutable trip/activity identities under the same
  * SQLite write lock as the verdict save, so a deleted source's result cannot alert a replacement.
  * Disable impact.eval.new-itinerary.enabled in tests that create unrelated fixtures.
  *

@@ -29,6 +29,14 @@ public class Impact {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     Long id;
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @lombok.Setter(lombok.AccessLevel.NONE)
+    @Column(updatable=false)
+    private String assessmentIdentity = java.util.UUID.randomUUID().toString();
+
+    @jakarta.persistence.PrePersist
+    private void initializeAssessmentIdentity() { assessmentIdentity = java.util.UUID.randomUUID().toString(); }
+
     // Nullable for historical rows; all newly assessed rows have a stable unique key.
     @Column(name = "assessment_key", length = 120)
     private String assessmentKey;
@@ -65,6 +73,18 @@ public class Impact {
     // Null on pre-alert rows: recovery must not notify everyone about historical assessments.
     @Column
     private Boolean alertEligible;
+
+    @Column
+    private Long judgedRevision;
+
+    public boolean judgedOnCurrentDetails() {
+        long revision = activity == null ? itinerary.currentAssessmentRevision() : activity.currentAssessmentRevision();
+        return (judgedRevision == null ? 0 : judgedRevision) == revision;
+    }
+
+    @jakarta.persistence.OneToMany(mappedBy = "impact", cascade = jakarta.persistence.CascadeType.REMOVE)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private java.util.List<csd.tripsense.recommendation.Recommendation> recommendations;
 
     // An alert contains personal trip data, so remove it whenever its source impact is removed.
     @jakarta.persistence.OneToMany(mappedBy = "impact", cascade = jakarta.persistence.CascadeType.REMOVE,

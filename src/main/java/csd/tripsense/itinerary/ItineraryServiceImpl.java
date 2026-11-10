@@ -80,22 +80,43 @@ public class ItineraryServiceImpl implements ItineraryService {
     }
 
     @Override 
+    @org.springframework.transaction.annotation.Transactional
     public Itinerary updateItinerary(Long id, Itinerary newItineraryInfo){
         return itineraries.findById(id).map(itinerary -> {
+            Long oldCountry = itinerary.getCountry() == null ? null : itinerary.getCountry().getId();
+            Long newCountry = newItineraryInfo.getCountry() == null ? null : newItineraryInfo.getCountry().getId();
+            boolean countryChanged = !java.util.Objects.equals(oldCountry, newCountry);
+            boolean changed = countryChanged
+                    || !java.util.Objects.equals(itinerary.getName(), newItineraryInfo.getName())
+                    || !java.util.Objects.equals(itinerary.getDateStart(), newItineraryInfo.getDateStart())
+                    || !java.util.Objects.equals(itinerary.getDateEnd(), newItineraryInfo.getDateEnd());
             itinerary.setCountry(newItineraryInfo.getCountry());
             itinerary.setName(newItineraryInfo.getName());
             itinerary.setDateStart(newItineraryInfo.getDateStart());
             itinerary.setDateEnd(newItineraryInfo.getDateEnd());
-            return itineraries.save(itinerary);
+            if (changed) itinerary.reviseAssessment();
+            if (countryChanged && itinerary.getActivities() != null) {
+                for (var activity : itinerary.getActivities()) {
+                    activity.setCountry(itinerary.getCountry());
+                    activity.reviseAssessment();
+                }
+            }
+            Itinerary saved = itineraries.save(itinerary);
+            if (changed) events.publishEvent(new ItineraryEditedEvent(saved.getId()));
+            return saved;
         }).orElseThrow(() -> new ItineraryNotFoundException(id));
     }
 
     @Override 
+    @org.springframework.transaction.annotation.Transactional
     public void deleteItinerary(Long id){
         if (!itineraries.existsById(id)) {
             throw new ItineraryNotFoundException(id);
         }
+        var removed = itineraries.findById(id).orElseThrow();
+        Long userId = removed.getUser().getId();
         itineraries.deleteById(id);
+        events.publishEvent(new csd.tripsense.alert.AlertsChangedEvent(userId));
     }
 
         @Override

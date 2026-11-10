@@ -293,6 +293,16 @@
         assert(f.refreshCalls()===before+1,"An event received during loading needs one follow-up refresh");
         passed.push("coalesce live events while a history request is slow");
     }
+    {
+        const history={promise:Promise.resolve(readHistory())}, f=fixture(null,history);
+        f.alerts.mount(); await settle();
+        f.alerts.connect(); f.alerts.ready(); await settle();
+        const changes=[]; f.alerts.onAlertsChanged(change=>changes.push(change));
+        f.alerts.ready(); await settle();
+        assert(changes.length===1 && changes[0].outOfStep===true,
+            "A server invalidation must refresh older history even if the newest page and unread count are unchanged");
+        passed.push("reload older history after a server invalidation from another device");
+    }
     globalThis.alertSessionTestResults = { ok: true, passed };
     globalThis.console?.log(`${passed.length} alert session tests passed`);
 })().catch(error => {

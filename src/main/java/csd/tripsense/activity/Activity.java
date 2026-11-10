@@ -41,6 +41,14 @@ public class Activity {
         assessmentIdentity = java.util.UUID.randomUUID().toString();
     }
 
+    // Null on older rows means revision zero; identity still identifies the row's lifetime.
+    @JsonIgnore
+    @Setter(lombok.AccessLevel.NONE)
+    private Long assessmentRevision;
+
+    public long currentAssessmentRevision() { return assessmentRevision == null ? 0 : assessmentRevision; }
+    public void reviseAssessment() { assessmentRevision = currentAssessmentRevision() + 1; }
+
     @ManyToOne
     @JoinColumn(name = "itinerary_id", nullable = false)
     private Itinerary itinerary;
