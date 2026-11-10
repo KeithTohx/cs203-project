@@ -47,7 +47,10 @@ public class ActivityServiceImpl implements ActivityService {
 
     @Override
     public Optional<Long> findRevision(Activity activity) {
-        return activities.findRevision(activity.getId(), activity.getIdentityKey());
+        // sqlite hands the coalesced revision back as an Integer, so normalise to Long, the same
+        // as ItineraryServiceImpl.findRevision, otherwise the revision check never matches
+        return activities.findRevision(activity.getId(), activity.getIdentityKey())
+                .map(Number::longValue);
     }
 
     @Override

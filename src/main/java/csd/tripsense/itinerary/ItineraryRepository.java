@@ -58,10 +58,12 @@ public interface ItineraryRepository extends JpaRepository<Itinerary, Long> {
 
     // read straight from the database, never from an entity already loaded, so the evaluator
     // sees an edit that committed while the model was answering. empty once the trip is deleted,
-    // and also once its id has gone to a new trip, which has a different identity key
+    // and also once its id has gone to a new trip, which has a different identity key.
+    // the type is Number, not Long: sqlite hands coalesce back as an Integer, and the service
+    // normalises it to a Long so a later Optional comparison does not silently miss
     @Query("""
             select coalesce(i.revision, 0L) from Itinerary i
             where i.id = :id and i.identityKey = :identityKey
             """)
-    Optional<Long> findRevision(@Param("id") Long id, @Param("identityKey") String identityKey);
+    Optional<Number> findRevision(@Param("id") Long id, @Param("identityKey") String identityKey);
 }
