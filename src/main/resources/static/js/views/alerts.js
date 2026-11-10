@@ -1,10 +1,10 @@
 // every alert, newest first, with older ones on demand and a filter for unread ones
 import { api } from "../api.js";
 import {
-    alertMetaParts, alertTitle, findGroupWithAlert, groupAlerts, isGroupUnread, markAlertsRead, markAllAlertsRead,
-    onAlertsChanged, waitForSaves,
+    alertMetaParts, alertTitle, findGroupWithAlert, getAdminChanges, groupAlerts, isGroupUnread, markAdminChangesRead,
+    markAlertsRead, markAllAlertsRead, onAlertsChanged, waitForSaves,
 } from "../alerts.js";
-import { emptyState, escapeHtml, hostnameOf, safeUrl, showError } from "../util.js";
+import { emptyState, escapeHtml, hostnameOf, safeUrl, showError, timeTag } from "../util.js";
 import { icon } from "../icons.js";
 
 // the same as the bell loads, the backend caps a page at 100
@@ -49,6 +49,43 @@ const createAlertItem = group => {
     `;
 };
 
+// what an admin changed in the trips, newest first. the bell shows them all as one alert, this lists each
+const createAdminChanges = ({ content, unreadCount }) => {
+    if (!content.length) return "";
+
+    const items = content.map(change => {
+        const unread = change.readAt == null;
+        return `
+            <li class="news-item alert-item${unread ? " is-new" : ""}">
+                <div class="news-head">
+                    <span>
+                        ${unread ? `<span class="sr-only">New: </span>` : ""}${escapeHtml(change.message)}
+                    </span>
+                    ${unread ? `<span class="tag">New</span>` : ""}
+                </div>
+                <p class="meta">${timeTag(change.createdAt)}</p>
+            </li>
+        `;
+    }).join("");
+
+    const readButton = unreadCount
+        ? `<button class="link-button" type="button" data-read-admin-changes>Mark as read</button>`
+        : "";
+
+    return `
+        <section class="card" aria-labelledby="admin-changes-title">
+            <div class="row">
+                <h2 id="admin-changes-title">Changes by an admin</h2>
+                ${readButton}
+            </div>
+            <p class="meta">An admin changed these things in your trips, for example while testing or fixing a problem.</p>
+            <ul class="news-list">
+                ${items}
+            </ul>
+        </section>
+    `;
+};
+
 const createViewSwitch = (view, unreadCount) => `
     <div class="view-switch" role="group" aria-label="Which alerts to show">
         <button class="ghost small" type="button" data-view="all" aria-pressed="${view === "all"}">All alerts</button>
@@ -63,6 +100,7 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
     root.innerHTML = `
         <h1>Alerts</h1>
         <p class="meta">News that affects your trips, newest first.</p>
+        <div id="admin-changes"></div>
         <div id="alerts-switch"></div>
         <div id="alerts-error"></div>
         <ul class="news-list" id="alerts-list"></ul>
@@ -79,6 +117,30 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
     const loadMoreButton = root.querySelector("#load-more");
     const switchContainer = root.querySelector("#alerts-switch");
     const errorBox = root.querySelector("#alerts-error");   // kept apart from the status, which every redraw clears
+    const adminChangesBox = root.querySelector("#admin-changes");
+
+    // drawn on its own, so the alert list and its focus handling are left alone
+    const drawAdminChanges = () => {
+        const focusWasOnRead = document.activeElement?.matches?.("[data-read-admin-changes]");
+        adminChangesBox.innerHTML = createAdminChanges(getAdminChanges());
+
+        // the button is gone once they are read, so focus moves to the heading instead of the page
+        if (focusWasOnRead) {
+            const heading = adminChangesBox.querySelector("h2");
+            heading?.setAttribute("tabindex", "-1");
+            heading?.focus();
+        }
+    };
+
+    adminChangesBox.addEventListener("click", async event => {
+        if (!event.target.closest("[data-read-admin-changes]")) return;
+        errorBox.innerHTML = "";
+        try {
+            await markAdminChangesRead();
+        } catch (error) {
+            showError(errorBox, error, onAuthLost);
+        }
+    });
 
     let currentView = "all";
     let loadedAlerts = [];
@@ -338,6 +400,11 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
     // keeps this list in step with the bell: new alerts go on top and reads show here too.
     // a failed save or a count that moved elsewhere, eg in another tab, means the list is loaded again
     const stopListening = onAlertsChanged(change => {
+        if (change.adminChanges) {
+            drawAdminChanges();
+            return;
+        }
+
         if (change.saveFailed || change.outOfStep) {
             reload();
             return;
@@ -357,5 +424,6 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
     });
     onLeave(stopListening);
 
+    drawAdminChanges();
     await loadMore();
 }

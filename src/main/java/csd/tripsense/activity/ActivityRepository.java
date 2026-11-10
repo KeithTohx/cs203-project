@@ -14,6 +14,9 @@ public interface ActivityRepository extends JpaRepository<Activity, Long> {
 
     List<Activity> findByItineraryIdOrderByDateStart(Long itineraryId);
 
+    // every activity on every one of a user's trips, for the admin console
+    List<Activity> findByItineraryUserIdOrderByDateStart(Long userId);
+
     // Activities in one country that have not finished yet and have no impact row for this news,
     // so one article is never judged twice against the same activity. The itinerary and its user
     // are fetched up front because an Impact needs the user and open-in-view is off.

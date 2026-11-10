@@ -34,6 +34,21 @@ public class AuditService {
     public static final String ITINERARY_CREATED = "ITINERARY_CREATED";
     public static final String ITINERARY_UPDATED = "ITINERARY_UPDATED";
     public static final String ITINERARY_DELETED = "ITINERARY_DELETED";
+    // the admin console: an account made by an admin, and an admin changing what hangs off
+    // someone's trip. one action per kind and change, like the ITINERARY_ ones, so the log filter
+    // can pick out eg every deleted impact
+    public static final String ACCOUNT_CREATED = "ACCOUNT_CREATED";
+    public static final String ACTIVITY_CREATED = "ACTIVITY_CREATED";
+    public static final String ACTIVITY_UPDATED = "ACTIVITY_UPDATED";
+    public static final String ACTIVITY_DELETED = "ACTIVITY_DELETED";
+    public static final String IMPACT_CREATED = "IMPACT_CREATED";
+    public static final String IMPACT_UPDATED = "IMPACT_UPDATED";
+    // an out of date verdict an edit removed, kept apart from IMPACT_DELETED so the log shows
+    // which verdicts went because the trip changed rather than because someone deleted them
+    public static final String IMPACT_CLEARED = "IMPACT_CLEARED";
+    public static final String RECOMMENDATION_CREATED = "RECOMMENDATION_CREATED";
+    public static final String RECOMMENDATION_UPDATED = "RECOMMENDATION_UPDATED";
+    public static final String RECOMMENDATION_DELETED = "RECOMMENDATION_DELETED";
 
     // a person overriding what the AI decided. the details keep what the AI said, so the trail still
     // shows what was overridden after the verdict or advice itself is gone

@@ -65,6 +65,12 @@ public class ActivityServiceImpl implements ActivityService {
     @Override
     @Transactional
     public Activity updateActivity(Long id, Activity newActivityInfo) {
+        return updateActivity(id, newActivityInfo, false);
+    }
+
+    @Override
+    @Transactional
+    public Activity updateActivity(Long id, Activity newActivityInfo, boolean keepVerdicts) {
         return activities.findById(id).map(activity -> {
             Long oldItineraryId = itineraryId(activity.getItinerary());
             String oldName = activity.getName();
@@ -95,7 +101,7 @@ public class ActivityServiceImpl implements ActivityService {
 
             Activity saved = activities.save(activity);
             if (judgedDetailsChanged) {
-                events.publishEvent(new ActivityEditedEvent(saved.getId()));
+                events.publishEvent(new ActivityEditedEvent(saved.getId(), keepVerdicts));
             }
             return saved;
         }).orElseThrow(() -> new ActivityNotFoundException(id));

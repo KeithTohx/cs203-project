@@ -6,7 +6,7 @@ import { showItineraries } from "./views/itineraries.js";
 import { showAccount } from "./views/account.js";
 import { showEditDetails, showChangePassword, showDeleteAccount, showEditPreferences } from "./views/account-edit.js";
 import { showEditItinerary } from "./views/itinerary-edit.js";
-import { showAdminUsers } from "./views/admin-users.js";
+import { showAdminUsers, showNewUser } from "./views/admin-users.js";
 import { showAdminUser } from "./views/admin-user.js";
 import { showAdminAudit } from "./views/admin-audit.js";
 import { showNews } from "./views/news.js";
@@ -36,6 +36,8 @@ const routes = [
 	{ path: "/itineraries/:id/edit", role: "USER", view: context => showEditItinerary(context.root, context.user, context.reauth, context.params.id) },
 	{ path: "/itineraries/:id/activities/new", role: "USER", view: context => showEditItinerary(context.root, context.user, context.reauth, context.params.id, true) },
 	{ path: "/admin/users", nav: "Users", icon: "users", role: "ADMIN", view: context => showAdminUsers(context.root, context.user, context.reauth) },
+	// before "/:id", or "new" would be read as an id
+	{ path: "/admin/users/new", role: "ADMIN", view: context => showNewUser(context.root, context.user, context.reauth) },
 	{ path: "/admin/users/:id", role: "ADMIN", view: context => showAdminUser(context.root, context.user, context.reauth, context.params.id) },
 	{ path: "/admin/audit", nav: "Activity", icon: "activity", role: "ADMIN", view: context => showAdminAudit(context.root, context.user, context.reauth) },
 	{ path: "/news", nav: "News", icon: "news", view: context => showNews(context.root, context.user, context.reauth) },

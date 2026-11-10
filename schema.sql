@@ -36,6 +36,7 @@ create table itinerary {
     date_end timestamp,
     revision bigint,           -- goes up when the name, country or dates change; null reads as 0
     identity_key varchar(36),  -- random, set once on insert, so a new trip that reuses a deleted id is not mistaken for it
+    admin_edited_at timestamp,     -- when an admin last changed the trip or its activities; null if never
 
     foreign key (user_id) references user(id),
     foreign key (country_id) references country(id)
@@ -155,4 +156,14 @@ create table audit_log {
                                -- ITINERARY_CREATED, ITINERARY_UPDATED, ITINERARY_DELETED
     target_id integer,         -- the ACCOUNT it was done to / about (no foreign key: the record must outlive it)
     details varchar(500)
+}
+
+-- What an admin changed in someone's trips, worded for that traveller. Corresponds to AdminChange.
+-- Like audit_log it keeps a plain user id with no foreign key, and the rows are deleted with the account
+create table admin_change {
+    id integer primary key,
+    user_id integer not null,      -- whose data was changed, and who is told
+    message varchar(500) not null,
+    created_at timestamp not null,
+    read_at timestamp              -- null until the traveller marks it read
 }

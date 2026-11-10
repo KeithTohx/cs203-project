@@ -1,5 +1,6 @@
 package csd.tripsense.impact;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -118,6 +119,36 @@ class StaleVerdictCleanerTest {
         cleaner.onItineraryEdited(new ItineraryEditedEvent(7L));
 
         verify(impacts).deleteAll(List.of(judgedAfterFirstEdit));
+    }
+
+    @Test
+    @DisplayName("Should carry the out of date verdicts over to the new revision when the edit keeps them")
+    void onItineraryEdited_KeepVerdicts_CarriesThemOver() {
+        trip.setRevision(2L);
+        skiing.setRevision(2L);
+        Impact wholeTrip = wholeTripVerdict(1L);
+        Impact onActivity = activityVerdict(1L);
+        when(impacts.findByItineraryId(7L)).thenReturn(List.of(wholeTrip, onActivity));
+
+        cleaner.onItineraryEdited(new ItineraryEditedEvent(7L, true));
+
+        verify(impacts, never()).deleteAll(any());
+        verifyNoInteractions(events);
+        assertThat(wholeTrip.isJudgedOnCurrentDetails()).isTrue();
+        assertThat(onActivity.isJudgedOnCurrentDetails()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Should carry an activity's verdicts over when its edit keeps them")
+    void onActivityEdited_KeepVerdicts_CarriesThemOver() {
+        skiing.setRevision(2L);
+        Impact onActivity = activityVerdict(1L);
+        when(impacts.findByActivityId(100L)).thenReturn(List.of(onActivity));
+
+        cleaner.onActivityEdited(new ActivityEditedEvent(100L, true));
+
+        verify(impacts, never()).deleteAll(any());
+        assertThat(onActivity.wasJudgedOn(2L)).isTrue();
     }
 
     @Test

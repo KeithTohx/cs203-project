@@ -27,6 +27,7 @@ import csd.tripsense.impact.ImpactRepository;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryRepository;
 import csd.tripsense.recommendation.RecommendationRepository;
+import csd.tripsense.notice.AdminChangeRepository;
 import csd.tripsense.user.preference.UserPreferenceRepository;
 
 // unit tests for UserServiceImpl, one nested group per method.
@@ -55,6 +56,9 @@ class UserServiceImplTest {
 
     @Mock
     private UserPreferenceRepository userPreferenceRepository;
+
+    @Mock
+    private AdminChangeRepository adminChangeRepository;
 
     @Spy
     private PasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
