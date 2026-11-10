@@ -89,20 +89,22 @@ INSERT OR IGNORE INTO news_country (news_id, country_id) VALUES
     (8, 2);   -- USS maintenance: Singapore
 
 -- reason is what the model would have written, so evaluate() serves these from the db instead of
--- calling ollama again. a null reason counts as not yet evaluated, see ImpactServiceImpl
-INSERT OR IGNORE INTO impact (id, user_id, news_id, itinerary_id, activity_id, impacted, reason) VALUES
-    (1,  1, 1, 1, 1,    1, 'Niseko is in Hokkaido and lifts may be suspended by aftershocks during the ski days.'),
-    (2,  1, 1, 1, 2,    1, 'Jozankei Onsen is near Sapporo, so the visit could be closed for safety checks after the quake.'),
-    (3,  1, 1, 1, NULL, 1, 'The whole trip is in southern Hokkaido where the quake struck, so travel and lodging may be disrupted.'),
-    (4,  2, 2, 2, 4,    1, 'The Grand Palace is in central Bangkok, where flooding has closed attractions.'),
-    (5,  2, 5, 2, 4,    0, 'The closure is for one day next week and does not fall on the planned palace visit.'),
-    (6,  1, 8, 3, 8,    1, 'Universal Studios Singapore closes for maintenance, which may fall on the planned park day.'),
-    (7,  4, 6, 4, NULL, 1, 'The trip relies on Seoul metro services, which the partial strike is reducing at peak hours.'),
-    (8,  5, 4, 5, 13,   1, 'Access to hiking routes around the crater is restricted, which covers the sunrise trek.'),
-    (9,  4, 3, 7, 15,   1, 'Boat services on the northern coast are likely suspended, which would stop the cruise.'),
-    (10, 5, 7, 8, NULL, 0, 'The haze is seasonal across the region and nothing on the Chiang Mai trip is closed.'),
+-- calling ollama again. a null reason counts as not yet evaluated, see ImpactServiceImpl.
+-- prompt_version is Impact.CURRENT_PROMPT_VERSION, so raise it here when that goes up, otherwise
+-- every start clears these, inserts them again and pays the model to judge them again
+INSERT OR IGNORE INTO impact (id, user_id, news_id, itinerary_id, activity_id, impacted, reason, prompt_version) VALUES
+    (1,  1, 1, 1, 1,    1, 'Niseko is in Hokkaido and lifts may be suspended by aftershocks during the ski days.', 2),
+    (2,  1, 1, 1, 2,    1, 'Jozankei Onsen is near Sapporo, so the visit could be closed for safety checks after the quake.', 2),
+    (3,  1, 1, 1, NULL, 1, 'The whole trip is in southern Hokkaido where the quake struck, so travel and lodging may be disrupted.', 2),
+    (4,  2, 2, 2, 4,    1, 'The Grand Palace is in central Bangkok, where flooding has closed attractions.', 2),
+    (5,  2, 5, 2, 4,    0, 'The closure is for one day next week and does not fall on the planned palace visit.', 2),
+    (6,  1, 8, 3, 8,    1, 'Universal Studios Singapore closes for maintenance, which may fall on the planned park day.', 2),
+    (7,  4, 6, 4, NULL, 1, 'The trip relies on Seoul metro services, which the partial strike is reducing at peak hours.', 2),
+    (8,  5, 4, 5, 13,   1, 'Access to hiking routes around the crater is restricted, which covers the sunrise trek.', 2),
+    (9,  4, 3, 7, 15,   1, 'Boat services on the northern coast are likely suspended, which would stop the cruise.', 2),
+    (10, 5, 7, 8, NULL, 0, 'The haze is seasonal across the region and nothing on the Chiang Mai trip is closed.', 2),
     -- not impacted, so karwei's japan trip has something for the filter to drop
-    (11, 1, 1, 1, 3,    0, 'The Sapporo Beer Museum is indoors in Higashi-ku and was not reported damaged.');
+    (11, 1, 1, 1, 3,    0, 'The Sapporo Beer Museum is indoors in Higashi-ku and was not reported damaged.', 2);
 -- recommendations for karwei's trips, so the demo has advice to show without calling ollama.
 -- generate() keys "already done" off the row existing, so these are served straight back.
 -- suggested_option_id points at activity_option, which comes from options.sql

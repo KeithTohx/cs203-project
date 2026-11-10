@@ -92,6 +92,52 @@ const createCheckbox = (name, label, checked) => `
 
 const plainChoices = values => values.map(value => ({ value, label: value }));
 
+// ---------- the country search box, same as on the traveller's itinerary page ----------
+
+const COUNTRY_NOT_LISTED = "Pick a country from the list.";
+
+// a search box over a datalist, so typing narrows the list down instead of scrolling a long select
+const createCountrySearch = (countries, selectedId) => {
+    const current = countries.find(country => Number(country.id) === Number(selectedId));
+    const options = countries
+        .map(country => `<option value="${escapeHtml(country.name)}"></option>`)
+        .join("");
+
+    return `
+        <label>
+            Country
+            <input name="country" list="admin-country-options" value="${escapeHtml(current?.name ?? "")}"
+                placeholder="Search for a country" autocomplete="off" required>
+            <datalist id="admin-country-options">
+                ${options}
+            </datalist>
+        </label>
+    `;
+};
+
+// the typed name back to the id the backend wants, ignoring case. undefined when it is not a country
+const countryFor = (countries, typedName) => {
+    const needle = typedName.trim().toLowerCase();
+    return countries.find(country => country.name.toLowerCase() === needle);
+};
+
+// flags a name that is not in the list straight away rather than only on save,
+// and tidies the casing once a match is picked, eg "japan" -> "Japan"
+const wireCountrySearch = (form, countries) => {
+    const countryInput = form.elements.country;
+
+    countryInput.addEventListener("input", () => {
+        const typed = countryInput.value.trim();
+        const isKnown = !typed || countryFor(countries, typed) != null;
+        countryInput.setCustomValidity(isKnown ? "" : COUNTRY_NOT_LISTED);
+    });
+
+    countryInput.addEventListener("change", () => {
+        const match = countryFor(countries, countryInput.value);
+        if (match) countryInput.value = match.name;
+    });
+};
+
 // only on an edit form, a new record has no impacts to keep
 const createKeepImpactsField = (record, whatClears) => {
     if (!record) return "";
@@ -136,8 +182,10 @@ const SUMMARY_NAMES = 3;
 //   columns             - [{ label, cell: record => html, long }], long gives free text room to breathe
 //   rowButtons(record)  - extra buttons for a row (optional)
 //   fields(record, state) - the form fields, record is null when adding
+//   wire(form)          - extra listeners once the form is on the page (optional)
 //   readForm(inputs, record) - the request body, throwing an Error shows its message
 //   create(body), update(id, body), remove(id)
+//   removeAll()         - a section's "delete all", resolving to { deleted } (optional)
 
 // edit and delete for one record. data-kind keeps them apart when one card holds more than one
 // kind of record, like an activity and the impacts under it
@@ -214,6 +262,7 @@ function openRecordForm(slot, config, record, { state, onSaved, onCancel, onAuth
 
     form.querySelector("[data-cancel]").addEventListener("click", onCancel);
     form.querySelector("input, select, textarea")?.focus();
+    if (config.wire) config.wire(form);
 
     form.addEventListener("submit", async event => {
         event.preventDefault();
@@ -268,6 +317,33 @@ function wireDeleteButtons(container, config, { errorElement, onChange, onAuthLo
     }
 }
 
+// a "delete all" button, two clicks like the single deletes. the backend removes the whole batch in
+// one go, so the traveller gets one note about it rather than one per row
+function wireDeleteAll(button, { noun, plural, run, errorElement, onChange, onAuthLost }) {
+    confirmTwice(button, { confirmText: `Delete all ${plural}?`, onConfirm: async () => {
+        button.disabled = true;
+        errorElement.textContent = "";
+
+        let result;
+        try {
+            result = await run();
+        } catch (error) {
+            button.disabled = false;
+            if (error.status === 401) {
+                onAuthLost();
+                return;
+            }
+            errorElement.textContent = error.message;
+            return;
+        }
+
+        button.disabled = false;
+        const deleted = Number(result?.deleted ?? 0);
+        showToast(`Deleted ${countOf(deleted, noun, plural)}.`);
+        await onChange();
+    } });
+}
+
 // ---------- a card holding one table, used for itineraries and recommendations ----------
 
 // config also has rows(state) and emptyText
@@ -275,6 +351,7 @@ function mountSection(card, config, { getState, onChange, onAuthLost }) {
     const list = card.querySelector("[data-list]");
     const formSlot = card.querySelector("[data-form-slot]");
     const addButton = card.querySelector("[data-add]");
+    const deleteAllButton = card.querySelector("[data-delete-all]");
     const sectionError = card.querySelector("[data-section-error]");
     let shownRows = [];
 
@@ -300,6 +377,7 @@ function mountSection(card, config, { getState, onChange, onAuthLost }) {
     const draw = () => {
         const rows = config.rows(getState());
         shownRows = rows;
+        deleteAllButton.hidden = rows.length === 0;
 
         if (!rows.length) {
             list.innerHTML = `<p class="meta">${escapeHtml(config.emptyText)}</p>`;
@@ -315,6 +393,14 @@ function mountSection(card, config, { getState, onChange, onAuthLost }) {
     };
 
     addButton.addEventListener("click", () => openForm(null));
+    wireDeleteAll(deleteAllButton, {
+        noun: config.noun,
+        plural: config.plural,
+        run: config.removeAll,
+        errorElement: sectionError,
+        onChange,
+        onAuthLost,
+    });
     list.addEventListener("click", event => {
         const editButton = event.target.closest(`[data-edit][data-kind="${config.key}"]`);
         if (!editButton) return;
@@ -331,7 +417,10 @@ const createSectionCard = (key, title, addLabel) => `
     <section class="card admin-data" id="admin-${key}">
         <div class="row">
             <h2>${escapeHtml(title)}</h2>
-            <button class="ghost small" type="button" data-add>${escapeHtml(addLabel)}</button>
+            <div class="heading-actions">
+                <button class="ghost small" type="button" data-add>${escapeHtml(addLabel)}</button>
+                <button class="ghost small danger" type="button" data-delete-all hidden>Delete all</button>
+            </div>
         </div>
         <p class="err" data-section-error role="alert"></p>
         <div data-form-slot hidden></div>
@@ -376,6 +465,7 @@ const createTripSummary = (state, itinerary) => {
 const itineraryConfig = (userId, lookups, view, getState) => ({
     key: "itineraries",
     noun: "itinerary",
+    plural: "itineraries",
     rows: state => state.itineraries,
     emptyText: "No itineraries yet.",
     columns: [
@@ -394,20 +484,23 @@ const itineraryConfig = (userId, lookups, view, getState) => ({
         `;
     },
     fields: itinerary => {
-        const countryChoices = lookups.countries.map(country => ({ value: country.id, label: country.name }));
         return `
             ${createInput("name", "Name", `value="${escapeHtml(itinerary?.name)}" maxlength="100" required`)}
-            ${createSelect("countryId", "Country", countryChoices, itinerary?.countryId, { emptyLabel: "Pick a country", required: true })}
+            ${createCountrySearch(lookups.countries, itinerary?.countryId)}
             ${createInput("dateStart", "Start date", `type="date" value="${toDateInput(itinerary?.dateStart)}"`)}
             ${createInput("dateEnd", "End date", `type="date" value="${toDateInput(itinerary?.dateEnd)}"`)}
             ${createKeepImpactsField(itinerary, "the name, country or dates")}
         `;
     },
+    wire: form => wireCountrySearch(form, lookups.countries),
     readForm: (inputs, itinerary) => {
+        const country = countryFor(lookups.countries, inputs.country.value);
+        if (!country) throw new Error(COUNTRY_NOT_LISTED);
         checkEndNotBeforeStart(inputs.dateStart.value, inputs.dateEnd.value);
+
         return {
             name: inputs.name.value.trim(),
-            countryId: Number(inputs.countryId.value),
+            countryId: Number(country.id),
             dateStart: keepIfUntouched(inputs.dateStart.value, itinerary?.dateStart, toDateInput, fromDateInput),
             dateEnd: keepIfUntouched(inputs.dateEnd.value, itinerary?.dateEnd, toDateInput, fromDateInput),
             keepImpacts: keepsImpacts(inputs),
@@ -416,6 +509,7 @@ const itineraryConfig = (userId, lookups, view, getState) => ({
     create: body => api.adminAddItinerary(userId, body),
     update: (id, body) => api.adminUpdateItinerary(id, body),
     remove: id => api.adminDeleteItinerary(id),
+    removeAll: () => api.adminDeleteAllItineraries(userId),
 });
 
 // the line under an activity's name: when, where and what kind
@@ -542,9 +636,10 @@ const impactConfig = (userId, lookups, place) => ({
     remove: id => api.adminDeleteImpact(id),
 });
 
-const recommendationConfig = () => ({
+const recommendationConfig = userId => ({
     key: "recommendations",
     noun: "recommendation",
+    plural: "recommendations",
     rows: state => state.recommendations,
     emptyText: "No recommendations yet.",
     columns: [
@@ -599,6 +694,7 @@ const recommendationConfig = () => ({
     create: ({ impactId, ...body }) => api.adminAddRecommendation(impactId, body),
     update: (id, { impactId, ...body }) => api.adminUpdateRecommendation(id, body),
     remove: id => api.adminDeleteRecommendation(id),
+    removeAll: () => api.adminDeleteAllRecommendations(userId),
 });
 
 // ---------- the opened itinerary: whole trip impacts, then each activity with its impacts ----------
@@ -609,6 +705,8 @@ const createTripCard = () => `
             <h2 data-title></h2>
             <div class="heading-actions">
                 <button class="ghost small" type="button" data-add-activity>Add activity</button>
+                <button class="ghost small danger" type="button" data-delete-all-activities hidden>Delete all activities</button>
+                <button class="ghost small danger" type="button" data-delete-all-impacts hidden>Delete all impacts</button>
                 <button class="ghost small" type="button" data-close-trip>Close</button>
             </div>
         </div>
@@ -621,6 +719,8 @@ function mountTripDetail(card, { userId, lookups, view, getState, onChange, onAu
     const title = card.querySelector("[data-title]");
     const body = card.querySelector("[data-body]");
     const sectionError = card.querySelector("[data-section-error]");
+    const deleteAllActivitiesButton = card.querySelector("[data-delete-all-activities]");
+    const deleteAllImpactsButton = card.querySelector("[data-delete-all-impacts]");
     const activities = activityConfig(view);
 
     // the one form open in this card, or null. { key, recordId, activityId }: recordId is null when
@@ -769,6 +869,10 @@ function mountTripDetail(card, { userId, lookups, view, getState, onChange, onAu
         title.textContent = trip.name;
 
         const itsActivities = activitiesOf(trip);
+        const itsImpacts = getState().impacts.filter(impact => impact.itineraryId === trip.id);
+        deleteAllActivitiesButton.hidden = itsActivities.length === 0;
+        deleteAllImpactsButton.hidden = itsImpacts.length === 0;
+
         const activityGroups = itsActivities.length
             ? itsActivities.map(activity => createActivityGroup(trip, activity)).join("")
             : `<p class="meta">No activities yet.</p>`;
@@ -800,6 +904,28 @@ function mountTripDetail(card, { userId, lookups, view, getState, onChange, onAu
         open({ key: "activities", recordId: null });
     });
     card.querySelector("[data-close-trip]").addEventListener("click", onClose);
+
+    // the open form goes too, its record may be one of the deleted ones
+    const deleteAllHooks = {
+        errorElement: sectionError,
+        onChange: async () => {
+            openForm = null;
+            await onChange();
+        },
+        onAuthLost,
+    };
+    wireDeleteAll(deleteAllActivitiesButton, {
+        ...deleteAllHooks,
+        noun: "activity",
+        plural: "activities",
+        run: () => api.adminDeleteAllActivities(view.selectedItineraryId),
+    });
+    wireDeleteAll(deleteAllImpactsButton, {
+        ...deleteAllHooks,
+        noun: "impact",
+        plural: "impacts",
+        run: () => api.adminDeleteAllImpacts(view.selectedItineraryId),
+    });
 
     body.addEventListener("click", event => {
         const addImpactButton = event.target.closest("[data-add-impact]");
@@ -943,7 +1069,7 @@ export async function mountUserData(container, userId, onAuthLost, { onChange = 
         userId, lookups, view, getState, onChange: afterChange, onAuthLost,
         onClose: () => showTrip(null),
     });
-    const recommendationSection = mountSection(container.querySelector("#admin-recommendations"), recommendationConfig(), hooks);
+    const recommendationSection = mountSection(container.querySelector("#admin-recommendations"), recommendationConfig(userId), hooks);
 
     // open swaps the trip card over to that itinerary, and pressing it again closes it
     itinerariesCard.addEventListener("click", event => {

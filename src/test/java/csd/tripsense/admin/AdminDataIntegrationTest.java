@@ -271,4 +271,69 @@ class AdminDataIntegrationTest {
         assertThat(stillThere(Alert.class, activityAlert.getId())).isTrue();
         assertOtherUserUntouched();
     }
+
+    // ---------- delete all ----------
+
+    @Test
+    @DisplayName("Should remove every itinerary of one account, and leave other accounts alone")
+    void deleteAllItineraries_RemovesOnlyTheirs() {
+        int deleted = adminData.deleteAllItineraries(trip.getUser().getId());
+
+        assertThat(deleted).isEqualTo(1);
+        assertThat(stillThere(Itinerary.class, trip.getId())).isFalse();
+        assertThat(stillThere(Activity.class, activity.getId())).isFalse();
+        assertThat(stillThere(Impact.class, activityImpact.getId())).isFalse();
+        assertThat(stillThere(Impact.class, tripImpact.getId())).isFalse();
+        assertThat(stillThere(Alert.class, tripAlert.getId())).isFalse();
+        assertThat(stillThere(Recommendation.class, tripRecommendation.getId())).isFalse();
+        assertOtherUserUntouched();
+    }
+
+    @Test
+    @DisplayName("Should remove every activity on a trip with the impacts on them, but keep the whole trip impact")
+    void deleteAllActivities_KeepsTheWholeTripImpact() {
+        AdminBulkDelete deleted = adminData.deleteAllActivities(trip.getId());
+
+        assertThat(deleted.count()).isEqualTo(1);
+        assertThat(stillThere(Activity.class, activity.getId())).isFalse();
+        assertThat(stillThere(Impact.class, activityImpact.getId())).isFalse();
+        assertThat(stillThere(Alert.class, activityAlert.getId())).isFalse();
+        assertThat(stillThere(Recommendation.class, activityRecommendation.getId())).isFalse();
+
+        assertThat(stillThere(Itinerary.class, trip.getId())).isTrue();
+        assertThat(stillThere(Impact.class, tripImpact.getId())).isTrue();
+        assertOtherUserUntouched();
+    }
+
+    @Test
+    @DisplayName("Should remove every impact on a trip, whole trip and activity ones, with their alerts and advice")
+    void deleteAllImpacts_RemovesBothKinds() {
+        AdminBulkDelete deleted = adminData.deleteAllImpacts(trip.getId());
+
+        assertThat(deleted.count()).isEqualTo(2);
+        assertThat(stillThere(Impact.class, activityImpact.getId())).isFalse();
+        assertThat(stillThere(Impact.class, tripImpact.getId())).isFalse();
+        assertThat(stillThere(Alert.class, activityAlert.getId())).isFalse();
+        assertThat(stillThere(Alert.class, tripAlert.getId())).isFalse();
+        assertThat(stillThere(Recommendation.class, activityRecommendation.getId())).isFalse();
+        assertThat(stillThere(Recommendation.class, tripRecommendation.getId())).isFalse();
+
+        // the trip and its plans stay, only the news checks go
+        assertThat(stillThere(Itinerary.class, trip.getId())).isTrue();
+        assertThat(stillThere(Activity.class, activity.getId())).isTrue();
+        assertOtherUserUntouched();
+    }
+
+    @Test
+    @DisplayName("Should remove every recommendation of one account, and keep the impacts")
+    void deleteAllRecommendations_KeepsTheImpacts() {
+        int deleted = adminData.deleteAllRecommendations(trip.getUser().getId());
+
+        assertThat(deleted).isEqualTo(2);
+        assertThat(stillThere(Recommendation.class, activityRecommendation.getId())).isFalse();
+        assertThat(stillThere(Recommendation.class, tripRecommendation.getId())).isFalse();
+        assertThat(stillThere(Impact.class, activityImpact.getId())).isTrue();
+        assertThat(stillThere(Impact.class, tripImpact.getId())).isTrue();
+        assertOtherUserUntouched();
+    }
 }

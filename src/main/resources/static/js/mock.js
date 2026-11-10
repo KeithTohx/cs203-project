@@ -196,6 +196,8 @@ const visibleAlert = alert => {
 };
 
 // itinerary id -> [{ role, content }], oldest first. john's ski trip starts with a short conversation
+// the itineraries whose chat is still waiting on an answer, like ChatbotServiceImpl.answering
+const ANSWERING = new Set();
 const CHATS = {
     1: [
         { role: "user", content: "Is my ski trip affected by anything?" },
@@ -893,6 +895,73 @@ export const mockApi = {
         tellOwner(ownerOfItinerary(entry.itineraryId), `An admin removed a suggestion for ${placeOfImpact(entry.itineraryId, entry.recommendation)}.`);
         return respondWith(null);
     },
+    // the delete alls: one audit entry and one note to the traveller per batch, like the backend
+    adminDeleteAllItineraries: userId => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const theirs = ITINERARIES.filter(itinerary => itinerary.userId === Number(userId));
+        for (const itinerary of theirs) removeItinerary(itinerary);
+
+        if (theirs.length) {
+            recordByAdmin("ITINERARY_DELETED", Number(userId), `all ${theirs.length} itineraries`);
+            tellOwner(Number(userId), "An admin deleted all your trips.");
+        }
+        return respondWith({ deleted: theirs.length });
+    },
+    adminDeleteAllActivities: itineraryId => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const itinerary = ITINERARIES.find(candidate => candidate.id === Number(itineraryId));
+        if (!itinerary) return fail(404, `Itinerary with ID: ${itineraryId} not found`);
+
+        const onTrip = ACTIVITIES.filter(activity => activity.itineraryId === itinerary.id);
+        const activityIds = new Set(onTrip.map(activity => activity.id));
+        const onTheirActivities = (IMPACTS[itinerary.id] ?? []).filter(impact => activityIds.has(impact.activityId));
+        for (const impact of onTheirActivities) removeImpact(itinerary.id, impact);
+        for (const activity of onTrip) ACTIVITIES.splice(ACTIVITIES.indexOf(activity), 1);
+
+        if (onTrip.length) {
+            markEditedByAdmin(itinerary.id);
+            recordByAdmin("ACTIVITY_DELETED", itinerary.userId, `all ${onTrip.length} activities on itinerary ${itinerary.id} '${itinerary.name}'`);
+            tellOwner(itinerary.userId, `An admin deleted every activity on your trip '${itinerary.name}'.`);
+        }
+        return respondWith({ deleted: onTrip.length });
+    },
+    adminDeleteAllImpacts: itineraryId => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const itinerary = ITINERARIES.find(candidate => candidate.id === Number(itineraryId));
+        if (!itinerary) return fail(404, `Itinerary with ID: ${itineraryId} not found`);
+
+        const onTrip = [...(IMPACTS[itinerary.id] ?? [])];
+        for (const impact of onTrip) removeImpact(itinerary.id, impact);
+
+        if (onTrip.length) {
+            recordByAdmin("IMPACT_DELETED", itinerary.userId, `all ${onTrip.length} impacts on itinerary ${itinerary.id} '${itinerary.name}'`);
+            tellOwner(itinerary.userId, `An admin removed all the news from your trip '${itinerary.name}'.`);
+        }
+        return respondWith({ deleted: onTrip.length });
+    },
+    adminDeleteAllRecommendations: userId => {
+        const notAdmin = requireAdmin();
+        if (notAdmin) return notAdmin;
+
+        const theirTrips = ITINERARIES.filter(itinerary => itinerary.userId === Number(userId));
+        let count = 0;
+        for (const itinerary of theirTrips) {
+            count += (RECOMMENDATIONS[itinerary.id] ?? []).length;
+            RECOMMENDATIONS[itinerary.id] = [];
+        }
+
+        if (count) {
+            recordByAdmin("RECOMMENDATION_DELETED", Number(userId), `all ${count} recommendations`);
+            tellOwner(Number(userId), "An admin removed all the suggestions on your trips.");
+        }
+        return respondWith({ deleted: count });
+    },
     // like the backend: not on yourself, and the last enabled admin cannot be made a user
     changeUserRole: (id, role) => {
         const notAdmin = requireAdmin();
@@ -1062,10 +1131,23 @@ export const mockApi = {
             role: "assistant",
             content: `(mock reply) You asked about itinerary ${itineraryId}: "${message}". I would check the affected activities and suggest alternatives.`,
         };
+        // like the backend: one question at a time, and the answer is saved even if the page has gone
+        if (ANSWERING.has(Number(itineraryId))) {
+            return fail(409, "The assistant is still answering your last question. Wait for that answer first.");
+        }
         const conversation = CHATS[itineraryId] ?? (CHATS[itineraryId] = []);
-        conversation.push({ role: "user", content: message }, reply);
+        conversation.push({ role: "user", content: message });
+        ANSWERING.add(Number(itineraryId));
 
-        return new Promise(resolve => setTimeout(() => resolve(structuredClone(reply)), 700));
+        return new Promise(resolve => setTimeout(() => {
+            conversation.push(reply);
+            ANSWERING.delete(Number(itineraryId));
+            resolve(structuredClone(reply));
+        }, 700));
+    },
+    chatStatus: itineraryId => {
+        if (requireLogin() || !myItinerary(itineraryId)) return requireLogin() || fail(404, "Itinerary not found.");
+        return respondWith({ answering: ANSWERING.has(Number(itineraryId)) });
     },
     chatHistory: itineraryId => {
         if (requireLogin() || !myItinerary(itineraryId)) return requireLogin() || fail(404, "Itinerary not found.");

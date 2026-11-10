@@ -49,6 +49,9 @@ public interface NewsService {
      */
     Set<String> findExistingUrls(Collection<String> urls);
 
+    // headlines we already hold, so the same story from another outlet is not stored twice
+    Set<String> findExistingTitles(Collection<String> titles);
+
         /**
        * News about a country published at or after a cut-off.
        * @param countryId the unique identifier of the Country

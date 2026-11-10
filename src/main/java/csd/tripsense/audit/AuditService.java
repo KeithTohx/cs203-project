@@ -34,6 +34,7 @@ public class AuditService {
     public static final String ITINERARY_CREATED = "ITINERARY_CREATED";
     public static final String ITINERARY_UPDATED = "ITINERARY_UPDATED";
     public static final String ITINERARY_DELETED = "ITINERARY_DELETED";
+    public static final String SQL_QUERY = "SQL_QUERY";
     // the admin console: an account made by an admin, and an admin changing what hangs off
     // someone's trip. one action per kind and change, like the ITINERARY_ ones, so the log filter
     // can pick out eg every deleted impact

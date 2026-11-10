@@ -160,6 +160,17 @@ public class AdminDataServiceImpl implements AdminDataService {
         return itinerary;
     }
 
+    @Override
+    @Transactional
+    public int deleteAllItineraries(Long userId) {
+        findUser(userId);
+        List<Itinerary> theirs = itineraries.findByUserId(userId);
+
+        // same cascade as deleting one
+        itineraries.deleteAll(theirs);
+        return theirs.size();
+    }
+
     private void applyItinerary(Itinerary itinerary, AdminItineraryRequest request) {
         requireEndNotBeforeStart(request.dateStart(), request.dateEnd());
 
@@ -233,6 +244,19 @@ public class AdminDataServiceImpl implements AdminDataService {
 
         activities.delete(activity);   // cascades to its impacts, and their alerts and recommendations
         return activity;
+    }
+
+    @Override
+    @Transactional
+    public AdminBulkDelete deleteAllActivities(Long itineraryId) {
+        Itinerary itinerary = findItinerary(itineraryId);
+        List<Activity> onTrip = activities.findByItineraryIdOrderByDateStart(itineraryId);
+        if (!onTrip.isEmpty()) {
+            markEditedByAdmin(itinerary);
+        }
+
+        activities.deleteAll(onTrip);
+        return new AdminBulkDelete(onTrip.size(), itinerary);
     }
 
     // the note on the traveller's trip. the itinerary is managed here, so it is saved on commit
@@ -375,6 +399,7 @@ public class AdminDataServiceImpl implements AdminDataService {
                 : impact.getItinerary().currentRevision();
 
         impact.setJudgedRevision(revision);
+        impact.setPromptVersion(Impact.CURRENT_PROMPT_VERSION);
         impact.setVerdictKey(UUID.randomUUID().toString());
     }
 
@@ -385,6 +410,18 @@ public class AdminDataServiceImpl implements AdminDataService {
 
         impacts.delete(impact);   // cascades to its alert and recommendations
         return impact;
+    }
+
+    @Override
+    @Transactional
+    public AdminBulkDelete deleteAllImpacts(Long itineraryId) {
+        Itinerary itinerary = findItinerary(itineraryId);
+
+        // activity impacts carry the itinerary too, so this finds both kinds
+        List<Impact> onTrip = impacts.findByItineraryId(itineraryId);
+
+        impacts.deleteAll(onTrip);
+        return new AdminBulkDelete(onTrip.size(), itinerary);
     }
 
     // ---------- recommendations ----------
@@ -435,6 +472,16 @@ public class AdminDataServiceImpl implements AdminDataService {
         Recommendation recommendation = findRecommendation(recommendationId);
         recommendations.delete(recommendation);
         return recommendation;
+    }
+
+    @Override
+    @Transactional
+    public int deleteAllRecommendations(Long userId) {
+        findUser(userId);
+        List<Recommendation> theirs = recommendations.findByImpactUserIdOrderByIdDesc(userId);
+
+        recommendations.deleteAll(theirs);
+        return theirs.size();
     }
 
     private void applyRecommendation(Recommendation recommendation, AdminRecommendationRequest request) {

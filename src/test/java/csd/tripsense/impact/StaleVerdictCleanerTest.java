@@ -72,7 +72,19 @@ class StaleVerdictCleanerTest {
         impact.setItinerary(trip);
         impact.setNews(article);
         impact.setJudgedRevision(judgedRevision);
+        impact.setPromptVersion(Impact.CURRENT_PROMPT_VERSION);
         return impact;
+    }
+
+    @Test
+    @DisplayName("Should count a verdict from older prompts as out of date, even on the latest revision")
+    void verdictFromOlderPrompts_IsNotCurrent() {
+        Impact current = wholeTripVerdict(trip.currentRevision());
+        Impact older = wholeTripVerdict(trip.currentRevision());
+        older.setPromptVersion(null);
+
+        assertThat(current.isJudgedOnCurrentDetails()).isTrue();
+        assertThat(older.isJudgedOnCurrentDetails()).isFalse();
     }
 
     private Impact activityVerdict(Long judgedRevision) {

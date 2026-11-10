@@ -81,6 +81,7 @@ create table impact {
     rejected boolean,
     judged_revision bigint,    -- the activity's (or, for a whole trip verdict, the trip's) revision the model was shown
     verdict_key varchar(36),   -- random, new each time the verdict is written, so a reused id is not mistaken for the old verdict
+    prompt_version integer,    -- which prompts reached the verdict, older ones are cleared and judged again (null reads as 1)
 
     foreign key (user_id) references user(id),
     foreign key (news_id) references news(id),
@@ -154,6 +155,7 @@ create table audit_log {
     action varchar not null,   -- LOGIN, LOGIN_FAILED, LOGOUT, REGISTER, PROFILE_UPDATED,
                                -- ACCOUNT_DISABLED, ACCOUNT_ENABLED, ACCOUNT_DELETED,
                                -- ITINERARY_CREATED, ITINERARY_UPDATED, ITINERARY_DELETED
+                               -- SQL_QUERY
     target_id integer,         -- the ACCOUNT it was done to / about (no foreign key: the record must outlive it)
     details varchar(500)
 }

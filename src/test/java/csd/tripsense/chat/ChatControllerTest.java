@@ -62,6 +62,20 @@ class ChatControllerTest {
         SecurityContextHolder.clearContext();
     }
 
+    // ===== GET /api/itinerary/{id}/chat/status =====
+
+    @Test
+    @DisplayName("Should say whether an answer is still being written for the logged in user")
+    void status_ShouldReturnAnswering_WhenAsked() throws Exception {
+        // Arrange
+        when(chatbotService.status(7L, 1L)).thenReturn(new ChatStatus(true));
+
+        // Act + Assert
+        mockMvc.perform(get("/api/itinerary/1/chat/status"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.answering").value(true));
+    }
+
     // ===== POST /api/itinerary/{id}/chat =====
 
     @Test

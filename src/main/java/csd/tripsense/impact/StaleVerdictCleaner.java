@@ -104,7 +104,9 @@ public class StaleVerdictCleaner {
         return verdict.getItinerary().currentRevision();
     }
 
-    private int clearOutOfDate(List<Impact> verdicts) {
+    // also used by OutdatedVerdictSweeper, for verdicts from older prompts. has to run inside a
+    // transaction, since the alerts are read lazily
+    int clearOutOfDate(List<Impact> verdicts) {
         List<Impact> outOfDate = verdicts.stream()
                 .filter(verdict -> !verdict.isJudgedOnCurrentDetails())
                 .toList();

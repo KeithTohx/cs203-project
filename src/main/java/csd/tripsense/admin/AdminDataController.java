@@ -114,6 +114,23 @@ public class AdminDataController {
         return ResponseEntity.noContent().build();
     }
 
+    // one audit entry and one note to the traveller for the whole batch, not one per row
+    @Operation(summary = "Delete all of one account's itineraries",
+            description = "Also removes their activities, impacts, alerts and recommendations. Gives back how many went.")
+    @DeleteMapping("/users/{userId}/itineraries")
+    public BulkDeleteResponse deleteAllItineraries(@PathVariable("userId") Long userId,
+                                                   @AuthenticationPrincipal CurrentUser admin) {
+        requireLoggedIn(admin);
+        int count = adminData.deleteAllItineraries(userId);
+
+        if (count > 0) {
+            String what = countOf(count, "itinerary", "itineraries");
+            recordByAdmin(AuditService.ITINERARY_DELETED, admin, userId, "all " + what);
+            tellOwner(userId, admin, "An admin deleted all your trips.");
+        }
+        return new BulkDeleteResponse(count);
+    }
+
     // ---------- activities ----------
 
     @Operation(summary = "List an itinerary's activities", description = "Earliest first.")
@@ -168,6 +185,23 @@ public class AdminDataController {
         return ResponseEntity.noContent().build();
     }
 
+    @Operation(summary = "Delete all activities on an itinerary",
+            description = "Also removes the impacts on them. The whole trip impacts stay. Gives back how many went.")
+    @DeleteMapping("/itineraries/{itineraryId}/activities")
+    public BulkDeleteResponse deleteAllActivities(@PathVariable("itineraryId") Long itineraryId,
+                                                  @AuthenticationPrincipal CurrentUser admin) {
+        requireLoggedIn(admin);
+        AdminBulkDelete deleted = adminData.deleteAllActivities(itineraryId);
+
+        if (deleted.count() > 0) {
+            Itinerary trip = deleted.itinerary();
+            String what = countOf(deleted.count(), "activity", "activities");
+            recordByAdmin(AuditService.ACTIVITY_DELETED, admin, ownerOf(trip), "all " + what + " on " + describe(trip));
+            tellOwner(ownerOf(trip), admin, "An admin deleted every activity on your trip " + quote(trip.getName()) + ".");
+        }
+        return new BulkDeleteResponse(deleted.count());
+    }
+
     // ---------- impacts ----------
 
     @Operation(summary = "List one account's impacts", description = "Newest first, rejected ones included.")
@@ -215,6 +249,24 @@ public class AdminDataController {
         tellOwner(ownerOf(deleted), admin,
                 "An admin removed the news " + newsOf(deleted) + " from " + placeOf(deleted) + ".");
         return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "Delete all impacts on an itinerary",
+            description = "On the whole trip and on each activity, with their alerts and recommendations. "
+                    + "The news stays. Gives back how many went.")
+    @DeleteMapping("/itineraries/{itineraryId}/impacts")
+    public BulkDeleteResponse deleteAllImpacts(@PathVariable("itineraryId") Long itineraryId,
+                                               @AuthenticationPrincipal CurrentUser admin) {
+        requireLoggedIn(admin);
+        AdminBulkDelete deleted = adminData.deleteAllImpacts(itineraryId);
+
+        if (deleted.count() > 0) {
+            Itinerary trip = deleted.itinerary();
+            String what = countOf(deleted.count(), "impact", "impacts");
+            recordByAdmin(AuditService.IMPACT_DELETED, admin, ownerOf(trip), "all " + what + " on " + describe(trip));
+            tellOwner(ownerOf(trip), admin, "An admin removed all the news from your trip " + quote(trip.getName()) + ".");
+        }
+        return new BulkDeleteResponse(deleted.count());
     }
 
     // ---------- recommendations ----------
@@ -266,6 +318,22 @@ public class AdminDataController {
         return ResponseEntity.noContent().build();
     }
 
+    @Operation(summary = "Delete all of one account's recommendations",
+            description = "Every attempt on every impact. The impacts stay. Gives back how many went.")
+    @DeleteMapping("/users/{userId}/recommendations")
+    public BulkDeleteResponse deleteAllRecommendations(@PathVariable("userId") Long userId,
+                                                       @AuthenticationPrincipal CurrentUser admin) {
+        requireLoggedIn(admin);
+        int count = adminData.deleteAllRecommendations(userId);
+
+        if (count > 0) {
+            String what = countOf(count, "recommendation", "recommendations");
+            recordByAdmin(AuditService.RECOMMENDATION_DELETED, admin, userId, "all " + what);
+            tellOwner(userId, admin, "An admin removed all the suggestions on your trips.");
+        }
+        return new BulkDeleteResponse(count);
+    }
+
     // ---------- helpers ----------
 
     // normally unreachable, the security filter already answers 401 before this runs
@@ -303,6 +371,14 @@ public class AdminDataController {
                 ? "1 news check on it was cleared"
                 : cleared.size() + " news checks on it were cleared";
         return " " + checks + ", and it will be checked against the news again.";
+    }
+
+    // what a delete all sends back
+    public record BulkDeleteResponse(int deleted) {
+    }
+
+    private static String countOf(int count, String one, String many) {
+        return count + " " + (count == 1 ? one : many);
     }
 
     private static String quote(String name) {
