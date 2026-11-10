@@ -985,6 +985,35 @@ class AlertIntegrationTest {
         assertThat(alertService.list(traveller.getId(), false, null, 20).content()).hasSize(2);
     }
 
+    @Test void backfillPreservesAFollowUpRetryIdentityAfterItsOriginalLeaderIsRejected() {
+        Activity a=new Activity(); a.setName("First late activity"); a.setItinerary(skiTrip); a.setCountry(skiTrip.getCountry());
+        a=activityRepository.saveAndFlush(a);
+        Activity b=new Activity(); b.setName("Second late activity"); b.setItinerary(skiTrip); b.setCountry(skiTrip.getCountry());
+        b=activityRepository.saveAndFlush(b);
+        evaluate();
+        String batch=progress.begin(skiTrip.getId(),earthquake.getId(),false,java.util.List.of(a.getId(),b.getId()));
+        var first=alertService.list(traveller.getId(),false,null,20).content().getFirst();
+        var partial=emailStore.claim(first.id(),first.createdAt().plusSeconds(120)).orElseThrow();
+        assertThat(partial.partialAssessment()).isTrue();
+        emailStore.sent(partial,first.createdAt().plusSeconds(121));
+        var impactA=impactService.evaluateActivityForNews(a,earthquake);
+        var impactB=impactService.evaluateActivityForNews(b,earthquake);
+        progress.resolved(skiTrip.getId(),earthquake.getId(),a.getId());
+        progress.resolved(skiTrip.getId(),earthquake.getId(),b.getId());
+        progress.finish(batch,false);
+        var late=alertRepository.findEmailGroup(skiTrip.getId(),earthquake.getId()).getLast();
+        var followUp=emailStore.claim(late.getId(),first.createdAt().plusSeconds(240)).orElseThrow();
+        emailStore.failed(followUp,first.createdAt().plusSeconds(240));
+        String groupKey=AlertEmailGroup.key(skiTrip.getId(),earthquake.getId());
+        assertThat(emailGroups.findById(groupKey).orElseThrow().isDelivered()).isFalse();
+        metadata.clean();
+        assertThat(emailGroups.findById(groupKey).orElseThrow().isDelivered()).isFalse();
+        impactService.setRejected(impactA.getId(),true);
+        var retry=emailStore.claim(late.getId(),first.createdAt().plusSeconds(301)).orElseThrow();
+        assertThat(retry.relatedAlerts()).hasSize(1);
+        assertThat(retry.key()).isEqualTo(followUp.key());
+    }
+
     @Test void lateAlertInAFailedGroupBecomesFailedEvenWhenOtherAssessmentsAreMissing() {
         evaluate();
         var firstAlert = alertService.list(traveller.getId(), false, null, 20).content().getFirst();
@@ -1185,6 +1214,8 @@ class AlertIntegrationTest {
         recommendation.setSeverity(csd.tripsense.recommendation.Severity.MEDIUM);
         recommendation.setAction(csd.tripsense.recommendation.Action.MONITOR);
         recommendation.setAdvice("Demo advice"); recommendations.saveAndFlush(recommendation);
+        long originalMaxId = alertRepository.findEmailGroup(skiTrip.getId(), earthquake.getId()).stream()
+                .mapToLong(Alert::getId).max().orElseThrow();
         var originalKeys = alertRepository.findEmailGroup(skiTrip.getId(), earthquake.getId()).stream()
                 .map(Alert::getEmailDeliveryKey).toList();
         var service = demo(true);
@@ -1205,6 +1236,7 @@ class AlertIntegrationTest {
         assertThat(triggered.alerts()).isEqualTo(2);
         var fresh = alertService.list(traveller.getId(), false, null, 20).content();
         assertThat(fresh).hasSize(2).allSatisfy(a -> {
+            assertThat(a.id()).isGreaterThan(originalMaxId);
             assertThat(a.readAt()).isNull();
             assertThat(a.emailStatus()).isEqualTo(EmailStatus.PENDING);
         });

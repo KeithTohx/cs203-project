@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@org.springframework.context.annotation.DependsOn("evaluationTaskSchemaMigration")
 public class ImpactEvaluationQueue {
     private final PendingImpactEvaluationRepository tasks;
     private final ItineraryRepository trips;
@@ -29,7 +30,7 @@ public class ImpactEvaluationQueue {
     /** Runs after source commit; a scheduling failure cannot roll back the saved trip/activity. */
     @Transactional(propagation=org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public void enqueue(Long id, boolean activity) {
-        if (tasks.existsById(PendingImpactEvaluation.key(id, activity))) return;
+        if (tasks.existsByTargetIdAndActivity(id, activity)) return;
         Itinerary trip = activity
                 ? activities.findById(id).map(a -> a.getItinerary()).orElse(null)
                 : trips.findById(id).orElse(null);

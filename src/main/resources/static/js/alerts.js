@@ -119,6 +119,10 @@ function sessionEnded() {
 
 // counts every refresh started, so a slow older one cannot land on top of a newer one
 let latestRefresh = 0;
+// Cross-tab changes may affect older loaded pages without changing the bell's newest 20.
+// Keep them pending until a current, successful refresh can notify the page.
+let historyRevision = 0;
+let refreshedHistoryRevision = 0;
 
 // pages with alerts of their own, so they keep up with the bell. each change carries unreadCount and one of
 // newAlerts (with outOfStep, set when the count moved for some other reason), readIds, readUpToId (null for all)
@@ -187,6 +191,7 @@ async function refresh() {
     latestRefresh += 1;
     const thisRefresh = latestRefresh;
     const session = saveSession;
+    const thisHistoryRevision = historyRevision;
 
     try {
         const page = await api.alerts({ size: 20 });
@@ -195,6 +200,8 @@ async function refresh() {
         const savingStarted = savesRunning > 0;             // this may be from before the save, the reload after it is not
         if (isFromOldSession(session) || switchedAccount || isOutdated || savingStarted) return;
 
+        clearTimeout(historyRetryTimer);
+        historyRetryTimer = null;
         const countBefore = state.unreadCount;
         const isFirstLoad = state.seenIds == null;
         const loadedAlerts = page?.content ?? [];
@@ -213,27 +220,56 @@ async function refresh() {
         announceNewAlerts(newAlerts);
 
         // new alerts only ever add to the count, so any other change came from somewhere else,
-        // eg reads in another tab. the first load has nothing to compare with, so it never counts
+        // eg reads in another tab. The first load has no comparison, but an explicit
+        // invalidation still requires reloading older history beyond the bell's page.
         const countChanged = state.unreadCount !== countBefore;
         const expectedCount = countBefore + newAlerts.length;
-        const outOfStep = !isFirstLoad && (state.unreadCount !== expectedCount || listChanged && !newAlerts.length);
+        const historyInvalidated = thisHistoryRevision !== refreshedHistoryRevision;
+        const outOfStep = historyInvalidated
+            || !isFirstLoad && (state.unreadCount !== expectedCount || listChanged && !newAlerts.length);
+        refreshedHistoryRevision = thisHistoryRevision;
         if (newAlerts.length || countChanged || outOfStep) tellListeners({ newAlerts, outOfStep });
     } catch (error) {
-        if (isFromOldSession(session)) return;
-        // a failed load keeps the last alerts and tries again on the next event or check
+        if (isFromOldSession(session) || state.userId !== userId || thisRefresh !== latestRefresh) return;
         if (error.status === 401) sessionEnded();
+        else retryHistory();
     }
 }
 
-// the backend sends one event per alert, so news hitting six activities is six events in a row.
-// they are gathered into one reload instead of six requests for the same list
+// Coalesce events into bounded windows. Continuous traffic must not keep moving the
+// deadline, and slow history requests must finish before another burst request starts.
 const ALERT_BURST_MS = 500;
+const HISTORY_RETRY_MS = 5000;
 let burstTimer = null;
+let burstLoading = false;
+let burstAgain = false;
+let historyRetryTimer = null;
 let stopSync = null;
 
 const refreshAfterBurst = () => {
-    clearTimeout(burstTimer);
-    burstTimer = setTimeout(refresh, ALERT_BURST_MS);
+    if (burstLoading) { burstAgain = true; return; }
+    if (burstTimer != null) return;
+    const session = saveSession;
+    burstTimer = setTimeout(async () => {
+        burstTimer = null;
+        burstLoading = true;
+        try { await refresh(); }
+        finally {
+            if (isFromOldSession(session)) return;
+            burstLoading = false;
+            if (burstAgain) { burstAgain = false; refreshAfterBurst(); }
+        }
+    }, ALERT_BURST_MS);
+};
+
+// A healthy SSE connection does not prove its recovery HTTP request succeeded.
+const retryHistory = () => {
+    if (historyRetryTimer != null) return;
+    const session = saveSession;
+    historyRetryTimer = setTimeout(() => {
+        historyRetryTimer = null;
+        if (!isFromOldSession(session)) return refresh();
+    }, HISTORY_RETRY_MS);
 };
 
 const canStream = () => Boolean(api.alertStreamUrl) && typeof EventSource !== "undefined";
@@ -638,7 +674,10 @@ export function mountAlertBell(slot, user, { onAuthLost, redraw }) {
     if (state.userId !== user.id) {
         stopAlerts();
         state.userId = user.id;
-        stopSync = onAlertsInvalidated(refreshAfterBurst);
+        stopSync = onAlertsInvalidated(() => {
+            historyRevision += 1;
+            refreshAfterBurst();
+        });
 
         // loaded straight away rather than waiting for "ready", which a proxy holding the stream back can delay for good
         refresh();
@@ -655,11 +694,18 @@ export function stopAlerts() {
     clearInterval(state.pollTimer);
     clearTimeout(state.toastTimer);
     clearTimeout(burstTimer);
+    clearTimeout(historyRetryTimer);
+    burstTimer = null;
+    historyRetryTimer = null;
+    burstLoading = false;
+    burstAgain = false;
 
     // saves still running for this account carry on, but no longer hold back the next account's loads
     saveSession += 1;
     saveQueue = Promise.resolve();
     savesRunning = 0;
+    historyRevision = 0;
+    refreshedHistoryRevision = 0;
 
     document.querySelectorAll(".alert-toast").forEach(toast => toast.remove());
 

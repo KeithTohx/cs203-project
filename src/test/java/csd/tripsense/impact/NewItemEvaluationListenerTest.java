@@ -61,6 +61,9 @@ class NewItemEvaluationListenerTest {
 
     @BeforeEach void durableRepository() {
         lenient().when(tasks.existsById(anyString())).thenAnswer(i -> savedTasks.containsKey(i.getArgument(0)));
+        lenient().when(tasks.existsByTargetIdAndActivity(anyLong(), anyBoolean())).thenAnswer(i ->
+                savedTasks.values().stream().anyMatch(t -> t.getTargetId().equals(i.getArgument(0))
+                        && t.isActivity() == (boolean) i.getArgument(1)));
         lenient().when(tasks.findById(anyString())).thenAnswer(i -> Optional.ofNullable(savedTasks.get(i.getArgument(0))));
         lenient().when(tasks.save(any())).thenAnswer(i -> { PendingImpactEvaluation task=i.getArgument(0); savedTasks.put(task.getTaskKey(),task); return task; });
         lenient().when(tasks.findByRetryAtLessThanEqualOrderByRetryAtAscTaskKeyAsc(any(),any()))
@@ -68,6 +71,20 @@ class NewItemEvaluationListenerTest {
         lenient().doAnswer(i -> { savedTasks.remove(i.getArgument(0)); return null; }).when(tasks).deleteById(anyString());
     }
     @AfterEach void closeWorkers() { listeners.forEach(NewItemEvaluationListener::shutdown); }
+
+    @Test void fetchedTaskIsIgnoredAfterItsTargetWasDeletedAndReplaced() {
+        givenActiveTrip();
+        var obsolete = new PendingImpactEvaluation(ITINERARY_ID, false, List.of(1L));
+        var replacement = new PendingImpactEvaluation(ITINERARY_ID, false, List.of(2L));
+        savedTasks.put(replacement.getTaskKey(), replacement);
+        when(tasks.findByRetryAtLessThanEqualOrderByRetryAtAscTaskKeyAsc(any(), any()))
+                .thenReturn(List.of(obsolete));
+
+        listener(true, 5, 200).processPending();
+
+        assertEquals(List.of(replacement), new ArrayList<>(savedTasks.values()));
+        verifyNoInteractions(impactService, newsRepository);
+    }
 
     // Drive the production durable worker directly, so no background thread or database is needed.
     private NewItemEvaluationListener listener(boolean enabled, int lookbackDays, int maxCalls) {

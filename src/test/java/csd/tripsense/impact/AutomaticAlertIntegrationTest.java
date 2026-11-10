@@ -55,6 +55,7 @@ class AutomaticAlertIntegrationTest {
     @Autowired ImpactRepository impacts;
     @Autowired ImpactService evaluator;
     @Autowired ImpactEvaluationQueue queue;
+    @Autowired AssessmentSourceGuard sourceGuard;
     @Autowired PendingImpactEvaluationRepository tasks;
     @Autowired AlertService alerts;
     @Autowired AlertEmailStore email;
@@ -208,6 +209,169 @@ class AutomaticAlertIntegrationTest {
     @Test void deletedTargetsAreDiscardedInsteadOfRetriedForever() {
         Itinerary trip = newTrip(); trips.deleteById(trip.getId());
         listener.processPending(); assertThat(tasks.count()).isZero(); verifyNoInteractions(ai);
+    }
+
+    @Test void tripDeletionImmediatelyRemovesItsTripAndActivityTasks() {
+        Itinerary deleted = newTrip();
+        Activity child = activity(deleted);
+        Itinerary retained = newTrip();
+        assertThat(tasks.count()).isEqualTo(3);
+
+        itineraryService.deleteItinerary(deleted.getId());
+
+        assertThat(tasks.findAll()).singleElement().satisfies(task -> {
+            assertThat(task.isActivity()).isFalse();
+            assertThat(task.getTargetId()).isEqualTo(retained.getId());
+        });
+        assertThat(activities.findById(child.getId())).isEmpty();
+        verifyNoInteractions(ai);
+    }
+
+    @Test void activityDeletionDoesNotRemoveTheParentTripsTask() {
+        Itinerary trip = newTrip();
+        Activity deleted = activity(trip);
+        Activity retained = activity(trip);
+
+        activityService.deleteActivity(deleted.getId());
+
+        assertThat(tasks.findAll()).hasSize(2).noneSatisfy(task -> {
+            assertThat(task.isActivity()).isTrue();
+            assertThat(task.getTargetId()).isEqualTo(deleted.getId());
+        });
+        // Direct repository deletes use the same cleanup, including account-deletion cascades.
+        activities.deleteById(retained.getId());
+        assertThat(tasks.findAll()).singleElement().satisfies(task -> assertThat(task.isActivity()).isFalse());
+        trips.deleteById(trip.getId());
+        assertThat(tasks.count()).isZero();
+    }
+
+    @Test void rollingBackTripDeletionAlsoRestoresItsPendingTasks() {
+        Itinerary trip = newTrip();
+        activity(trip);
+        var keys = tasks.findAll().stream().map(PendingImpactEvaluation::getTaskKey).toList();
+
+        new TransactionTemplate(transactions).executeWithoutResult(tx -> {
+            trips.deleteById(trip.getId());
+            trips.flush();
+            assertThat(tasks.count()).isZero();
+            tx.setRollbackOnly();
+        });
+
+        assertThat(trips.findById(trip.getId())).isPresent();
+        assertThat(tasks.findAll()).extracting(PendingImpactEvaluation::getTaskKey)
+                .containsExactlyInAnyOrderElementsOf(keys);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void inFlightVerdictCannotAttachToAReplacementTrip(boolean activityAssessment, boolean differentOwnerAndCountry) {
+        Itinerary deleted = newTrip();
+        Activity deletedActivity = activityAssessment ? activity(deleted) : null;
+        User replacementOwner = differentOwnerAndCountry
+                ? users.saveAndFlush(new User(UUID.randomUUID() + "@example.com", "replacement" + owner.getId(), "long-enough-hash", "USER"))
+                : owner;
+        Country replacementCountry = country;
+        if (differentOwnerAndCountry) {
+            replacementCountry = new Country(); replacementCountry.setName("Replacement " + UUID.randomUUID());
+            replacementCountry = countries.saveAndFlush(replacementCountry);
+        }
+        Country destination = replacementCountry;
+        var replacement = new java.util.concurrent.atomic.AtomicReference<Itinerary>();
+        doAnswer(inv -> {
+            // The model is still running while the source is deleted and its numeric id reused.
+            trips.deleteById(deleted.getId());
+            Itinerary fresh = new Itinerary(); fresh.setUser(replacementOwner); fresh.setCountry(destination);
+            fresh.setName(deleted.getName()); fresh.setDateStart(deleted.getDateStart()); fresh.setDateEnd(deleted.getDateEnd());
+            fresh = itineraryService.addItinerary(fresh);
+            assertThat(fresh.getId()).isEqualTo(deleted.getId());
+            assertThat(fresh.getAssessmentIdentity()).isNotEqualTo(deleted.getAssessmentIdentity());
+            replacement.set(fresh);
+            if (activityAssessment) {
+                Activity freshActivity = activity(fresh);
+                assertThat(freshActivity.getId()).isEqualTo(deletedActivity.getId());
+            }
+            var c = ((Class<?>) inv.getArgument(1)).getDeclaredConstructor(boolean.class, String.class);
+            c.setAccessible(true); return c.newInstance(true, "Verdict for deleted trip");
+        }).when(ai).ask(anyString(), any(Class.class));
+
+        assertThatThrownBy(() -> {
+            if (activityAssessment) evaluator.evaluateActivityForNews(deletedActivity, article);
+            else evaluator.evaluateItineraryForNews(deleted, article);
+        }).isInstanceOf(org.springframework.dao.OptimisticLockingFailureException.class);
+
+        assertThat(impacts.findByItineraryId(replacement.get().getId())).isEmpty();
+        assertThat(alertRows.findEmailGroup(replacement.get().getId(), article.getId())).isEmpty();
+        // Rejecting the obsolete result must leave the replacement free to be assessed normally.
+        verdict();
+        Impact freshVerdict = evaluator.evaluateItineraryForNews(replacement.get(), article);
+        assertThat(freshVerdict.getUser().getId()).isEqualTo(replacementOwner.getId());
+        assertThat(freshVerdict.getReason()).isEqualTo("Access restricted");
+        assertThat(alertRows.findEmailGroup(replacement.get().getId(), article.getId())).hasSize(1);
+    }
+
+    @Test void inFlightActivityVerdictCannotAttachToAReplacementActivityOnTheSameTrip() {
+        Itinerary trip = newTrip();
+        Activity deleted = activity(trip);
+        doAnswer(inv -> {
+            activities.deleteById(deleted.getId());
+            Activity replacement = activity(trip);
+            assertThat(replacement.getId()).isEqualTo(deleted.getId());
+            assertThat(replacement.getAssessmentIdentity()).isNotEqualTo(deleted.getAssessmentIdentity());
+            var c = ((Class<?>) inv.getArgument(1)).getDeclaredConstructor(boolean.class, String.class);
+            c.setAccessible(true); return c.newInstance(true, "Verdict for deleted activity");
+        }).when(ai).ask(anyString(), any(Class.class));
+
+        assertThatThrownBy(() -> evaluator.evaluateActivityForNews(deleted, article))
+                .isInstanceOf(org.springframework.dao.OptimisticLockingFailureException.class);
+        assertThat(impacts.findByItineraryId(trip.getId())).isEmpty();
+        assertThat(alertRows.findEmailGroup(trip.getId(), article.getId())).isEmpty();
+    }
+
+    @Test void sourceCannotBeDeletedBetweenValidationAndSavingTheVerdict() {
+        Itinerary trip = newTrip();
+        sourceGuard.saveIfCurrent(AssessmentSourceGuard.Source.capture(trip, null), () -> {
+            try (var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + DATABASE);
+                 var sql = connection.createStatement()) {
+                sql.execute("pragma busy_timeout=0");
+                assertThatThrownBy(() -> sql.executeUpdate("delete from itinerary where id=" + trip.getId()))
+                        .isInstanceOf(java.sql.SQLException.class).hasMessageContaining("SQLITE_BUSY");
+            } catch (java.sql.SQLException e) {
+                throw new IllegalStateException(e);
+            }
+            return null;
+        });
+        assertThat(trips.findById(trip.getId())).isPresent();
+    }
+
+    @Test void reusedTripIdGetsFreshNewsAndOldWorkerCannotModifyItsTask() {
+        Itinerary deleted = newTrip();
+        var obsolete = tasks.findAll().getFirst();
+        trips.deleteById(deleted.getId());
+        assertThat(tasks.count()).isZero();
+
+        Country replacementCountry = new Country(); replacementCountry.setName("Replacement " + UUID.randomUUID());
+        replacementCountry = countries.saveAndFlush(replacementCountry);
+        News replacementNews = article("Replacement country's disruption");
+        replacementNews.setCountries(Set.of(replacementCountry));
+        replacementNews = news.saveAndFlush(replacementNews);
+        Itinerary replacement = new Itinerary(); replacement.setUser(owner); replacement.setCountry(replacementCountry);
+        replacement.setName("Replacement trip"); replacement = itineraryService.addItinerary(replacement);
+        assertThat(replacement.getId()).isEqualTo(deleted.getId());
+        var fresh = tasks.findAll().getFirst();
+        assertThat(fresh.getTaskKey()).isNotEqualTo(obsolete.getTaskKey());
+        assertThat(fresh.articles()).containsExactly(replacementNews.getId());
+
+        queue.progress(obsolete.getTaskKey(), 99, Instant.EPOCH);
+        queue.deferArticle(obsolete.getTaskKey(), article.getId(), 99);
+        queue.finishPass(obsolete.getTaskKey());
+        queue.complete(obsolete.getTaskKey());
+        assertThat(tasks.findById(fresh.getTaskKey())).hasValueSatisfying(task -> {
+            assertThat(task.getCursor()).isZero();
+            assertThat(task.articles()).containsExactly(fresh.articles().getFirst());
+        });
+        listener.processPending();
+        assertThat(impacts.findByItineraryId(replacement.getId())).singleElement()
+                .satisfies(impact -> assertThat(impact.getNews().getId()).isEqualTo(fresh.articles().getFirst()));
     }
 
     @Test void concurrentEvaluationPathsShareOneAssessmentAndOneAiCall() throws Exception {

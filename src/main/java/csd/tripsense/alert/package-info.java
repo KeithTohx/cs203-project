@@ -13,7 +13,10 @@
  * unreadCount. Send the response's nextBeforeId back as beforeId to load older alerts.</li>
  * <li>GET /api/alerts/stream: ready/alert SSE events, session cookie required. Fetch history
  * on every ready event to recover any missed messages. Streams expire after 30 minutes
- * and clients can reconnect; heartbeats are sent every 15 seconds.</li>
+ * and clients can reconnect; heartbeats are sent every 15 seconds. If the live-delivery queue
+ * overflows, affected streams receive another ready event on their next heartbeat so clients
+ * reload saved history even while the connection remains healthy. Each connection has at most
+ * one active virtual-thread write, so a slow client cannot block another client's heartbeat.</li>
  * <li>PATCH /api/alerts/{id} with {"read": true}: marks one alert as read. Idempotent, owner-only,
  * requires the normal CSRF token.</li>
  * <li>PATCH /api/alerts/{id}/group with {"read": true}: marks visible members of the same
@@ -22,6 +25,10 @@
  * newest alert id shown so alerts that arrive meanwhile stay unread. Returns the unreadCount left
  * afterwards. Idempotent, requires the normal CSRF token.</li>
  * </ul>
+ *
+ * <p>The browser batches live events into bounded 500 ms refresh windows and coalesces events
+ * while a history request is running. Failed history loads retry after five seconds even on a
+ * healthy stream; logout cancels these retries.
  *
  * <p>Email remains disabled until configured externally. No resource, frontend or
  * deployment file needs to contain credentials. Standard environment settings:
@@ -64,6 +71,11 @@
  * a crash or failure before queuing can leave that item without a task. Once queued, the new-item
  * worker resumes saved progress after failures, restarts, or its per-pass AI limit; its article
  * snapshot does not expire with the news lookback.
+ * Deleting a source removes its pending tasks atomically through SQLite triggers, including
+ * cascading deletions. New tasks have unique identities so an obsolete worker cannot advance
+ * or delete a replacement task after SQLite reuses the source id.
+ * In-flight model results also validate immutable trip/activity identities under the same
+ * SQLite write lock as the verdict save, so a deleted source's result cannot alert a replacement.
  * Disable impact.eval.new-itinerary.enabled in tests that create unrelated fixtures.
  *
  * <p>Real-time delivery begins after impact assessment, not at the time a news event occurs.

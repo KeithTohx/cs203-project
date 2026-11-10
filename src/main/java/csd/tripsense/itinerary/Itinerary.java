@@ -22,6 +22,17 @@ public class Itinerary {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     Long id;
 
+    // Identifies this row's lifetime even when SQLite reuses its numeric id.
+    @JsonIgnore
+    @Setter(AccessLevel.NONE)
+    @Column(updatable = false)
+    private String assessmentIdentity = java.util.UUID.randomUUID().toString();
+
+    @PrePersist
+    private void initializeAssessmentIdentity() {
+        assessmentIdentity = java.util.UUID.randomUUID().toString();
+    }
+
     @ManyToOne
     @JoinColumn(name = "user_id", nullable = false)
     private User user;

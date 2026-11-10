@@ -33,17 +33,20 @@ public class ImpactServiceImpl implements ImpactService {
     private NewsService newsService;
     private final ApplicationEventPublisher events;
     private final AlertProgressReporter progress;
+    private final AssessmentSourceGuard sourceGuard;
     private static final Logger log = LoggerFactory.getLogger(ImpactServiceImpl.class);
 
     public ImpactServiceImpl(ImpactRepository impacts, ChatService chatService,
                              ItineraryService itineraryService, ActivityService activityService,
-                             NewsService newsService, ApplicationEventPublisher events, AlertProgressReporter progress){
+                             NewsService newsService, ApplicationEventPublisher events, AlertProgressReporter progress,
+                             AssessmentSourceGuard sourceGuard){
         this.impacts = impacts;
         this.chatService = chatService;
         this.itineraryService = itineraryService;
         this.activityService = activityService;
         this.newsService = newsService;
         this.events = events; this.progress = progress;
+        this.sourceGuard = sourceGuard;
     }
 
     // the shape we ask the model to answer in
@@ -117,8 +120,9 @@ public class ImpactServiceImpl implements ImpactService {
             if (stored.isPresent() && stored.get().getReason() != null) {
                 return stored.get();
             }
+            var source = AssessmentSourceGuard.Source.capture(itinerary, null);
             Verdict verdict = chatService.ask(buildItineraryPrompt(news, itinerary), Verdict.class);
-            return save(stored.orElseGet(Impact::new), itinerary, news, null, verdict);
+            return saveIfCurrent(source, stored.orElseGet(Impact::new), itinerary, news, null, verdict);
         }
     }
 
@@ -129,8 +133,9 @@ public class ImpactServiceImpl implements ImpactService {
             if (stored.isPresent() && stored.get().getReason() != null) {
                 return stored.get();
             }
+            var source = AssessmentSourceGuard.Source.capture(activity.getItinerary(), activity);
             Verdict verdict = chatService.ask(buildPrompt(news, activity), Verdict.class);
-            return save(stored.orElseGet(Impact::new), activity.getItinerary(), news, activity, verdict);
+            return saveIfCurrent(source, stored.orElseGet(Impact::new), activity.getItinerary(), news, activity, verdict);
         }
     }
 
@@ -220,6 +225,25 @@ public class ImpactServiceImpl implements ImpactService {
 
     // updates the row we found, or the blank one we made, so a pair is never stored twice.
     // rejected is left alone, so a seed row the user already rejected stays rejected after its first evaluation
+    private Impact saveIfCurrent(AssessmentSourceGuard.Source source, Impact impact, Itinerary itinerary,
+                                 News news, Activity activity, Verdict verdict) {
+        Impact saved;
+        try {
+            saved = sourceGuard.saveIfCurrent(source, () -> save(impact, itinerary, news, activity, verdict));
+        } catch (org.springframework.dao.DataAccessException collision) {
+            // Recover outside the failed transaction, after its writer lock is released.
+            if (!duplicateAssessmentKey(collision)) throw collision;
+            return (activity == null
+                    ? impacts.findFirstByNewsIdAndItineraryIdAndActivityIsNull(news.getId(), itinerary.getId())
+                    : impacts.findFirstByNewsIdAndActivityId(news.getId(), activity.getId()))
+                    .filter(i -> i.getReason() != null).orElseThrow(() -> collision);
+        }
+        // Publish after the guard commits and releases its connection. Alert creation
+        // uses a separate transaction and must also work with a one-connection pool.
+        events.publishEvent(new ImpactEvaluatedEvent(saved.getId()));
+        return saved;
+    }
+
     private Impact save(Impact impact, Itinerary itinerary, News news, Activity activity,
                         Verdict verdict) {
         impact.setUser(itinerary.getUser());
@@ -230,21 +254,10 @@ public class ImpactServiceImpl implements ImpactService {
         impact.setReason(verdict.reason());
         impact.setAlertEligible(verdict.impacted() && !Boolean.TRUE.equals(impact.getRejected()));
         impact.setAssessmentKey(assessmentKey(itinerary, news, activity));
-        Impact saved;
-        try {
-            saved = impacts.save(impact);
-        } catch (org.springframework.dao.DataAccessException collision) {
-            if (!duplicateAssessmentKey(collision)) throw collision;
-            // The unique key also protects separate application instances racing to insert.
-            return (activity == null
-                    ? impacts.findFirstByNewsIdAndItineraryIdAndActivityIsNull(news.getId(), itinerary.getId())
-                    : impacts.findFirstByNewsIdAndActivityId(news.getId(), activity.getId()))
-                    .filter(i -> i.getReason() != null).orElseThrow(() -> collision);
-        }
+        Impact saved = impacts.save(impact);
         log.info("Impact saved: id={} news={} itinerary={} activity={} impacted={} reason={}",
                 saved.getId(), news.getId(), itinerary.getId(),
                 activity == null ? null : activity.getId(), verdict.impacted(), verdict.reason());
-        events.publishEvent(new ImpactEvaluatedEvent(saved.getId()));
         return saved;
     }
 

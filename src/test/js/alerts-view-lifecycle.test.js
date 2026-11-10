@@ -85,6 +85,26 @@
             "Active views must still handle authentication failures");
         passed.push("handle authentication failures while the view is active");
     }
+    {
+        const history = deferred(), f = fixture(history);
+        await Promise.resolve();
+        f.notify({ newAlerts: [{ id: 9, readAt: null, itineraryId: 1, newsId: 2 }], unreadCount: 1 });
+        history.resolve({ content: [], unreadCount: 0, hasMore: false });
+        await f.done;
+        const controls = JSON.parse(f.snapshot()).find(row => row[0] === "#alerts-switch")[1];
+        assert(controls.includes("Unread (1)") && controls.includes("data-read-all"),
+            "An older history response must retain the live unread count and mark-all button");
+        passed.push("preserve a newer live unread count while loading history");
+    }
+    {
+        const history = deferred(), f = fixture(history);
+        await Promise.resolve();
+        history.resolve({ content: [], unreadCount: 3, hasMore: false });
+        await f.done;
+        const controls = JSON.parse(f.snapshot()).find(row => row[0] === "#alerts-switch")[1];
+        assert(controls.includes("Unread (3)"), "A history response must supply the count when no live update intervenes");
+        passed.push("accept the history unread count when no newer update exists");
+    }
     globalThis.alertViewTestResults = { ok: true, passed };
     globalThis.console?.log(`${passed.length} alert view lifecycle tests passed`);
 })().catch(error => {

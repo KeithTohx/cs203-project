@@ -23,11 +23,11 @@ public class AlertMetadataMaintenance {
     public void clean() {
         sql.update("update alert_email_group set itinerary_id=cast(substr(id,1,instr(id,':')-1) as integer), "
                 + "news_id=cast(substr(id,instr(id,':')+1) as integer) where itinerary_id is null");
-        // Backfill terminal state for groups created before delivered was recorded on the group itself.
+        // Only legacy NULL state is backfilled. FALSE can be an active follow-up after a partial email.
         sql.update("update alert_email_group set delivered=1, sent_at=coalesce(sent_at,"
                 + "(select max(a.email_sent_at) from alert a join impact i on i.id=a.impact_id "
                 + "where i.itinerary_id=alert_email_group.itinerary_id and i.news_id=alert_email_group.news_id)) "
-                + "where (delivered is null or delivered=0) and exists "
+                + "where delivered is null and exists "
                 + "(select 1 from alert a join impact i on i.id=a.impact_id "
                 + "where i.itinerary_id=alert_email_group.itinerary_id and i.news_id=alert_email_group.news_id "
                 + "and (a.email_status='SENT' or a.email_status='SUPPRESSED'))");

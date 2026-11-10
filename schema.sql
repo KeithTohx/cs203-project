@@ -29,6 +29,7 @@ create table country {
 
 create table itinerary {
     id integer primary key,
+    assessment_identity varchar, -- immutable row-lifetime identity; protected assessment saves validate it
     user_id integer not null,
     country_id integer not null,
     name varchar,
@@ -42,6 +43,7 @@ create table itinerary {
 
 create table activity {
     id integer primary key,
+    assessment_identity varchar, -- regenerated for replacement rows even if their numeric id is reused
     itinerary_id integer not null,
     country_id integer,            -- copied from the itinerary; null on rows created before this column existed
     name varchar not null,
@@ -150,3 +152,24 @@ create table audit_log {
     target_id integer,         -- the ACCOUNT it was done to / about (no foreign key: the record must outlive it)
     details varchar(500)
 }
+
+-- Durable new-item assessment tasks. New task keys include a UUID so obsolete workers
+-- cannot update a replacement task when SQLite reuses a source id. Legacy keys remain valid.
+create table pending_impact_evaluation (
+    task_key varchar primary key,
+    target_id bigint not null,
+    activity boolean not null,
+    article_ids text not null,
+    cursor integer not null,
+    retry_at timestamp not null,
+    deferred_article_ids text
+);
+create unique index uk_pending_evaluation_target on pending_impact_evaluation(target_id, activity);
+
+-- EvaluationTaskSchemaMigration installs these after Hibernate creates the tables.
+create trigger delete_itinerary_evaluation_task after delete on itinerary begin
+    delete from pending_impact_evaluation where activity=0 and target_id=old.id;
+end;
+create trigger delete_activity_evaluation_task after delete on activity begin
+    delete from pending_impact_evaluation where activity=1 and target_id=old.id;
+end;

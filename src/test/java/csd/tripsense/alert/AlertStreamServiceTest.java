@@ -58,6 +58,7 @@ class AlertStreamServiceTest {
         sessionRegistry = new SessionRegistryImpl();
         emitters = new ArrayList<>();
         streamService = new AlertStreamService(userRepository, sessionRegistry) {
+            @Override protected void dispatchWrite(Runnable task) { task.run(); }
             @Override
             protected SseEmitter newEmitter() {
                 RecordingEmitter emitter = new RecordingEmitter();
@@ -175,6 +176,92 @@ class AlertStreamServiceTest {
         assertEquals(1, emitters.getLast().alerts().size());
     }
 
+    @Test
+    void rejectedDeliveryRequestsHistoryRefreshOnEveryAffectedSessionOnly() {
+        streamService.subscribe(1L, loggedInSession(1L));
+        streamService.subscribe(1L, loggedInSession(1L));
+        streamService.subscribe(2L, loggedInSession(2L));
+        // Deterministically force the same rejection handler used by a full delivery queue.
+        ((ExecutorService) ReflectionTestUtils.getField(streamService, "delivery")).shutdownNow();
+
+        streamService.onCreated(alertFor(1L));
+        streamService.onCreated(alertFor(1L));
+        streamService.heartbeat();
+
+        assertEquals(2, emitters.get(0).readyEvents());
+        assertEquals(2, emitters.get(1).readyEvents());
+        assertEquals(1, emitters.get(2).readyEvents());
+        for (RecordingEmitter emitter : emitters) {
+            assertTrue(emitter.alerts().isEmpty());
+            assertTrue(!emitter.isClosed());
+        }
+        // A burst coalesces into one refresh, then ordinary heartbeats resume.
+        streamService.heartbeat();
+        assertEquals(2, emitters.get(0).readyEvents());
+        assertEquals(2, emitters.get(1).readyEvents());
+        // A later rejection must request another refresh even on the same healthy stream.
+        streamService.onCreated(alertFor(1L));
+        streamService.heartbeat();
+        assertEquals(3, emitters.get(0).readyEvents());
+        assertEquals(3, emitters.get(1).readyEvents());
+    }
+
+    @Test
+    void rejectedDeliveryDoesNotSendRecoveryToAnExpiredSession() {
+        var session = loggedInSession(1L);
+        streamService.subscribe(1L, session);
+        ((ExecutorService) ReflectionTestUtils.getField(streamService, "delivery")).shutdownNow();
+        streamService.onCreated(alertFor(1L));
+        sessionRegistry.getSessionInformation(session.getId()).expireNow();
+
+        streamService.heartbeat();
+
+        assertTrue(emitters.getFirst().isClosed());
+        assertEquals(1, emitters.getFirst().readyEvents());
+    }
+
+    @Test
+    void blockedClientDoesNotDelayAnotherUsersHeartbeatRecovery() throws Exception {
+        streamService.stop();
+        var initialWrites=new java.util.concurrent.CountDownLatch(2);
+        var blocked=new java.util.concurrent.CountDownLatch(1);
+        var release=new java.util.concurrent.CountDownLatch(1);
+        var recovered=new java.util.concurrent.CountDownLatch(1);
+        streamService=new AlertStreamService(userRepository,sessionRegistry) {
+            @Override protected void dispatchWrite(Runnable task) {
+                super.dispatchWrite(() -> { try { task.run(); } finally { initialWrites.countDown(); } });
+            }
+            @Override protected SseEmitter newEmitter() {
+                boolean slow=emitters.isEmpty();
+                RecordingEmitter emitter=new RecordingEmitter() {
+                    @Override public void send(SseEventBuilder event) throws IOException {
+                        if (slow && event.build().stream().anyMatch(p -> p.getData() instanceof AlertResponse)) {
+                            blocked.countDown();
+                            try { if (!release.await(5,TimeUnit.SECONDS)) throw new IOException("test timeout"); }
+                            catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException(e); }
+                        }
+                        super.send(event);
+                        if (!slow && readyEvents()==2) recovered.countDown();
+                    }
+                };
+                emitters.add(emitter); return emitter;
+            }
+        };
+        streamService.subscribe(1L,loggedInSession(1L));
+        streamService.subscribe(2L,loggedInSession(2L));
+        assertTrue(initialWrites.await(2,TimeUnit.SECONDS));
+        try {
+            streamService.deliver(alertFor(1L));
+            assertTrue(blocked.await(2,TimeUnit.SECONDS));
+            ((ExecutorService) ReflectionTestUtils.getField(streamService,"delivery")).shutdownNow();
+            streamService.onCreated(alertFor(2L));
+            streamService.heartbeat();
+            assertTrue(recovered.await(2,TimeUnit.SECONDS));
+            assertEquals(1,emitters.getFirst().readyEvents());
+            assertEquals(2,emitters.getLast().readyEvents());
+        } finally { release.countDown(); }
+    }
+
     // ===== SUBSCRIBE TESTS =====
 
     @Test
@@ -272,7 +359,7 @@ class AlertStreamServiceTest {
     // keeps what would have been sent instead of writing to a real http response
     private static class RecordingEmitter extends SseEmitter {
 
-        private final List<Object> sent = new ArrayList<>();
+        private final List<Object> sent = new java.util.concurrent.CopyOnWriteArrayList<>();
         private volatile boolean closed;
         private boolean broken;
         private Runnable onCompletion;
@@ -307,6 +394,10 @@ class AlertStreamServiceTest {
 
         boolean isClosed() {
             return closed;
+        }
+
+        long readyEvents() {
+            return sent.stream().filter(part -> part instanceof String text && text.contains("event:ready")).count();
         }
 
         // the ready message is sent as plain text, so only the alert payloads are kept

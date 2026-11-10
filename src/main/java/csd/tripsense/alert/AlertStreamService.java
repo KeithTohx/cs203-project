@@ -8,6 +8,8 @@ import jakarta.servlet.http.HttpSession;
 import java.io.IOException;
 import java.util.Set;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -30,6 +32,8 @@ public class AlertStreamService {
     private final ScheduledExecutorService heartbeats = Executors.newSingleThreadScheduledExecutor(task -> {
         Thread thread = new Thread(task, "alert-heartbeat"); thread.setDaemon(true); return thread;
     });
+    // One in-flight write per connection bounds virtual-thread and payload retention.
+    private final ExecutorService writes = Executors.newVirtualThreadPerTaskExecutor();
     private final ExecutorService delivery = new ThreadPoolExecutor(2, 2, 0, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(100), task -> {
                 Thread thread = new Thread(task, "alert-delivery"); thread.setDaemon(true); return thread;
@@ -58,9 +62,12 @@ public class AlertStreamService {
             subscribers.add(connection);
             return subscribers;
         });
-        connection.emitter.onCompletion(() -> remove(connection));
+        connection.emitter.onCompletion(() -> {
+            connection.closed.set(true);
+            remove(connection);
+        });
         connection.emitter.onTimeout(() -> close(connection));
-        connection.emitter.onError(error -> remove(connection));
+        connection.emitter.onError(error -> close(connection));
         send(connection, SseEmitter.event().name("ready").reconnectTime(3000)
                 .data("Connected. GET /api/alerts for saved or missed alerts."));
         return connection.emitter;
@@ -70,7 +77,9 @@ public class AlertStreamService {
     public void onCreated(AlertCreatedEvent event) {
         try { delivery.execute(() -> deliver(event)); }
         catch (RejectedExecutionException exception) {
-            log.warn("Live alert delivery busy; alert {} remains available in history", event.alert().id());
+            Set<Connection> recipients = connections.get(event.userId());
+            if (recipients != null) recipients.forEach(connection -> connection.historyRefreshRequired.set(true));
+            log.warn("Live alert delivery busy; history refresh requested for alert {}", event.alert().id());
         }
     }
 
@@ -85,8 +94,15 @@ public class AlertStreamService {
 
     void heartbeat() {
         try {
-            connections.values().forEach(set -> set.forEach(connection ->
-                    send(connection, SseEmitter.event().comment("keep-alive"))));
+            connections.values().forEach(set -> set.forEach(connection -> write(connection, () -> {
+                // Consume recovery only when a writer can actually send it. A busy connection
+                // keeps its flag, and another overflow during this send survives to the next tick.
+                if (connection.historyRefreshRequired.getAndSet(false)) {
+                    return SseEmitter.event().name("ready")
+                            .data("Live delivery fell behind. GET /api/alerts for saved or missed alerts.");
+                }
+                return SseEmitter.event().comment("keep-alive");
+            }, false)));
         } catch (RuntimeException exception) {
             log.warn("Alert heartbeat failed: {}", exception.getMessage());
         }
@@ -110,11 +126,32 @@ public class AlertStreamService {
         }
     }
 
+    // Each connection writes independently; neither the heartbeat nor the shared event
+    // workers perform network I/O. A slow connection coalesces missed events into a refresh.
+    protected void dispatchWrite(Runnable task) { writes.execute(task); }
+
     private void send(Connection connection, SseEmitter.SseEventBuilder event) {
-        synchronized (connection) {
-            if (!active(connection)) { close(connection); return; }
-            try { connection.emitter.send(event); }
-            catch (IOException | IllegalStateException exception) { close(connection); }
+        write(connection, () -> event, true);
+    }
+
+    private void write(Connection connection, Supplier<SseEmitter.SseEventBuilder> event, boolean refreshIfBusy) {
+        if (connection.closed.get()) return;
+        if (!connection.writing.compareAndSet(false, true)) {
+            if (refreshIfBusy) connection.historyRefreshRequired.set(true);
+            return;
+        }
+        try {
+            dispatchWrite(() -> {
+                try {
+                    if (connection.closed.get()) return;
+                    if (!active(connection)) { close(connection); return; }
+                    try { connection.emitter.send(event.get()); }
+                    catch (IOException | IllegalStateException exception) { close(connection); }
+                } finally { connection.writing.set(false); }
+            });
+        } catch (RejectedExecutionException exception) {
+            connection.writing.set(false);
+            connection.historyRefreshRequired.set(true);
         }
     }
 
@@ -126,8 +163,11 @@ public class AlertStreamService {
     }
 
     private void close(Connection connection) {
+        if (!connection.closed.compareAndSet(false, true)) return;
         remove(connection);
-        connection.emitter.complete();
+        // Completion can wait for the emitter's write lock too, so isolate it from other clients.
+        try { dispatchWrite(connection.emitter::complete); }
+        catch (RejectedExecutionException ignored) { /* Application shutdown is already closing responses. */ }
     }
 
     @PreDestroy
@@ -135,7 +175,13 @@ public class AlertStreamService {
         heartbeats.shutdownNow();
         delivery.shutdownNow();
         connections.values().forEach(set -> set.forEach(this::close));
+        writes.shutdown();
     }
 
-    private record Connection(Long userId, HttpSession session, SseEmitter emitter) {}
+    private record Connection(Long userId, HttpSession session, SseEmitter emitter,
+                              AtomicBoolean historyRefreshRequired, AtomicBoolean writing, AtomicBoolean closed) {
+        Connection(Long userId, HttpSession session, SseEmitter emitter) {
+            this(userId, session, emitter, new AtomicBoolean(), new AtomicBoolean(), new AtomicBoolean());
+        }
+    }
 }

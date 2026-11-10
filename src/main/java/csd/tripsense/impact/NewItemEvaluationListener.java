@@ -88,6 +88,9 @@ public class NewItemEvaluationListener {
                 Activity activity = task.isActivity() ? activities.findById(task.getTargetId()).orElse(null) : null;
                 Itinerary trip = task.isActivity() ? activity == null ? null : activity.getItinerary()
                         : trips.findById(task.getTargetId()).orElse(null);
+                // The target may have been deleted since this batch of tasks was fetched.
+                // Check the unique task identity before using an id that SQLite can reuse.
+                if (!tasks.existsById(task.getTaskKey())) continue;
                 if (trip == null || trip.getCountry() == null || !trip.getUser().isEnabled()
                         || trip.getDateEnd() != null && trip.getDateEnd().isBefore(LocalDateTime.now())) {
                     queue.complete(task.getTaskKey()); continue;
@@ -96,6 +99,7 @@ public class NewItemEvaluationListener {
                         ? activities.findByItineraryIdOrderByDateStart(trip.getId()) : List.of(activity);
                 List<Long> articles = task.articles();
                 for (; cursor < articles.size(); cursor++) {
+                    if (!tasks.existsById(task.getTaskKey())) break;
                     var article = news.findById(articles.get(cursor)).orElse(null);
                     if (article != null) {
                         boolean overall=impacts.findFirstByNewsIdAndItineraryIdAndActivityIsNull(article.getId(),trip.getId())

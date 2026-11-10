@@ -31,6 +31,16 @@ public class Activity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     Long id;
 
+    @JsonIgnore
+    @Setter(lombok.AccessLevel.NONE)
+    @Column(updatable = false)
+    private String assessmentIdentity = java.util.UUID.randomUUID().toString();
+
+    @jakarta.persistence.PrePersist
+    private void initializeAssessmentIdentity() {
+        assessmentIdentity = java.util.UUID.randomUUID().toString();
+    }
+
     @ManyToOne
     @JoinColumn(name = "itinerary_id", nullable = false)
     private Itinerary itinerary;

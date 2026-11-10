@@ -84,6 +84,7 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
     let currentView = "all";
     let loadedAlerts = [];
     let unreadCount = 0;
+    let unreadRevision = 0;   // live counts take precedence over responses already in flight
     let hasMore = false;
     let nextBeforeId = null;   // the cursor the backend gave for the next page, null for the newest
     let isReloading = true;    // the first page has not come back yet, after opening or reloading
@@ -203,9 +204,11 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
         readsWhileLoading = [];
 
         let page;
+        let countRevision;
         try {
             await waitForSaves();
             if (disposed || thisLoad !== latestLoad) return;
+            countRevision = unreadRevision;
             page = await api.alerts({ unreadOnly: currentView === "unread", beforeId: nextBeforeId, size: PAGE_SIZE });
         } catch (error) {
             if (disposed) return;
@@ -228,7 +231,8 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
         for (const isCovered of readsMeanwhile) markCopiesRead(pageAlerts, isCovered);
 
         addAlerts(pageAlerts, { atTop: false });
-        const countIsCurrent = readsMeanwhile.length === 0;
+        // Live updates can include new alerts as well as reads while this response is in flight.
+        const countIsCurrent = countRevision === unreadRevision;
         if (countIsCurrent) unreadCount = page?.unreadCount ?? 0;
         hasMore = page?.hasMore ?? false;
         nextBeforeId = page?.nextBeforeId ?? null;
@@ -349,6 +353,7 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
     // a failed save or a count that moved elsewhere, eg in another tab, means the list is loaded again
     const stopListening = onAlertsChanged(change => {
         if (disposed) return;
+        unreadRevision += 1;
         if (change.saveFailed || change.outOfStep) {
             reload();
             return;

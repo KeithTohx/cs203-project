@@ -20,6 +20,7 @@ public class AlertEmailGroup {
     protected AlertEmailGroup() {}
     public AlertEmailGroup(Long tripId, Long newsId, String deliveryKey) {
         this.id = key(tripId, newsId); this.deliveryKey = deliveryKey;
+        this.delivered = false;
         this.itineraryId=tripId; this.newsId=newsId;
     }
     public static String key(Long tripId, Long newsId) { return tripId + ":" + newsId; }

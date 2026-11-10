@@ -21,6 +21,12 @@ class ImpactSchemaUpgradeTest {
         try {
             Path path = Files.createTempDirectory("tripsense-impact-upgrade-").resolve("legacy.db");
             try (var db = DriverManager.getConnection("jdbc:sqlite:" + path); var sql = db.createStatement()) {
+                sql.execute("create table itinerary(id integer primary key, user_id bigint not null, country_id bigint not null, "
+                        + "name varchar not null, date_start timestamp, date_end timestamp)");
+                sql.execute("insert into itinerary(id,user_id,country_id,name) values(31,1,1,'Legacy trip')");
+                sql.execute("create table activity(id integer primary key, itinerary_id bigint not null, "
+                        + "country_id bigint, name varchar not null, address varchar, category varchar, date_start timestamp, date_end timestamp)");
+                sql.execute("insert into activity(id,itinerary_id,name) values(32,31,'Legacy activity')");
                 sql.execute("""
                         create table impact (id integer primary key, activity_id bigint, itinerary_id bigint,
                         news_id bigint not null, user_id bigint not null, impacted boolean, rejected boolean,
@@ -49,6 +55,20 @@ class ImpactSchemaUpgradeTest {
     @Autowired JdbcTemplate sql;
     @Autowired csd.tripsense.alert.AlertRepository alerts;
     @Autowired org.springframework.transaction.PlatformTransactionManager transactions;
+
+    @Test void sourceIdentityUpgradeBackfillsLegacyRowsAndHandlesRawInserts() {
+        String trip = sql.queryForObject("select assessment_identity from itinerary where id=31", String.class);
+        String activity = sql.queryForObject("select assessment_identity from activity where id=32", String.class);
+        assertThat(trip).isNotBlank();
+        assertThat(activity).isNotBlank().isNotEqualTo(trip);
+        sql.update("insert into itinerary(id,user_id,country_id,name) values(33,1,1,'Raw trip')");
+        String first = sql.queryForObject("select assessment_identity from itinerary where id=33", String.class);
+        assertThat(first).isNotBlank();
+        sql.update("delete from itinerary where id=33");
+        sql.update("insert into itinerary(id,user_id,country_id,name) values(33,1,1,'Raw trip')");
+        assertThat(sql.queryForObject("select assessment_identity from itinerary where id=33", String.class))
+                .isNotBlank().isNotEqualTo(first);
+    }
 
     @Test void suppressionWorksWithTheOriginalSqliteStatusConstraint() {
         new org.springframework.transaction.support.TransactionTemplate(transactions).executeWithoutResult(status ->

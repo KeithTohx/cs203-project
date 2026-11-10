@@ -8,7 +8,8 @@ import java.util.stream.Collectors;
 
 /** Durable snapshot of the news to assess for one newly created itinerary or activity. */
 @Entity
-@Table(name = "pending_impact_evaluation")
+@Table(name = "pending_impact_evaluation", indexes = @Index(
+        name = "uk_pending_evaluation_target", columnList = "target_id,activity", unique = true))
 public class PendingImpactEvaluation {
     @Id private String taskKey;
     @Column(nullable = false) private Long targetId;
@@ -33,7 +34,10 @@ public class PendingImpactEvaluation {
 
     protected PendingImpactEvaluation() {}
     PendingImpactEvaluation(Long targetId, boolean activity, List<Long> articles) {
-        this.taskKey = key(targetId, activity); this.targetId = targetId; this.activity = activity;
+        // A replacement target may reuse a deleted SQLite id. Old workers must never
+        // advance or delete the replacement target's new task.
+        this.taskKey = key(targetId, activity) + ":" + java.util.UUID.randomUUID();
+        this.targetId = targetId; this.activity = activity;
         this.articleIds = articles.stream().map(String::valueOf).collect(Collectors.joining(","));
     }
     static String key(Long id, boolean activity) { return (activity ? "activity:" : "trip:") + id; }

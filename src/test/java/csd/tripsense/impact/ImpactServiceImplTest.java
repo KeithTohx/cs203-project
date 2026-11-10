@@ -36,6 +36,7 @@ class ImpactServiceImplTest {
     @Mock private org.springframework.context.ApplicationEventPublisher events;
 
     @Mock private csd.tripsense.alert.AlertProgressReporter progress;
+    @Mock private AssessmentSourceGuard sourceGuard;
 
     @InjectMocks
     private ImpactServiceImpl impactService;
@@ -47,6 +48,10 @@ class ImpactServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        lenient().when(sourceGuard.saveIfCurrent(any(), any())).thenAnswer(inv -> {
+            java.util.function.Supplier<Impact> save = inv.getArgument(1);
+            return save.get();
+        });
         user = mock(User.class);
 
         itinerary = new Itinerary();
