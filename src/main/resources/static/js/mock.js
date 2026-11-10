@@ -1106,6 +1106,21 @@ export const mockApi = {
         alert.readAt ??= new Date().toISOString();
         return respondWith(visibleAlert(alert));
     },
+    // Read the persisted news/trip group through the selected alert, including older pages.
+    markAlertGroupRead: id => {
+        const notLoggedIn = requireLogin();
+        if (notLoggedIn) return notLoggedIn;
+        const anchor = ALERTS.find(candidate => candidate.id === Number(id));
+        const group = anchor && visibleAlert(anchor);
+        if (!group) return fail(404, "Alert not found.");
+        const now = new Date().toISOString();
+        for (const alert of ALERTS) {
+            const visible = visibleAlert(alert);
+            if (visible && visible.itineraryId === group.itineraryId && visible.newsId === group.newsId
+                    && alert.id <= anchor.id) alert.readAt ??= now;
+        }
+        return respondWith({ unreadCount: ALERTS.filter(alert => alert.readAt == null && visibleAlert(alert)).length });
+    },
     // like the backend: the newest 20 of this user's admin changes, and how many are unread
     adminChanges: () => {
         const notLoggedIn = requireLogin();

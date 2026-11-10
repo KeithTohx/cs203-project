@@ -86,6 +86,7 @@ const createViewSwitch = (view, unreadCount) => `
 `;
 
 export async function showAlerts(root, user, onAuthLost, onLeave) {
+    let disposed = false;
     root.innerHTML = `
         ${pageHead("Alerts")}
         <p class="meta page-intro">News that affects your trips, and anything an admin changed in
@@ -108,6 +109,7 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
     let currentView = "all";
     let loadedAlerts = [];
     let unreadCount = 0;
+    let unreadRevision = 0;   // live counts take precedence over responses already in flight
     let hasMore = false;
     let nextBeforeId = null;   // the cursor the backend gave for the next page, null for the newest
     let isReloading = true;    // the first page has not come back yet, after opening or reloading
@@ -192,6 +194,7 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
     };
 
     const draw = () => {
+        if (disposed) return;
         const focusSelectors = findFocusSelectors();
         const newsEntries = shownGroups().map(group => ({ createdAt: group.createdAt, html: createAlertItem(group) }));
         const changeEntries = shownChanges().map(change => ({ createdAt: change.createdAt, html: createAdminChangeItem(change) }));
@@ -241,6 +244,7 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
     // each page starts after the oldest alert shown, so marking alerts read in between skips none.
     // reads still saving are waited for, or the page could come back with them unread
     const loadMore = async () => {
+        if (disposed) return;
         loadMoreButton.disabled = true;
         loadMoreButton.textContent = "Loading…";
         latestLoad += 1;
@@ -248,10 +252,14 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
         readsWhileLoading = [];
 
         let page;
+        let countRevision;
         try {
             await waitForSaves();
+            if (disposed || thisLoad !== latestLoad) return;
+            countRevision = unreadRevision;
             page = await api.alerts({ unreadOnly: currentView === "unread", beforeId: nextBeforeId, size: PAGE_SIZE });
         } catch (error) {
+            if (disposed) return;
             // an error for a list already reloaded is not worth showing, unless the session ended
             const isStale = thisLoad !== latestLoad && error.status !== 401;
             if (isStale) return;
@@ -261,7 +269,7 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
             loadMoreButton.textContent = "Load older alerts";
             return showError(status, error, onAuthLost);
         }
-        if (thisLoad !== latestLoad) return;   // reloaded while waiting, the newer load fills the list
+        if (disposed || thisLoad !== latestLoad) return;   // reloaded while waiting, the newer load fills the list
 
         // the server may have answered before those reads saved, so they are applied to this page too,
         // and its count is older than the one the bell has sent since
@@ -271,7 +279,8 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
         for (const isCovered of readsMeanwhile) markCopiesRead(pageAlerts, isCovered);
 
         addAlerts(pageAlerts, { atTop: false });
-        const countIsCurrent = readsMeanwhile.length === 0;
+        // Live updates can include new alerts as well as reads while this response is in flight.
+        const countIsCurrent = countRevision === unreadRevision;
         if (countIsCurrent) unreadCount = page?.unreadCount ?? 0;
         hasMore = page?.hasMore ?? false;
         nextBeforeId = page?.nextBeforeId ?? null;
@@ -286,6 +295,7 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
     let latestReload = null;
 
     const reload = () => {
+        if (disposed) return;
         // focus inside the list would fall to the page itself once it empties, so it waits on the view button
         const focusWasInList = list.contains(document.activeElement);
         if (focusWasInList) switchContainer.querySelector(`[data-view="${currentView}"]`)?.focus();
@@ -301,6 +311,7 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
     };
 
     const switchTo = view => {
+        if (disposed) return;
         if (view === currentView) return;
         currentView = view;
         errorBox.innerHTML = "";   // a failed save belongs to the view it happened on
@@ -312,7 +323,7 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
     // a 401 never gets here, the bell sends the user to log in itself
     const showSaveFailure = async error => {
         // left for a trip page while saving, so there is nothing here to show it in
-        if (!list.isConnected) return;
+        if (disposed || !list.isConnected) return;
         const viewWhenFailed = currentView;
 
         // the bell's own reload after saving can start another one, which cuts the first short,
@@ -321,6 +332,7 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
         do {
             awaitedReload = latestReload ?? reload();
             await awaitedReload;
+            if (disposed) return;
         } while (awaitedReload !== latestReload);
 
         // the error belongs to the view it happened on, so switching away while waiting drops it
@@ -331,6 +343,7 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
 
     // the list and count are updated through the change listener below, the same as for reads in the bell
     const markRead = async alerts => {
+        if (disposed) return;
         errorBox.innerHTML = "";
         try {
             await markAlertsRead(alerts);
@@ -342,6 +355,7 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
     // only up to the newest alert on this page, so one that arrives while it is open stays unread.
     // the admin changes go too, up to the newest one loaded
     const markAllRead = async () => {
+        if (disposed) return;
         const newestShownId = loadedAlerts[0]?.id ?? null;
         errorBox.innerHTML = "";
         try {
@@ -406,6 +420,8 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
     // keeps this list in step with the bell: new alerts go on top and reads show here too.
     // a failed save or a count that moved elsewhere, eg in another tab, means the list is loaded again
     const stopListening = onAlertsChanged(change => {
+        if (disposed) return;
+        unreadRevision += 1;
         if (change.adminChanges) {
             draw();
             return;
@@ -419,6 +435,8 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
         if (change.newAlerts) addAlerts(change.newAlerts, { atTop: true });
 
         if (change.readIds) markLoadedRead(alert => change.readIds.has(alert.id));
+        if (change.readGroups) markLoadedRead(alert => change.readGroups.some(group =>
+            alert.itineraryId === group.itineraryId && alert.newsId === group.newsId && alert.id <= group.upToId));
 
         if (change.readUpToId !== undefined) {
             const upToId = change.readUpToId;
@@ -428,7 +446,12 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
         unreadCount = change.unreadCount;
         draw();
     });
-    onLeave(stopListening);
+    onLeave(() => {
+        disposed = true;
+        latestLoad += 1;
+        readsWhileLoading = null;
+        stopListening();
+    });
 
     await loadMore();
 }

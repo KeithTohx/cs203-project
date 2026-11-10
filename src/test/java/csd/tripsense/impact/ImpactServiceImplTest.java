@@ -13,6 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.InjectMocks;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.support.TransactionOperations;
 
@@ -38,6 +39,10 @@ class ImpactServiceImplTest {
     @Mock private NewsService newsService;
     @Mock private org.springframework.context.ApplicationEventPublisher events;
 
+    @Mock private csd.tripsense.alert.AlertProgressReporter progress;
+    @Mock private AssessmentSourceGuard sourceGuard;
+
+    @InjectMocks
     private ImpactServiceImpl impactService;
 
     private User user;
@@ -47,14 +52,12 @@ class ImpactServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        // runs the guarded save straight away, there is no database to open a transaction on
-        impactService = new ImpactServiceImpl(impactRepository, chatService, itineraryService,
-                activityService, newsService, events, TransactionOperations.withoutTransaction());
-
-        // nothing has been edited since it was loaded, unless a test says otherwise
         lenient().when(itineraryService.findRevision(any(Itinerary.class))).thenReturn(Optional.of(0L));
         lenient().when(activityService.findRevision(any(Activity.class))).thenReturn(Optional.of(0L));
-
+        lenient().when(sourceGuard.saveIfCurrent(any(), any())).thenAnswer(inv -> {
+            java.util.function.Supplier<Impact> save = inv.getArgument(1);
+            return save.get();
+        });
         user = mock(User.class);
 
         itinerary = new Itinerary();
@@ -142,6 +145,29 @@ class ImpactServiceImplTest {
         return stored;
     }
 
+    @Test void sqliteUniqueCollisionReturnsTheOtherWorkersAssessment() {
+        Impact winner = storedImpact("Already assessed"); winner.setId(99L);
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.empty(), Optional.empty(), Optional.of(winner));
+        givenModelAnswers(true, "Affected");
+        var sql = new java.sql.SQLException("UNIQUE constraint failed: impact.assessment_key", null, 2067);
+        when(impactRepository.save(any(Impact.class))).thenThrow(
+                new org.springframework.orm.jpa.JpaSystemException(new RuntimeException(sql)));
+        assertSame(winner, impactService.evaluateItineraryForNews(itinerary, news));
+        verifyNoInteractions(events);
+    }
+
+    @Test void alertProgressDoesNotCrashWhenAnAssessmentReasonIsNull() {
+        when(itineraryService.getItineraryById(1L)).thenReturn(itinerary);
+        when(newsService.getNewsById(5L)).thenReturn(news);
+        when(activityService.getActivitiesByItinerary(1L)).thenReturn(List.of());
+        givenModelAnswers(true,null); givenSaveEchoes();
+        var result=impactService.evaluate(1L,5L);
+        assertNotNull(result);
+        assertNull(result.itinerary().reason());
+        verify(progress).finish(null,true);
+    }
+
     // ===== evaluateItineraryForNews =====
 
     @Test
@@ -202,6 +228,7 @@ class ImpactServiceImplTest {
 
         assertTrue(result.getImpacted());
         assertEquals("Quake affects Hokkaido trips", result.getReason());
+        assertTrue(result.isFromCurrentPrompt());
         assertSame(user, result.getUser());          // owner comes from the itinerary
         assertSame(itinerary, result.getItinerary());
         assertSame(news, result.getNews());
@@ -719,6 +746,22 @@ class ImpactServiceImplTest {
         assertEquals(List.of(notRejected, olderRow), result);
     }
 
+    @Test void alertProgressFailureDoesNotChangeASavedPositiveAssessmentResponse() {
+        when(itineraryService.getItineraryById(1L)).thenReturn(itinerary);
+        when(newsService.getNewsById(5L)).thenReturn(news);
+        when(activityService.getActivitiesByItinerary(1L)).thenReturn(List.of());
+        givenModelAnswers(true,"Trip affected"); givenSaveEchoes();
+        var tracking=mock(EvaluationProgress.class);
+        doThrow(new IllegalStateException("progress store unavailable")).when(tracking).resolved(1L,5L,null);
+        org.springframework.test.util.ReflectionTestUtils.setField(impactService,"progress",new csd.tripsense.alert.AlertProgressReporter(tracking));
+        var response=impactService.evaluate(1L,5L);
+        assertTrue(response.impacted());
+        assertTrue(response.itinerary().impacted());
+        var saved=org.mockito.ArgumentCaptor.forClass(Impact.class);
+        verify(impactRepository).save(saved.capture());
+        assertTrue(saved.getValue().getImpacted());
+        assertEquals("Trip affected",saved.getValue().getReason());
+    }
     // ===== plain lookups and delete =====
 
     @Test
@@ -752,6 +795,7 @@ class ImpactServiceImplTest {
     @DisplayName("Should delete the impact when it exists")
     void deleteImpact_ShouldDelete_WhenImpactExists() {
         when(impactRepository.existsById(3L)).thenReturn(true);
+        when(impactRepository.findById(3L)).thenReturn(Optional.of(rejectableImpact(3L, null, false)));
 
         impactService.deleteImpact(3L);
 

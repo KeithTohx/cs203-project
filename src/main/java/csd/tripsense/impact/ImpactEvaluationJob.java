@@ -1,8 +1,12 @@
 package csd.tripsense.impact;
 
+import csd.tripsense.alert.AlertProgressReporter;
+
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.slf4j.Logger;
@@ -34,20 +38,21 @@ public class ImpactEvaluationJob {
     private final ActivityService activityService;
     private final NewsService newsService;
     private final ImpactService impactService;
+    private final AlertProgressReporter progress;
     private final boolean enabled;
     private final int lookbackDays;
     private final int maxPerRun;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     public ImpactEvaluationJob(ItineraryService itineraryService, ActivityService activityService,
-                               NewsService newsService, ImpactService impactService,
+                               NewsService newsService, ImpactService impactService, AlertProgressReporter progress,
                                @Value("${impact.eval.enabled:true}") boolean enabled,
                                @Value("${impact.eval.news-lookback-days:3}") int lookbackDays,
                                @Value("${impact.eval.max-per-run:200}") int maxPerRun) {
         this.itineraryService = itineraryService;
         this.activityService = activityService;
         this.newsService = newsService;
-        this.impactService = impactService;
+        this.impactService = impactService; this.progress = progress;
         this.enabled = enabled;
         this.lookbackDays = lookbackDays;
         this.maxPerRun = maxPerRun;
@@ -87,33 +92,63 @@ public class ImpactEvaluationJob {
         for (Long countryId : countryIds) {
             for (News news : newsService.getNewsByCountrySince(countryId, since)) {
 
-                for (Itinerary itinerary : itineraryService.getItinerariesPendingForNews(news.getId(), countryId, now)) {
-                    if (judged >= maxPerRun) { done(judged, skipped, "cap reached"); return; }
-                    try {
-                        impactService.evaluateItineraryForNews(itinerary, news);
-                        judged++;
-                        failures = 0;
-                    } catch (EditedDuringEvaluationException e) {
-                        // not the model failing, the edit has queued its own run for the new details
-                        skipped++;
-                    } catch (Exception e) {
-                        skipped++;
-                        if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }
-                    }
+                var tripTargets = itineraryService.getItinerariesPendingForNews(news.getId(), countryId, now);
+                var activityTargets = activityService.getActivitiesPendingForNews(news.getId(), countryId, now);
+                var pendingTrips = new LinkedHashMap<Long, Itinerary>();
+                var activitiesByTrip = new LinkedHashMap<Long, List<Activity>>();
+                for (Itinerary trip : tripTargets) {
+                    pendingTrips.put(trip.getId(), trip);
+                    activitiesByTrip.put(trip.getId(), new ArrayList<>());
+                }
+                for (Activity activity : activityTargets) {
+                    activitiesByTrip.computeIfAbsent(activity.getItinerary().getId(), id -> new ArrayList<>())
+                            .add(activity);
                 }
 
-                for (Activity activity : activityService.getActivitiesPendingForNews(news.getId(), countryId, now)) {
+                // Start each email window only when this trip's assessments actually begin.
+                // Assess its activities before moving on to another trip.
+                for (var entry : activitiesByTrip.entrySet()) {
                     if (judged >= maxPerRun) { done(judged, skipped, "cap reached"); return; }
+                    Long tripId = entry.getKey();
+                    Itinerary itinerary = pendingTrips.get(tripId);
+                    List<Activity> activities = entry.getValue();
+                    String batch = progress.begin(tripId, news.getId(), itinerary != null,
+                            activities.stream().map(Activity::getId).toList());
+                    int expected = activities.size() + (itinerary != null ? 1 : 0);
+                    int completed = 0;
                     try {
-                        impactService.evaluateActivityForNews(activity, news);
-                        judged++;
-                        failures = 0;
-                    } catch (EditedDuringEvaluationException e) {
-                        // not the model failing, the edit has queued its own run for the new details
-                        skipped++;
-                    } catch (Exception e) {
-                        skipped++;
-                        if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }
+                        if (itinerary != null) {
+                            try {
+                                impactService.evaluateItineraryForNews(itinerary, news);
+                                progress.resolved(tripId, news.getId(), null);
+                                completed++;
+                                judged++;
+                                failures = 0;
+                            } catch (EditedDuringEvaluationException e) {
+                                skipped++;
+                            } catch (Exception e) {
+                                skipped++;
+                                if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }
+                            }
+                        }
+
+                        for (Activity activity : activities) {
+                            if (judged >= maxPerRun) { done(judged, skipped, "cap reached"); return; }
+                            try {
+                                impactService.evaluateActivityForNews(activity, news);
+                                progress.resolved(tripId, news.getId(), activity.getId());
+                                completed++;
+                                judged++;
+                                failures = 0;
+                            } catch (EditedDuringEvaluationException e) {
+                                skipped++;
+                            } catch (Exception e) {
+                                skipped++;
+                                if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }
+                            }
+                        }
+                    } finally {
+                        progress.finish(batch, completed < expected);
                     }
                 }
             }

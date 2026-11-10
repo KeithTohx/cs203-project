@@ -1,18 +1,17 @@
 package csd.tripsense.impact;
 
+import csd.tripsense.alert.AlertProgressReporter;
+
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
+import java.util.Objects;
 import java.util.UUID;
-import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.support.TransactionOperations;
 import org.springframework.context.ApplicationEventPublisher;
-import csd.tripsense.alert.AlertsRemovedEvent;
 import csd.tripsense.alert.ImpactEvaluatedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,26 +26,31 @@ import csd.tripsense.news.NewsService;
 
 @Service
 public class ImpactServiceImpl implements ImpactService {
+    // Shared by manual, ingest and creation-driven calls on this application instance.
+    // Fixed stripes avoid retaining a lock for every itinerary/news pair forever.
+    private final Object[] assessmentLocks = java.util.stream.IntStream.range(0, 128)
+            .mapToObj(i -> new Object()).toArray();
     private ImpactRepository impacts;
     private ChatService chatService;
     private ItineraryService itineraryService;
     private ActivityService activityService;
     private NewsService newsService;
     private final ApplicationEventPublisher events;
-    private final TransactionOperations transactions;
+    private final AlertProgressReporter progress;
+    private final AssessmentSourceGuard sourceGuard;
     private static final Logger log = LoggerFactory.getLogger(ImpactServiceImpl.class);
 
     public ImpactServiceImpl(ImpactRepository impacts, ChatService chatService,
                              ItineraryService itineraryService, ActivityService activityService,
-                             NewsService newsService, ApplicationEventPublisher events,
-                             TransactionOperations transactions){
+                             NewsService newsService, ApplicationEventPublisher events, AlertProgressReporter progress,
+                             AssessmentSourceGuard sourceGuard){
         this.impacts = impacts;
         this.chatService = chatService;
         this.itineraryService = itineraryService;
         this.activityService = activityService;
         this.newsService = newsService;
-        this.events = events;
-        this.transactions = transactions;
+        this.events = events; this.progress = progress;
+        this.sourceGuard = sourceGuard;
     }
 
     // the kinds of trouble that can change a trip. anything else is not a reason on its own
@@ -175,108 +179,84 @@ public class ImpactServiceImpl implements ImpactService {
     }
 
     @Override
+    @org.springframework.transaction.annotation.Transactional
     public void deleteImpact(Long id){
         if (!impacts.existsById(id)) {
             throw new ImpactNotFoundException(id);
         }
+        Impact removed = getImpact(id);
+        Long userId = removed.getItinerary().getUser().getId();
         impacts.deleteById(id);
+        events.publishEvent(new csd.tripsense.alert.AlertsChangedEvent(userId));
     }
 
     @Override
+    @org.springframework.transaction.annotation.Transactional
     public Impact setRejected(Long id, boolean rejected) {
         Impact impact = getImpact(id);
         impact.setRejected(rejected);
+        events.publishEvent(new csd.tripsense.alert.AlertsChangedEvent(impact.getItinerary().getUser().getId()));
         return impacts.save(impact);
     }
 
     @Override
-    public EvaluateResponse evaluate(Long itineraryId, Long newsId) {
-        // these throw their own not found exceptions, which spring turns into a 404
-        Itinerary itinerary = itineraryService.getItineraryById(itineraryId);
-        News news = newsService.getNewsById(newsId);
-        List<Activity> activities = activityService.getActivitiesByItinerary(itineraryId);
-
-        // the trip as a whole is always checked, so an itinerary with no activities still gets a verdict,
-        // and news that hits the trip but no single activity (a flight strike, an entry ban) is caught
-        EvaluateResponse.ItineraryResult tripResult = tripResult(itinerary, news);
-
-        List<EvaluateResponse.ActivityResult> results = new ArrayList<>();
-        for (Activity activity : activities) {
-            // one call per activity, so a failure on one still leaves the others usable
-            results.add(activityResult(activity, news));
-        }
-
-        // a verdict the user rejected does not count, the user knows their trip better than the model
-        boolean tripImpacted = tripResult.impacted() && !Boolean.TRUE.equals(tripResult.rejected());
-        boolean anyActivityImpacted = results.stream()
-                .anyMatch(result -> result.impacted() && !Boolean.TRUE.equals(result.rejected()));
-        boolean anyImpacted = tripImpacted || anyActivityImpacted;
-
-        return new EvaluateResponse(itinerary.getId(), news.getId(), news.getTitle(),
-                anyImpacted, tripResult, results);
+    public EvaluateResponse evaluate(Long itineraryId,Long newsId) {
+        Itinerary itinerary=itineraryService.getItineraryById(itineraryId);
+        News news=newsService.getNewsById(newsId);
+        List<Activity> activities=activityService.getActivitiesByItinerary(itineraryId);
+        String batch=progress.begin(itineraryId,newsId,true,activities.stream().map(Activity::getId).toList());
+        boolean partial=true;
+        try {
+            var overall=tripResult(itinerary,news);
+            var activityOutcomes=activities.stream().map(a -> activityResult(a,news)).toList();
+            partial=!overall.complete() || activityOutcomes.stream().anyMatch(r -> !r.complete());
+            var results=activityOutcomes.stream().map(AssessmentResult::result).toList();
+            boolean anyImpacted=overall.result().impacted() && !overall.result().rejected()
+                    || results.stream().anyMatch(r -> r.impacted() && !r.rejected());
+            return new EvaluateResponse(itineraryId,newsId,news.getTitle(),anyImpacted,overall.result(),results);
+        } finally { progress.finish(batch,partial); }
     }
 
     @Override
     public Impact evaluateItineraryForNews(Itinerary itinerary, News news) {
-        // the revision the prompt is built from, so the save can tell if the trip changed since
-        long judgedRevision = itinerary.currentRevision();
-        Supplier<Optional<Impact>> findStored = () -> impacts
-                .findFirstByNewsIdAndItineraryIdAndActivityIsNull(news.getId(), itinerary.getId());
-
-        Optional<Impact> stored = findStored.get();
-        if (stored.isPresent() && isJudgedOn(stored.get(), judgedRevision)) {
-            return stored.get();
-        }
-        // the same story reaches us from a dozen outlets under one headline, so reuse the answer
-        // we already gave for it on this trip instead of paying for the model again.
-        // only a twin judged on the trip as it is now counts: after an edit the old answer was
-        // about different details, and reusing it would skip the re-judgement the edit asked for
-        Optional<Impact> sameHeadline = impacts
-                .findFirstByItineraryIdAndActivityIsNullAndNewsTitleAndReasonIsNotNull(
-                        itinerary.getId(), news.getTitle())
-                .filter(twin -> isJudgedOn(twin, judgedRevision))
-                // only reuse an answer given for a story we saw no later than this one, or its
-                // window was measured from a later start and reaches further than ours would
-                .filter(twin -> !seenAfter(twin.getNews(), news));
-        Verdict verdict = sameHeadline
-                .map(twin -> new Verdict(twin.getReason(), Kind.NONE, 0, Boolean.TRUE.equals(twin.getImpacted())))
-                .orElseGet(() -> gate(chatService.ask(buildItineraryPrompt(news, itinerary), Verdict.class),
-                        news, itinerary.getDateStart()));
-
-        // the lookup also checks the trip's identity key, so a trip deleted during the call and
-        // replaced by a new one with the same id (and revision 0) reads as gone, not unchanged
-        SaveOutcome outcome = transactions.execute(status -> {
-            Optional<Long> revisionNow = itineraryService.findRevision(itinerary);
-            if (!revisionNow.equals(Optional.of(judgedRevision))) {
-                throw new EditedDuringEvaluationException("Itinerary", itinerary.getId());
+        synchronized (assessmentLock(itinerary, news, null)) {
+            Optional<Impact> stored = impacts
+                    .findFirstByNewsIdAndItineraryIdAndActivityIsNull(news.getId(), itinerary.getId());
+            // a stored row only counts as evaluated if it has a reason (seed rows do not)
+            if (stored.isPresent() && stored.get().getReason() != null
+                    && stored.get().wasJudgedOn(itinerary.currentRevision())) {
+                return stored.get();
             }
-            return saveUnlessJudgedMeanwhile(findStored.get(), itinerary, news, null, verdict, judgedRevision);
-        });
-        return announce(outcome);    }
+            var source = AssessmentSourceGuard.Source.capture(itinerary, null);
+            Optional<Impact> sameHeadline = impacts
+                    .findFirstByItineraryIdAndActivityIsNullAndNewsTitleAndReasonIsNotNull(
+                            itinerary.getId(), news.getTitle())
+                    .filter(twin -> isJudgedOn(twin, source.tripRevision()))
+                    .filter(twin -> !seenAfter(twin.getNews(), news));
+            Verdict verdict = sameHeadline
+                    .map(twin -> new Verdict(twin.getReason(), Kind.NONE, 0, Boolean.TRUE.equals(twin.getImpacted())))
+                    .orElseGet(() -> gate(chatService.ask(buildItineraryPrompt(news, itinerary), Verdict.class),
+                            news, itinerary.getDateStart()));
+            if (!itineraryService.findRevision(itinerary).equals(Optional.of(itinerary.currentRevision())))
+                throw new EditedDuringEvaluationException("Itinerary", itinerary.getId());
+            return saveIfCurrent(source, stored.orElseGet(Impact::new), itinerary, news, null, verdict);
+        }
+    }
 
     @Override
     public Impact evaluateActivityForNews(Activity activity, News news) {
-        long judgedRevision = activity.currentRevision();
-        Supplier<Optional<Impact>> findStored = () -> impacts
-                .findFirstByNewsIdAndActivityId(news.getId(), activity.getId());
-
-        Optional<Impact> stored = findStored.get();
-        if (stored.isPresent() && isJudgedOn(stored.get(), judgedRevision)) {
-            return stored.get();
-        }
-
-        Verdict verdict = gate(chatService.ask(buildPrompt(news, activity), Verdict.class),
-                news, startOf(activity));
-
-        SaveOutcome outcome = transactions.execute(status -> {
-            Optional<Long> revisionNow = activityService.findRevision(activity);
-            if (!revisionNow.equals(Optional.of(judgedRevision))) {
-                throw new EditedDuringEvaluationException("Activity", activity.getId());
+        synchronized (assessmentLock(activity.getItinerary(), news, activity)) {
+            Optional<Impact> stored = impacts.findFirstByNewsIdAndActivityId(news.getId(), activity.getId());
+            if (stored.isPresent() && stored.get().getReason() != null
+                    && stored.get().wasJudgedOn(activity.currentRevision())) {
+                return stored.get();
             }
-            return saveUnlessJudgedMeanwhile(findStored.get(), activity.getItinerary(), news, activity,
-                    verdict, judgedRevision);
-        });
-        return announce(outcome);
+            var source = AssessmentSourceGuard.Source.capture(activity.getItinerary(), activity);
+            Verdict verdict = gate(chatService.ask(buildPrompt(news, activity), Verdict.class), news, startOf(activity));
+            if (!activityService.findRevision(activity).equals(Optional.of(activity.currentRevision())))
+                throw new EditedDuringEvaluationException("Activity", activity.getId());
+            return saveIfCurrent(source, stored.orElseGet(Impact::new), activity.getItinerary(), news, activity, verdict);
+        }
     }
 
     @Override
@@ -311,88 +291,45 @@ public class ImpactServiceImpl implements ImpactService {
         return Optional.of(current);
     }
 
-    // a stored row only counts as evaluated if it has a reason (seed rows do not), and only for
-    // the details it was judged on
-    // the twin was crawled after this story, so its window was judged from a later start
     private static boolean seenAfter(News twin, News news) {
         return twin != null && twin.getPublishedAt() != null && news.getPublishedAt() != null
                 && twin.getPublishedAt().isAfter(news.getPublishedAt());
     }
 
-    private static boolean isJudgedOn(Impact stored, long revision) {
-        if (stored.getReason() == null) {
-            return false;
-        }
-        return stored.wasJudgedOn(revision);
+    private static boolean isJudgedOn(Impact stored,long revision) {
+        return stored.getReason()!=null && stored.wasJudgedOn(revision);
     }
 
-    // runs in the same transaction as the revision check, so nothing can change in between.
-    // the model call takes seconds, and the ingest job and the new item listener can both be
-    // judging the same pair in that time. whichever saves second keeps the first one's verdict,
-    // so the pair is never stored twice and the traveller is never alerted twice
-    private SaveOutcome saveUnlessJudgedMeanwhile(Optional<Impact> latest, Itinerary itinerary, News news,
-                                                  Activity activity, Verdict verdict, long judgedRevision) {
-        if (latest.isPresent() && isJudgedOn(latest.get(), judgedRevision)) {
-            return new SaveOutcome(latest.get(), false);
-        }
-
-        Impact impact;
-        if (latest.isPresent() && latest.get().getReason() != null) {
-            // judged on older details. deleted rather than overwritten, so its alert, its advice and
-            // any rejection go with it, they were about details the traveller has since changed
-            Impact outOfDate = latest.get();
-            boolean hadAlerts = outOfDate.hasAlerts();
-            impacts.delete(outOfDate);
-            impact = new Impact();
-
-            // sent after this transaction commits. the new verdict may not be alerted at all, and
-            // then nothing else would tell a connected browser the old alert is gone
-            if (hadAlerts && outOfDate.ownerId() != null) {
-                events.publishEvent(new AlertsRemovedEvent(outOfDate.ownerId()));
-            }
-        } else {
-            impact = latest.orElseGet(Impact::new);
-        }
-        impact.setJudgedRevision(judgedRevision);
-        impact.setPromptVersion(Impact.CURRENT_PROMPT_VERSION);
-        Impact saved = save(impact, itinerary, news, activity, verdict);
-        return new SaveOutcome(saved, true);
+    private String assessmentKey(Itinerary itinerary, News news, Activity activity) {
+        return news.getId() + ":" + itinerary.getId() + ":" + (activity == null ? "trip" : activity.getId());
     }
 
-    // what the guarded save did: the verdict to hand back, and whether this run is the one that
-    // stored it
-    private record SaveOutcome(Impact impact, boolean savedNow) {
+    private Object assessmentLock(Itinerary itinerary, News news, Activity activity) {
+        return assessmentLocks[Math.floorMod(assessmentKey(itinerary, news, activity).hashCode(), assessmentLocks.length)];
     }
 
-    // the alert listener opens its own transaction, so it is told only once this one has ended
-    // and given its connection back. only a verdict this run stored is announced, one that another
-    // run stored was already announced by that run
-    private Impact announce(SaveOutcome outcome) {
-        if (outcome.savedNow()) {
-            events.publishEvent(new ImpactEvaluatedEvent(outcome.impact().getId()));
-        }
-        return outcome.impact();    }
-
-    // evaluate() wants a result even when the model fails, so the exception becomes a message here
-    private EvaluateResponse.ItineraryResult tripResult(Itinerary itinerary, News news) {
+    // Alert progress observes completion explicitly, without interpreting user-facing reason text.
+    private record AssessmentResult<T>(T result,boolean complete) {}
+    private boolean completeReason(Impact impact) { return impact.getReason()!=null && !impact.getReason().isBlank(); }
+    private AssessmentResult<EvaluateResponse.ItineraryResult> tripResult(Itinerary itinerary,News news) {
         try {
-            Impact impact = evaluateItineraryForNews(itinerary, news);
-            return new EvaluateResponse.ItineraryResult(
-                    Boolean.TRUE.equals(impact.getImpacted()), impact.getReason(), isRejected(impact));
+            Impact impact=evaluateItineraryForNews(itinerary,news);
+            if (completeReason(impact)) progress.resolved(itinerary.getId(),news.getId(),null);
+            return new AssessmentResult<>(new EvaluateResponse.ItineraryResult(Boolean.TRUE.equals(impact.getImpacted()),
+                    impact.getReason(),isRejected(impact)),completeReason(impact));
         } catch (Exception e) {
-            // nothing is saved on failure, so the next call retries instead of serving the error
-            return new EvaluateResponse.ItineraryResult(false, "Could not evaluate: " + e.getMessage(), false);
+            return new AssessmentResult<>(new EvaluateResponse.ItineraryResult(false,"Could not evaluate: "+e.getMessage(),false),false);
         }
     }
-
-    private EvaluateResponse.ActivityResult activityResult(Activity activity, News news) {
+    private AssessmentResult<EvaluateResponse.ActivityResult> activityResult(Activity activity,News news) {
         try {
-            Impact impact = evaluateActivityForNews(activity, news);
-            return new EvaluateResponse.ActivityResult(activity.getId(), activity.getName(),
-                    Boolean.TRUE.equals(impact.getImpacted()), impact.getReason(), isRejected(impact));
+            Impact impact=evaluateActivityForNews(activity,news);
+            if (completeReason(impact)) progress.resolved(activity.getItinerary().getId(),news.getId(),activity.getId());
+            return new AssessmentResult<>(new EvaluateResponse.ActivityResult(activity.getId(),activity.getName(),
+                    Boolean.TRUE.equals(impact.getImpacted()),impact.getReason(),isRejected(impact)),completeReason(impact));
         } catch (Exception e) {
-            return new EvaluateResponse.ActivityResult(activity.getId(), activity.getName(),
-                    false, "Could not evaluate: " + e.getMessage(), false);
+            return new AssessmentResult<>(new EvaluateResponse.ActivityResult(activity.getId(),activity.getName(),
+                    false,"Could not evaluate: "+e.getMessage(),false),false);
         }
     }
 
@@ -428,8 +365,8 @@ public class ImpactServiceImpl implements ImpactService {
         return shortened.isEmpty() ? NO_DETAILS : shortened;
     }
 
-    // only added when something is left after the boilerplate is stripped, which is gdelt's
-    // topics when it tagged any and nothing at all when it did not
+    // with gdelt.theme-prefixes unset the description always comes back empty, so the line is
+    // only added when there is something in it to read
     private static String detailsLine(News news) {
         String details = impactDetails(news);
         return NO_DETAILS.equals(details) ? "" : "Details: " + details;
@@ -438,8 +375,8 @@ public class ImpactServiceImpl implements ImpactService {
     private String buildItineraryPrompt(News news, Itinerary itinerary) {
         String country = itinerary.getCountry() == null ? "unknown" : itinerary.getCountry().getName();
 
-        // the details line carries gdelt's own topics now that theme-prefixes is set, which is
-        // the only thing the model gets besides the headline
+        // the details line is left out on purpose: gdelt.theme-prefixes is unset, so the
+        // description is always "No further details were provided" and only dilutes the headline
         return """
                 Decide whether this news story is a reason for the traveller to change their plans.
 
@@ -491,8 +428,46 @@ public class ImpactServiceImpl implements ImpactService {
 
     // updates the row we found, or the blank one we made, so a pair is never stored twice.
     // rejected is left alone, so a seed row the user already rejected stays rejected after its first evaluation
+    private Impact saveIfCurrent(AssessmentSourceGuard.Source source, Impact impact, Itinerary itinerary,
+                                 News news, Activity activity, Verdict verdict) {
+        Impact saved;
+        boolean[] storedNow={false};
+        try {
+            saved = sourceGuard.saveIfCurrent(source, () -> {
+                Optional<Impact> latest=activity==null
+                        ? impacts.findFirstByNewsIdAndItineraryIdAndActivityIsNull(news.getId(),itinerary.getId())
+                        : impacts.findFirstByNewsIdAndActivityId(news.getId(),activity.getId());
+                long revision=activity==null ? itinerary.currentRevision() : activity.currentRevision();
+                if (latest.isPresent() && isJudgedOn(latest.get(),revision)) return latest.get();
+                Impact target=latest.orElseGet(Impact::new);
+                if (target.getReason()!=null) {
+                    boolean hadAlerts=target.hasAlerts();
+                    Long owner=target.ownerId();
+                    impacts.delete(target);
+                    if (hadAlerts && owner!=null) events.publishEvent(new csd.tripsense.alert.AlertsRemovedEvent(owner));
+                    target=new Impact();
+                }
+                storedNow[0]=true;
+                return save(target,itinerary,news,activity,verdict);
+            });
+        } catch (org.springframework.dao.DataAccessException collision) {
+            // Recover outside the failed transaction, after its writer lock is released.
+            if (!duplicateAssessmentKey(collision)) throw collision;
+            return (activity == null
+                    ? impacts.findFirstByNewsIdAndItineraryIdAndActivityIsNull(news.getId(), itinerary.getId())
+                    : impacts.findFirstByNewsIdAndActivityId(news.getId(), activity.getId()))
+                    .filter(i -> i.getReason() != null).orElseThrow(() -> collision);
+        }
+        // Publish after the guard commits and releases its connection. Alert creation
+        // uses a separate transaction and must also work with a one-connection pool.
+        if (storedNow[0]) events.publishEvent(new ImpactEvaluatedEvent(saved.getId()));
+        return saved;
+    }
+
     private Impact save(Impact impact, Itinerary itinerary, News news, Activity activity,
                         Verdict verdict) {
+        impact.setPromptVersion(Impact.CURRENT_PROMPT_VERSION);
+        impact.setJudgedRevision(activity == null ? itinerary.currentAssessmentRevision() : activity.currentAssessmentRevision());
         impact.setUser(itinerary.getUser());
         impact.setNews(news);
         impact.setItinerary(itinerary);
@@ -500,14 +475,26 @@ public class ImpactServiceImpl implements ImpactService {
         impact.setImpacted(verdict.impacted());
         impact.setReason(verdict.reason());
         impact.setAlertEligible(verdict.impacted() && !Boolean.TRUE.equals(impact.getRejected()));
-        // new on every write, including a seed row being judged for the first time, so advice
-        // drafted from what was here before can tell it has been replaced (see findUnchanged)
+        impact.setAssessmentKey(assessmentKey(itinerary, news, activity));
         impact.setVerdictKey(UUID.randomUUID().toString());
         Impact saved = impacts.save(impact);
         log.info("Impact saved: id={} news={} itinerary={} activity={} impacted={} kind={} days={} reason={}",
                 saved.getId(), news.getId(), itinerary.getId(),
-                activity == null ? null : activity.getId(), verdict.impacted(), verdict.kind(),
-                verdict.lastsDays(), verdict.reason());        return saved;
+                activity == null ? null : activity.getId(), verdict.impacted(), verdict.kind(), verdict.lastsDays(), verdict.reason());
+        return saved;
+    }
+
+    private boolean duplicateAssessmentKey(Throwable failure) {
+        // SQLite unique violations can be translated as JpaSystemException rather than
+        // DataIntegrityViolationException. Recover only this specific constraint violation.
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof java.sql.SQLException sql) {
+                String message = String.valueOf(sql.getMessage());
+                if ((sql.getErrorCode() == 19 || sql.getErrorCode() == 2067 || "23505".equals(sql.getSQLState()))
+                        && (message.contains("impact.assessment_key") || message.contains("uk_impact_assessment_key"))) return true;
+            }
+        }
+        return false;
     }
 
     @Override

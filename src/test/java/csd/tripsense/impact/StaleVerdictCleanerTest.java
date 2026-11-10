@@ -41,6 +41,7 @@ class StaleVerdictCleanerTest {
 
     @Mock private ImpactRepository impacts;
     @Mock private ApplicationEventPublisher events;
+    @Mock private EditedAssessmentCleaner metadata;
 
     @InjectMocks
     private StaleVerdictCleaner cleaner;

@@ -9,6 +9,7 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Component;
+import org.springframework.web.util.HtmlUtils;
 
 /** Standard SMTP; credentials are supplied through Spring's mail environment settings. */
 @Component
@@ -61,18 +62,161 @@ public class AlertEmailSender {
                 setHeader("Message-ID", "<tripsense-alert-" + delivery.key() + "@tripsense.local>");
             }
         };
-        MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+        MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
         helper.setFrom(from);
         helper.setTo(delivery.recipient());
-        helper.setSubject("TripSense: disruption affecting " + delivery.alert().itineraryName().replaceAll("[\\r\\n]", " "));
         AlertResponse alert = delivery.alert();
-        helper.setText("A disruption may affect your trip: " + alert.itineraryName()
-                + (alert.activityName() == null ? "" : "\nActivity: " + alert.activityName())
-                + "\nNews: " + alert.newsTitle() + "\nAssessment: " + alert.reason()
-                + "\nSource: " + (alert.newsSource() == null ? "Not provided" : alert.newsSource())
-                + (alert.newsUrl() == null ? "" : "\n" + alert.newsUrl())
+        long newsCount = delivery.relatedAlerts().stream().map(AlertResponse::newsId).distinct().count();
+        boolean multipleNews = newsCount > 1;
+        boolean combined = delivery.relatedAlerts().size() > 1;
+        boolean activityAlert = !combined && alert.activityId() != null;
+        String scope = "Itinerary summary";
+        String target = text(alert.itineraryName());
+        String explanation = multipleNews ? "News updates for this itinerary, with the overall impact and affected activities together."
+                : combined ? "One news update, with the overall itinerary impact and affected activities together."
+                : activityAlert
+                ? "This itinerary summary concerns one activity in your itinerary."
+                : "This summary concerns your itinerary overall.";
+        if (delivery.partialAssessment()) {
+            explanation += " Some activities have not been assessed. This email includes the available assessments; "
+                    + "check TripSense for any later updates.";
+        }
+        var articles = delivery.relatedAlerts().stream().collect(java.util.stream.Collectors.groupingBy(
+                AlertResponse::newsId, java.util.LinkedHashMap::new, java.util.stream.Collectors.toList()));
+        String plainAssessment = articles.values().stream().map(article -> {
+            AlertResponse news = article.getFirst();
+            String heading = multipleNews ? text(news.newsTitle()) + "\nSource: " + text(news.newsSource())
+                    + (news.newsUrl() == null ? "" : "\n" + news.newsUrl()) + "\n\n" : "";
+            return heading + article.stream().map(a ->
+                    (a.activityId() == null ? "Overall itinerary" : "Activity: " + text(a.activityName()))
+                            + "\n" + text(a.reason())).collect(java.util.stream.Collectors.joining("\n\n"));
+        }).collect(java.util.stream.Collectors.joining("\n\n"));
+        String htmlAssessment = articles.values().stream().map(article -> {
+            AlertResponse news = article.getFirst();
+            String heading = multipleNews ? "<h3>" + escape(news.newsTitle()) + "</h3><p>Source: "
+                    + escape(news.newsSource()) + sourceLink(news.newsUrl()) + "</p>" : "";
+            return heading + article.stream().map(a -> "<div style=\"margin-bottom:16px\"><strong>"
+                    + (a.activityId() == null ? "Overall itinerary" : "Activity: " + escape(a.activityName()))
+                    + "</strong><br>" + escape(a.reason()) + "</div>")
+                    .collect(java.util.stream.Collectors.joining());
+        }).collect(java.util.stream.Collectors.joining());
+        helper.setSubject(("TripSense | " + scope + ": " + target).replaceAll("[\\r\\n]", " "));
+        String plain = scope.toUpperCase(java.util.Locale.ROOT) + "\n" + target
+                + "\n" + explanation + "\n\nItinerary: " + text(alert.itineraryName())
+                + (activityAlert ? "\nActivity: " + text(alert.activityName()) : "")
+                + "\n\nWHAT HAPPENED\n" + (multipleNews ? newsCount + " news updates for this itinerary" : text(alert.newsTitle()))
+                + "\n\nHOW THIS MAY AFFECT YOU\n" + plainAssessment
+                + (multipleNews ? "" : "\n\nSource: " + text(alert.newsSource())
+                        + (alert.newsUrl() == null ? "" : "\n" + alert.newsUrl()))
+                + "\n\nNEXT STEP\nLog in to TripSense to review this "
+                + "itinerary and decide what to do."
                 + "\n\nThis is an automated assessment. Verify important changes with your travel provider."
-                + "\nLog in to TripSense to review the alert and decide what to do.", false);
+                + "\nAlert reference: " + alert.id();
+        String html = """
+                <!doctype html>
+                <html lang="en">
+                    <head>
+                        <meta charset="UTF-8">
+                    </head>
+                    <body style="margin:0;background:#f1f4f9;color:#16252b;font-family:Arial,sans-serif;line-height:1.6">
+                        <table role="presentation" width="100%%" cellspacing="0" cellpadding="0">
+                            <tr>
+                                <td style="padding:24px 12px">
+                                    <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="max-width:600px;margin:auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:8px">
+                                        <tr>
+                                            <td style="padding:18px 28px;border-bottom:1px solid #e2e8f0">
+                                                <span style="display:inline-block;padding:2px 9px;border-radius:6px;background:#2878d0;color:#ffffff;font-weight:bold">
+                                                    T
+                                                </span>
+                                                <span style="margin-left:8px;font-size:20px;font-weight:bold;color:#16252b">
+                                                    TripSense
+                                                </span>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding:24px 28px 0">
+                                                <span style="display:inline-block;padding:3px 10px;border-radius:4px;background:#e7f0fc;color:#245e9d;font-size:12px;font-weight:bold">
+                                                    %s
+                                                </span>
+                                                <h1 style="margin:12px 0 0;font-size:26px;line-height:1.3;color:#16252b">
+                                                    %s
+                                                </h1>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding:24px 28px">
+                                                <p style="margin:0 0 20px;color:#5d6f76">
+                                                    %s
+                                                </p>
+                                                <p>
+                                                    <strong>
+                                                        Itinerary:
+                                                    </strong>
+                                                    %s%s
+                                                </p>
+                                                <div style="margin-top:24px;padding:16px;background:#fbeceb;border-left:4px solid #d7312f;border-radius:4px">
+                                                    <span style="display:inline-block;padding:2px 7px;background:#ffffff;color:#b42318;border-radius:4px;font-size:12px;font-weight:bold">
+                                                        Disruption detected
+                                                    </span>
+                                                    <h2 style="font-size:16px;margin:12px 0 6px">
+                                                        What happened
+                                                    </h2>
+                                                    <p style="margin:0">
+                                                        %s
+                                                    </p>
+                                                    <h2 style="font-size:16px;margin:20px 0 6px">
+                                                        How this may affect you
+                                                    </h2>
+                                                    %s
+                                                </div>
+                                                <p style="font-size:14px;color:#5d6f76">
+                                                    Source: %s%s
+                                                </p>
+                                                <div style="padding:16px;background:#e7f0fc;border-left:4px solid #2878d0;border-radius:4px;margin-top:24px">
+                                                    <strong>
+                                                        Next step
+                                                    </strong>
+                                                    <br>
+                                                    Log in to TripSense to review this %s and decide what to do.
+                                                </div>
+                                                <p style="font-size:12px;color:#5d6f76;margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0">
+                                                    This is an automated assessment.
+                                                    Verify important changes with your travel provider.
+                                                    <br>
+                                                    Alert reference: %s
+                                                </p>
+                                            </td>
+                                        </tr>
+                                    </table>
+                                </td>
+                            </tr>
+                        </table>
+                    </body>
+                </html>
+                """.formatted(escape(scope), escape(target), escape(explanation),
+                        escape(alert.itineraryName()), activityAlert ? "<br><strong>Activity:</strong> " + escape(alert.activityName()) : "",
+                        multipleNews ? newsCount + " news updates for this itinerary" : escape(alert.newsTitle()), htmlAssessment,
+                        multipleNews ? "Listed with each news update above" : escape(alert.newsSource()),
+                        multipleNews ? "" : sourceLink(alert.newsUrl()), "itinerary", alert.id());
+        helper.setText(plain, html);
         sender.send(message);
+    }
+
+    private static String text(String value) { return value == null || value.isBlank() ? "Not provided" : value; }
+
+    private static String escape(String value) { return HtmlUtils.htmlEscape(text(value), "UTF-8"); }
+
+    private static String sourceLink(String url) {
+        if (url == null) return "";
+        try {
+            java.net.URI uri = java.net.URI.create(url);
+            if (uri.getHost() != null && ("https".equalsIgnoreCase(uri.getScheme())
+                    || "http".equalsIgnoreCase(uri.getScheme()))) {
+                return "<br><a style=\"color:#245e9d\" href=\"" + escape(url) + "\">Read source article</a>";
+            }
+        } catch (IllegalArgumentException ignored) {
+            // Invalid source URLs are omitted from the HTML rather than made clickable.
+        }
+        return "";
     }
 }

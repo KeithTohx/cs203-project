@@ -77,6 +77,7 @@ public class ItineraryServiceImpl implements ItineraryService {
     }
 
     @Override
+    @Transactional
     public Itinerary addItinerary(Itinerary itinerary){
         Itinerary saved = itineraries.save(itinerary);
         events.publishEvent(new ItineraryCreatedEvent(saved.getId()));
@@ -152,11 +153,15 @@ public class ItineraryServiceImpl implements ItineraryService {
     }
 
     @Override 
+    @Transactional
     public void deleteItinerary(Long id){
         if (!itineraries.existsById(id)) {
             throw new ItineraryNotFoundException(id);
         }
+        var removed = itineraries.findById(id).orElseThrow();
+        Long userId = removed.getUser().getId();
         itineraries.deleteById(id);
+        events.publishEvent(new csd.tripsense.alert.AlertsChangedEvent(userId));
     }
 
         @Override

@@ -81,14 +81,13 @@ class RecommendationServiceImplTest {
         itineraryService = mock(ItineraryService.class);
         chatService = mock(ChatService.class);
         preferenceService = mock(PreferenceService.class);
-        // no database here, so the guarded save runs without a transaction
+        var writeGuard = mock(RecommendationWriteGuard.class);
+        org.mockito.Mockito.lenient().when(writeGuard.saveIfCurrent(any(), any())).thenAnswer(inv ->
+                ((java.util.function.Supplier<Recommendation>) inv.getArgument(1)).get());
+        org.mockito.Mockito.lenient().when(impactService.findUnchanged(any(Impact.class)))
+                .thenAnswer(inv -> Optional.of(inv.getArgument(0)));
         service = new RecommendationServiceImpl(recommendations, options, impactService,
-                itineraryService, chatService, preferenceService,
-                new csd.tripsense.itinerary.ItineraryAccess(mock(csd.tripsense.user.UserRepository.class)),
-                TransactionOperations.withoutTransaction());
-        // the impact is never edited while the model answers, unless a test says otherwise
-        when(impactService.findUnchanged(any(Impact.class)))
-                .thenAnswer(invocation -> Optional.of(invocation.getArgument(0)));
+                itineraryService, chatService, preferenceService, new csd.tripsense.itinerary.ItineraryAccess(mock(csd.tripsense.user.UserRepository.class)), TransactionOperations.withoutTransaction(), writeGuard);
 
         // deep stubs so we can say "its user has id 1 and its country is Japan" without building a
         // Country object, which this test has no reason to know about

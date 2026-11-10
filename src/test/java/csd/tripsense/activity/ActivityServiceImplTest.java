@@ -29,6 +29,7 @@ class ActivityServiceImplTest {
     @Mock private ItineraryService itineraryService;
     @Mock private ApplicationEventPublisher events;   // without this, @InjectMocks passes null
 
+
     @InjectMocks
     private ActivityServiceImpl activityService;
 
@@ -271,6 +272,9 @@ class ActivityServiceImplTest {
     @DisplayName("Should delete the activity when it exists")
     void deleteActivity_ShouldDelete_WhenActivityExists() {
         when(activityRepository.existsById(10L)).thenReturn(true);
+        Activity activity = new Activity(); activity.setItinerary(japanTrip);
+        japanTrip.setUser(new csd.tripsense.user.User("owner@example.com", "owner", "hash", "USER"));
+        when(activityRepository.findById(10L)).thenReturn(Optional.of(activity));
 
         activityService.deleteActivity(10L);
 
@@ -301,4 +305,11 @@ class ActivityServiceImplTest {
         assertEquals(List.of(pending), result);
         verify(activityRepository, times(1)).findPendingForNews(5L, 1L, now);
     }
+
+
+
+
+
+
+
 }

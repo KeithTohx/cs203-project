@@ -51,7 +51,18 @@ public class AlertService {
         requireActiveAccount(userId);
         Alert alert = alerts.findOwned(id, userId).orElseThrow(() -> new AlertNotFoundException(id));
         alert.markRead();
+        events.publishEvent(new AlertsChangedEvent(userId));
         return AlertResponse.from(alerts.save(alert));
+    }
+
+    @Transactional
+    public UnreadCount markGroupRead(Long id, Long userId) {
+        requireActiveAccount(userId);
+        Alert anchor = alerts.findOwned(id, userId).orElseThrow(() -> new AlertNotFoundException(id));
+        alerts.markGroupRead(userId, anchor.getImpact().getItinerary().getId(),
+                anchor.getImpact().getNews().getId(), id, Instant.now());
+        events.publishEvent(new AlertsChangedEvent(userId));
+        return new UnreadCount(alerts.countUnread(userId));
     }
 
     // what is left unread after marking all as read. not always 0, since alerts newer than upToId are skipped
@@ -64,20 +75,27 @@ public class AlertService {
         requireActiveAccount(userId);
         Instant now = Instant.now();
         alerts.markAllReadForUser(userId, upToId, now);
+        events.publishEvent(new AlertsChangedEvent(userId));
         return new UnreadCount(alerts.countUnread(userId));
     }
 
     /** Called after assessment commit; a notification failure cannot roll back an impact. */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void createForImpact(Long impactId) {
-        if (impactId == null || alerts.existsByImpactId(impactId)) return;
-        Impact impact = impacts.findById(impactId).orElse(null);
+        if (impactId == null) return;
+        createInTransaction(impacts.findById(impactId).orElse(null));
+    }
+
+    @Transactional
+    public boolean createInTransaction(Impact impact) {
         if (impact == null || !Boolean.TRUE.equals(impact.getAlertEligible()) || !Boolean.TRUE.equals(impact.getImpacted())
                 || Boolean.TRUE.equals(impact.getRejected()) || impact.getItinerary() == null
                 || impact.getItinerary().getUser() == null || !impact.getItinerary().getUser().isEnabled()
-                || impact.getNews() == null || impact.getReason() == null || impact.getReason().isBlank()) return;
+                || impact.getNews() == null || impact.getReason() == null || impact.getReason().isBlank()
+                || alerts.existsByImpactId(impact.getId())) return false;
         Alert alert = alerts.saveAndFlush(new Alert(impact));
         events.publishEvent(new AlertCreatedEvent(impact.getItinerary().getUser().getId(), AlertResponse.from(alert)));
+        return true;
     }
 
     private void requireActiveAccount(Long userId) {

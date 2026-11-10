@@ -33,9 +33,8 @@ class ItineraryServiceImplTest {
     @Mock
     private ItineraryRepository itineraryRepository;
 
-    // without this mock, @InjectMocks would pass null into the constructor
-    @Mock
-    private ApplicationEventPublisher events;
+    // Needed by both creation event tests and the durable queue integration.
+    @Mock private ApplicationEventPublisher events;
 
     @InjectMocks
     private ItineraryServiceImpl itineraryService;
@@ -407,6 +406,9 @@ class ItineraryServiceImplTest {
     void deleteItinerary_ShouldDelete_WhenFound() {
         // Arrange
         when(itineraryRepository.existsById(1L)).thenReturn(true);
+        Itinerary itinerary = new Itinerary();
+        itinerary.setUser(new User("owner@example.com", "owner", "hash", "USER"));
+        when(itineraryRepository.findById(1L)).thenReturn(Optional.of(itinerary));
 
         // Act
         itineraryService.deleteItinerary(1L);
@@ -425,4 +427,11 @@ class ItineraryServiceImplTest {
         assertThrows(ItineraryNotFoundException.class, () -> itineraryService.deleteItinerary(99L));
         verify(itineraryRepository, never()).deleteById(anyLong());
     }
+
+
+
+
+
+
+
 }

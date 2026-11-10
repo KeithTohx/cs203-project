@@ -589,8 +589,9 @@ class EditTriggersEvaluationIntegrationTest {
         assertThat(lastJobDone.await(REJUDGED_WITHIN.toSeconds(), TimeUnit.SECONDS)).isTrue();
         // the first run judged the latest details, the second reused that verdict instead of
         // deleting it and alerting the traveller again
+        // Durable tasks may be fetched in separate batches rather than strict event order.
+        await().atMost(REJUDGED_WITHIN).until(() -> judgedAgain(null,japanNews));
         assertThat(latestTripCalls.get()).isEqualTo(1);
-        assertThat(judgedAgain(null, japanNews)).isTrue();
     }
 
     // ===== WORK THAT DEPENDS ON A VERDICT =====

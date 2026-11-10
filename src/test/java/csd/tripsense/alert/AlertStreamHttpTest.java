@@ -66,6 +66,7 @@ import tools.jackson.databind.ObjectMapper;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "gdelt.ingest.enabled=false",
         "impact.eval.enabled=false",
+        "impact.eval.new-itinerary.enabled=false",
         "spring.sql.init.mode=never",
         "spring.jpa.hibernate.ddl-auto=create-drop",
         "spring.datasource.hikari.maximum-pool-size=2",

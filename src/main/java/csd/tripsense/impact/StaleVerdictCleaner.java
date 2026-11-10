@@ -40,10 +40,12 @@ public class StaleVerdictCleaner {
 
     private final ImpactRepository impacts;
     private final ApplicationEventPublisher events;
+    private final EditedAssessmentCleaner metadata;
 
-    public StaleVerdictCleaner(ImpactRepository impacts, ApplicationEventPublisher events) {
+    public StaleVerdictCleaner(ImpactRepository impacts, ApplicationEventPublisher events, EditedAssessmentCleaner metadata) {
         this.impacts = impacts;
         this.events = events;
+        this.metadata = metadata;
     }
 
     // a renamed or rescheduled trip only makes its whole trip verdicts stale, since activity
@@ -124,6 +126,7 @@ public class StaleVerdictCleaner {
 
         VerdictsClearedEvent cleared = articlesBehind(outOfDate);
 
+        metadata.prepare(outOfDate);
         impacts.deleteAll(outOfDate);
 
         // only acted on once the edit has committed, so nothing is judged again if the edit fails

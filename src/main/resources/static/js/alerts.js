@@ -1,5 +1,6 @@
 // alerts bell in the top bar (CS203-5): live from /api/alerts/stream, or checked every minute without it
 import { api } from "./api.js";
+import { onAlertsInvalidated } from "./alert-sync.js";
 import { escapeHtml, findToastShelf, newsTitleOf, timeTag } from "./util.js";
 import { icon } from "./icons.js";
 
@@ -152,6 +153,10 @@ function sessionEnded() {
 
 // counts every refresh started, so a slow older one cannot land on top of a newer one
 let latestRefresh = 0;
+// Cross-tab changes may affect older loaded pages without changing the bell's newest 20.
+// Keep them pending until a current, successful refresh can notify the page.
+let historyRevision = 0;
+let refreshedHistoryRevision = 0;
 
 // counts the server's "alerts-changed" events, and how many of them a landed reload has covered. a reload
 // that started after one of these always redraws and tells the alerts page to reload, even when the ids,
@@ -189,13 +194,17 @@ function tellListeners(change) {
 let saveQueue = Promise.resolve();
 let savesRunning = 0;
 
-// goes up on logout, so saves still finishing for the old account leave the next one alone
+// Session generation advances on logout, isolating pending requests and saves from the next login.
 let saveSession = 0;
 
 const queueSave = save => {
     const session = saveSession;
     savesRunning += 1;
-    const queued = saveQueue.then(save);
+    const queued = saveQueue.then(() => {
+        // A queued action belongs to the session that created it, not the next account's cookies.
+        if (session !== saveSession) return;
+        return save();
+    });
     saveQueue = queued.catch(() => { });   // one failed save should not block the ones after it
 
     saveQueue.then(() => {
@@ -209,7 +218,7 @@ const queueSave = save => {
     return queued;
 };
 
-// whether a save that just finished was for an account that has since logged out
+// Whether an asynchronous result belongs to a session that has since ended.
 const isFromOldSession = session => session !== saveSession;
 
 // for the alerts page, so its own loads also wait until the server has every read
@@ -242,6 +251,7 @@ let latestAdminChangesLoad = 0;
 async function refreshAdminChanges() {
     const userId = state.userId;
     if (userId == null) return;
+    const session = saveSession;
 
     latestAdminChangesLoad += 1;
     const thisLoad = latestAdminChangesLoad;
@@ -250,10 +260,11 @@ async function refreshAdminChanges() {
     try {
         page = await api.adminChanges();
     } catch (error) {
-        if (error.status === 401) sessionEnded();
+        if (!isFromOldSession(session) && state.userId === userId && thisLoad === latestAdminChangesLoad
+                && error.status === 401) sessionEnded();
         return;   // keeps what was shown, the next check tries again
     }
-    const isOutdated = state.userId !== userId || thisLoad !== latestAdminChangesLoad;
+    const isOutdated = isFromOldSession(session) || state.userId !== userId || thisLoad !== latestAdminChangesLoad;
     if (isOutdated) return;
 
     const countBefore = state.adminChanges.unreadCount;
@@ -319,6 +330,8 @@ async function refresh() {
 
     latestRefresh += 1;
     const thisRefresh = latestRefresh;
+    const session = saveSession;
+    const thisHistoryRevision = historyRevision;
     const removalsAtStart = removalsReceived;
 
     try {
@@ -326,8 +339,10 @@ async function refresh() {
         const switchedAccount = state.userId !== userId;   // logged out or switched account while waiting
         const isOutdated = thisRefresh !== latestRefresh;   // a newer refresh has started since
         const savingStarted = savesRunning > 0;             // this may be from before the save, the reload after it is not
-        if (switchedAccount || isOutdated || savingStarted) return;
+        if (isFromOldSession(session) || switchedAccount || isOutdated || savingStarted) return;
 
+        clearTimeout(historyRetryTimer);
+        historyRetryTimer = null;
         const countBefore = state.unreadCount;
         const isFirstLoad = state.seenKeys == null;
         const loadedAlerts = page?.content ?? [];
@@ -346,6 +361,7 @@ async function refresh() {
         const sameAlerts = sameCount && isSameList(state.alerts, loadedAlerts);
         const nothingChanged = !isFirstLoad && !removedOnServer && sameAlerts;
 
+        const listChanged = !isSameList(state.alerts, loadedAlerts);
         state.alerts = loadedAlerts;
         state.unreadCount = loadedCount;
         if (!nothingChanged) draw();
@@ -353,27 +369,57 @@ async function refresh() {
         const newAlerts = findNewAlerts();
         announceNewAlerts(newAlerts);
 
-        // new alerts only ever add to the count, so any other change came from somewhere else, eg reads in
-        // another tab or alerts deleted on the server. the first load has nothing to compare with, so it never counts
+        // new alerts only ever add to the count, so any other change came from somewhere else,
+        // eg reads in another tab. The first load has no comparison, but an explicit
+        // invalidation still requires reloading older history beyond the bell's page.
         const countChanged = state.unreadCount !== countBefore;
         const expectedCount = countBefore + newAlerts.length;
-        const countOutOfStep = state.unreadCount !== expectedCount;
-        const outOfStep = !isFirstLoad && (countOutOfStep || removedOnServer);
+        const historyInvalidated = thisHistoryRevision !== refreshedHistoryRevision;
+        const outOfStep = historyInvalidated
+            || !isFirstLoad && (removedOnServer || state.unreadCount !== expectedCount || listChanged && !newAlerts.length);
+        refreshedHistoryRevision = thisHistoryRevision;
         if (newAlerts.length || countChanged || outOfStep) tellListeners({ newAlerts, outOfStep });
     } catch (error) {
-        // a failed load keeps the last alerts and tries again on the next event or check
+        if (isFromOldSession(session) || state.userId !== userId || thisRefresh !== latestRefresh) return;
         if (error.status === 401) sessionEnded();
+        else retryHistory();
     }
 }
 
-// the backend sends one event per alert, so news hitting six activities is six events in a row.
-// they are gathered into one reload instead of six requests for the same list
+// Coalesce events into bounded windows. Continuous traffic must not keep moving the
+// deadline, and slow history requests must finish before another burst request starts.
 const ALERT_BURST_MS = 500;
+const HISTORY_RETRY_MS = 5000;
 let burstTimer = null;
+let burstLoading = false;
+let burstAgain = false;
+let historyRetryTimer = null;
+let stopSync = null;
 
 const refreshAfterBurst = () => {
-    clearTimeout(burstTimer);
-    burstTimer = setTimeout(refresh, ALERT_BURST_MS);
+    if (burstLoading) { burstAgain = true; return; }
+    if (burstTimer != null) return;
+    const session = saveSession;
+    burstTimer = setTimeout(async () => {
+        burstTimer = null;
+        burstLoading = true;
+        try { await refresh(); }
+        finally {
+            if (isFromOldSession(session)) return;
+            burstLoading = false;
+            if (burstAgain) { burstAgain = false; refreshAfterBurst(); }
+        }
+    }, ALERT_BURST_MS);
+};
+
+// A healthy SSE connection does not prove its recovery HTTP request succeeded.
+const retryHistory = () => {
+    if (historyRetryTimer != null) return;
+    const session = saveSession;
+    historyRetryTimer = setTimeout(() => {
+        historyRetryTimer = null;
+        if (!isFromOldSession(session)) return refresh();
+    }, HISTORY_RETRY_MS);
 };
 
 // counted before waiting, so the reload after the burst knows it has to redraw whatever it finds
@@ -384,8 +430,7 @@ const refreshAfterRemoval = () => {
 
 const canStream = () => Boolean(api.alertStreamUrl) && typeof EventSource !== "undefined";
 
-// while polling after the stream closed, each check tries the stream again too, eg once the backend is back up.
-// connecting reloads by itself, on "ready" or when it fails again, so that check needs no reload of its own
+// While disconnected, recover saved alerts and reconnect a closed stream.
 function checkAgain() {
     const canReconnect = canStream() && !state.stream;
     if (canReconnect) return connectStream();
@@ -402,27 +447,44 @@ function stopPolling() {
     state.pollTimer = null;
 }
 
-// every event reloads the list, which also catches anything missed while disconnected
+// Returning to a tab also recovers changes made outside this browser.
+document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refresh();
+});
+
+// both events reload the list, which also catches anything missed while disconnected
 function connectStream() {
     if (!canStream()) return startPolling();
 
     const stream = new EventSource(api.alertStreamUrl);
+    let recovering = false;
     stream.addEventListener("ready", () => {
-        stopPolling();   // live again, so the checks are not needed
+        if (state.stream !== stream) return;
+        recovering = false;
+        historyRevision += 1;
+        stopPolling();
         refresh();
     });
-    stream.addEventListener("alert", refreshAfterBurst);
-    // alerts deleted on the server, eg after an edit to the trip. no new alert may follow,
-    // and polling is off while the stream is up, so this is the only thing that clears them
-    stream.addEventListener("alerts-changed", refreshAfterRemoval);
-    stream.addEventListener("admin-change", refreshAdminChanges);
+    stream.addEventListener("alert", () => {
+        if (state.stream === stream) refreshAfterBurst();
+    });
+    stream.addEventListener("alerts-changed", () => {
+        if (state.stream === stream) refreshAfterRemoval();
+    });
+    stream.addEventListener("admin-change", () => {
+        if (state.stream === stream) refreshAdminChanges();
+    });
     stream.addEventListener("error", () => {
-        if (stream.readyState !== EventSource.CLOSED) return;
-        if (state.stream === stream) state.stream = null;
+        if (state.stream !== stream) return;
+        if (stream.readyState === EventSource.CLOSED) state.stream = null;
+        // Only the first failure in an outage triggers an immediate history check.
+        // Further EventSource retries share the existing polling interval.
         startPolling();
-        refresh();   // finds out whether the session ended, and if so sends the user to log in
+        if (!recovering) refresh();   // also detects an ended session before the first ready event
+        recovering = true;
     });
     state.stream = stream;
+    startPolling();
 }
 
 // ---------------------------------------------------------------- marking read, used by the bell and the alerts page
@@ -442,11 +504,21 @@ export async function markAlertsRead(alerts) {
     }
     state.unreadCount = Math.max(0, state.unreadCount - unread.length);
     draw();
-    tellListeners({ readIds: unreadIds });
+    const coveredGroups = groupAlerts(unread).map(group => ({
+        itineraryId: group.itineraryId, newsId: group.alerts[0].newsId,
+        upToId: Math.max(...group.alerts.map(alert => alert.id)),
+    }));
+    tellListeners({ readIds: unreadIds, readGroups: coveredGroups });
 
     // queued as one save, so nothing reloads between two alerts of the same group
+    // Mark the persisted group, including members outside the loaded page. Bound each
+    // request by the newest displayed member so later arrivals remain unread.
     const saveEach = async () => {
-        for (const alert of unread) await api.markAlertRead(alert.id);
+        for (const group of coveredGroups) {
+            // The session can change while the previous group's request is in flight.
+            if (isFromOldSession(session)) return;
+            await api.markAlertGroupRead(group.upToId);
+        }
     };
 
     const session = saveSession;
@@ -858,6 +930,10 @@ export function mountAlertBell(slot, user, { onAuthLost, redraw }) {
     if (state.userId !== user.id) {
         stopAlerts();
         state.userId = user.id;
+        stopSync = onAlertsInvalidated(() => {
+            historyRevision += 1;
+            refreshAfterBurst();
+        });
 
         // loaded straight away rather than waiting for "ready", which a proxy holding the stream back can delay for good
         refresh();
@@ -868,16 +944,25 @@ export function mountAlertBell(slot, user, { onAuthLost, redraw }) {
 
 // on logout or session end, so nothing keeps listening in the background
 export function stopAlerts() {
+    stopSync?.();
+    stopSync = null;
     state.stream?.close();
     clearInterval(state.pollTimer);
     clearTimeout(state.toastTimer);
     clearTimeout(burstTimer);
+    clearTimeout(historyRetryTimer);
+    burstTimer = null;
+    historyRetryTimer = null;
+    burstLoading = false;
+    burstAgain = false;
     clearTimeout(adminChangeToastTimer);
 
     // saves still running for this account carry on, but no longer hold back the next account's loads
     saveSession += 1;
     saveQueue = Promise.resolve();
     savesRunning = 0;
+    historyRevision = 0;
+    refreshedHistoryRevision = 0;
 
     document.querySelectorAll(".alert-toast").forEach(toast => toast.remove());
 

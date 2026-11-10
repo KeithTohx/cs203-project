@@ -13,6 +13,7 @@ import org.hibernate.annotations.DynamicUpdate;
 @Table(name = "alert")
 public class Alert {
     @Id
+    // AlertSchemaMigration adds SQLite AUTOINCREMENT so deleted ids cannot be reused.
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "alert_id")
     private Long id;
@@ -35,7 +36,7 @@ public class Alert {
     @Column(nullable = false)
     private Instant emailNextAttemptAt = Instant.now();
     private Instant emailSentAt;
-    @Column(nullable = false, updatable = false)
+    @Column(nullable = false)
     private String emailDeliveryKey = java.util.UUID.randomUUID().toString();
 
     protected Alert() {}

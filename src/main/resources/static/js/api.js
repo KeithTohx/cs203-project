@@ -1,4 +1,5 @@
 import { mockApi, showMockBanner } from "./mock.js";
+import { invalidateAlerts } from "./alert-sync.js";
 // The ONLY file that knows URLs. Relative paths work locally and on Azure.
 export class ApiError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -80,6 +81,7 @@ const realApi = {
     if (beforeId != null) params.set("beforeId", beforeId);
     return request(`/api/alerts?${params}`);
   },
+  markAlertGroupRead:id => request(`/api/alerts/${id}/group`, "PATCH", {read: true}),
   markAlertRead:id => request(`/api/alerts/${id}`, "PATCH", {read: true}),            // -> the alert. marking twice is fine
   // every unread alert up to upToId (the newest one shown), not just the ones loaded, so one arriving meanwhile stays unread.
   // null means no limit -> {unreadCount} left afterwards
@@ -145,4 +147,15 @@ const realApi = {
 const isLocalhost = ["localhost", "127.0.0.1"].includes(location.hostname);
 const useMock = isLocalhost && new URLSearchParams(location.search).has("mock");
 if (useMock) showMockBanner();
-export const api = useMock ? mockApi : realApi;
+const selectedApi = useMock ? mockApi : realApi;
+export const api = { ...selectedApi };
+// Invalidate other tabs; queued alert reads handle their own local refresh on completion.
+for (const method of ["markAlertRead", "markAlertGroupRead", "markAllAlertsRead", "setImpactRejected",
+    "deleteActivity", "deleteItinerary"]) {
+  api[method] = async (...args) => {
+    const result = await selectedApi[method](...args);
+    // The alert save queue already refreshes these reads in the originating tab.
+    invalidateAlerts({ local: !["markAlertGroupRead", "markAllAlertsRead"].includes(method) });
+    return result;
+  };
+}

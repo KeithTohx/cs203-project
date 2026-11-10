@@ -54,6 +54,7 @@ public class ActivityServiceImpl implements ActivityService {
     }
 
     @Override
+    @Transactional
     public Activity addActivity(Activity activity) {
         Itinerary itinerary = itineraryService.getItineraryById(activity.getItinerary().getId());
         activity.setItinerary(itinerary);
@@ -122,10 +123,14 @@ public class ActivityServiceImpl implements ActivityService {
     }
 
     @Override
+    @Transactional
     public void deleteActivity(Long id) {
         if (!activities.existsById(id)) {
             throw new ActivityNotFoundException(id);
         }
+        var removed = activities.findById(id).orElseThrow();
+        Long userId = removed.getItinerary().getUser().getId();
         activities.deleteById(id);
+        events.publishEvent(new csd.tripsense.alert.AlertsChangedEvent(userId));
     }
 }

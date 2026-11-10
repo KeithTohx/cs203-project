@@ -42,6 +42,7 @@ class RecommendationServiceImplMainTest {
     @Mock private ImpactService impactService;
     @Mock private ItineraryService itineraryService;
     @Mock private ChatService chatService;
+    @Mock private RecommendationWriteGuard writeGuard;
 
     @Mock private csd.tripsense.user.preference.PreferenceService preferenceService;
 
@@ -68,6 +69,8 @@ class RecommendationServiceImplMainTest {
 
     @BeforeEach
     void setUp() {
+        lenient().when(writeGuard.saveIfCurrent(any(),any())).thenAnswer(inv ->
+                ((java.util.function.Supplier<Recommendation>)inv.getArgument(1)).get());
         lenient().when(preferenceService.getPreferences(anyLong())).thenReturn(new csd.tripsense.user.preference.UserPreference(null));
         // the impact is never edited while the model answers in these tests
         lenient().when(impactService.findUnchanged(any(Impact.class)))

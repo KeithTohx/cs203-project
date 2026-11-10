@@ -18,7 +18,8 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "impact")
+@Table(name = "impact", indexes = @jakarta.persistence.Index(
+        name = "uk_impact_assessment_key", columnList = "assessment_key", unique = true))
 @Getter
 @Setter
 @AllArgsConstructor
@@ -27,6 +28,18 @@ public class Impact {
     private @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     Long id;
+
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @lombok.Setter(lombok.AccessLevel.NONE)
+    @Column(updatable=false)
+    private String assessmentIdentity = java.util.UUID.randomUUID().toString();
+
+    @jakarta.persistence.PrePersist
+    private void initializeAssessmentIdentity() { assessmentIdentity = java.util.UUID.randomUUID().toString(); }
+
+    // Nullable for historical rows; all newly assessed rows have a stable unique key.
+    @Column(name = "assessment_key", length = 120)
+    private String assessmentKey;
 
     @ManyToOne
     @JoinColumn(name = "user_id", nullable = false)
@@ -116,11 +129,14 @@ public class Impact {
         return wasJudgedOn(itinerary.currentRevision());
     }
 
+    public boolean judgedOnCurrentDetails() { return isJudgedOnCurrentDetails(); }
+
     // An alert contains personal trip data, so remove it whenever its source impact is removed.
     @jakarta.persistence.OneToMany(mappedBy = "impact", cascade = jakarta.persistence.CascadeType.REMOVE,
             fetch = jakarta.persistence.FetchType.LAZY)
     @com.fasterxml.jackson.annotation.JsonIgnore
     private java.util.List<csd.tripsense.alert.Alert> alerts;
+
 
     // whether deleting this verdict also takes an alert out of the traveller's bell.
     // needs an open session, the alerts are loaded lazily
@@ -143,6 +159,7 @@ public class Impact {
             fetch = jakarta.persistence.FetchType.LAZY)
     @com.fasterxml.jackson.annotation.JsonIgnore
     private java.util.List<csd.tripsense.recommendation.Recommendation> recommendations;
+
 
 }
 

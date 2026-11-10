@@ -24,22 +24,17 @@ public class Itinerary {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     Long id;
 
-    @ManyToOne
-    @JoinColumn(name = "user_id", nullable = false)
-    private User user;
+    // Identifies this row's lifetime even when SQLite reuses its numeric id.
+    @JsonIgnore
+    @Setter(AccessLevel.NONE)
+    @Column(updatable = false)
+    private String assessmentIdentity = java.util.UUID.randomUUID().toString();
 
-    @ManyToOne
-    @JoinColumn(name = "country_id", nullable = false)
-    private Country country;
-
-    @Column(name = "name", nullable = false)
-    private String name;
-
-    @Column(name = "date_start")
-    private LocalDateTime dateStart;
-
-    @Column(name = "date_end")
-    private LocalDateTime dateEnd;
+    @PrePersist
+    private void initializeAssessmentIdentity() {
+        assessmentIdentity = java.util.UUID.randomUUID().toString();
+        assignIdentityKey();
+    }
 
     // goes up by one each time something the model is shown about the trip changes (its name,
     // country or dates). every verdict records the revision it was judged on, which is how a
@@ -72,11 +67,40 @@ public class Itinerary {
     private String identityKey;
 
     // always a fresh key, even if the request body sent one, so no two trips can ever share it
-    @PrePersist
     void assignIdentityKey() {
         identityKey = UUID.randomUUID().toString();
     }
 
+    public long currentAssessmentRevision() { return currentRevision(); }
+    public void reviseAssessment() { bumpRevision(); }
+
+    @ManyToOne
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
+
+    @ManyToOne
+    @JoinColumn(name = "country_id", nullable = false)
+    private Country country;
+
+    @Column(name = "name", nullable = false)
+    private String name;
+
+    @Column(name = "date_start")
+    private LocalDateTime dateStart;
+
+    @Column(name = "date_end")
+    private LocalDateTime dateEnd;
+
+    // These relationships only clean up alert-delivery metadata when a trip is deleted.
+    @OneToMany(mappedBy="itinerary",cascade=CascadeType.REMOVE)
+    @JsonIgnore
+    private List<csd.tripsense.alert.AlertEmailGroup> alertEmailGroups;
+    @OneToMany(mappedBy="itinerary",cascade=CascadeType.REMOVE)
+    @JsonIgnore
+    private List<csd.tripsense.impact.EvaluationBatch> alertEvaluationBatches;
+    @OneToMany(mappedBy="itinerary",cascade=CascadeType.REMOVE)
+    @JsonIgnore
+    private List<csd.tripsense.impact.EvaluationTarget> alertEvaluationTargets;
     // when an admin last changed this trip or its activities, for the note the traveller sees.
     // ignored in request bodies, since travellers post this entity directly and could set it
     @Column(name = "admin_edited_at")

@@ -82,13 +82,13 @@ class RecommendationDecisionTest {
         PreferenceService preferenceService = mock(PreferenceService.class);
         preferences = new UserPreference(null);
         lenient().when(preferenceService.getPreferences(anyLong())).thenReturn(preferences);
-        // no database here, so the guarded save runs without a transaction
+        var writeGuard = mock(RecommendationWriteGuard.class);
+        lenient().when(writeGuard.saveIfCurrent(any(), any())).thenAnswer(inv ->
+                ((java.util.function.Supplier<Recommendation>) inv.getArgument(1)).get());
+        org.mockito.Mockito.lenient().when(impactService.findUnchanged(any(Impact.class)))
+                .thenAnswer(inv -> Optional.of(inv.getArgument(0)));
         service = new RecommendationServiceImpl(recommendations, options, impactService,
-                itineraryService, chatService, preferenceService, access,
-                TransactionOperations.withoutTransaction());
-        // the impact is never edited while the model answers, unless a test says otherwise
-        lenient().when(impactService.findUnchanged(any(Impact.class)))
-                .thenAnswer(invocation -> Optional.of(invocation.getArgument(0)));
+                itineraryService, chatService, preferenceService, access, TransactionOperations.withoutTransaction(), writeGuard);
 
         User owner = mock(User.class);
         when(owner.getId()).thenReturn(karwei.getId());

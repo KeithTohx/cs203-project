@@ -58,6 +58,18 @@ public class AlertController {
         return alerts.markRead(id, userId(me));
     }
 
+    @Operation(summary = "Mark a displayed alert group as read",
+            description = "Send {\"read\": true}. False, null and missing read values are rejected. "
+                    + "The id must be the newest alert id shown for this news/itinerary group. "
+                    + "Marks owned group members with ids at or below that id, including older pages; "
+                    + "newer arrivals stay unread. Returns unreadCount across all your alerts. "
+                    + "Idempotent. Requires authentication and a CSRF token.")
+    @PatchMapping("/{id}/group")
+    public AlertService.UnreadCount updateGroup(@PathVariable Long id,
+            @Valid @RequestBody AlertUpdateRequest request, @AuthenticationPrincipal CurrentUser me) {
+        return alerts.markGroupRead(id, userId(me));
+    }
+
     @Operation(summary = "Update all of your alerts",
             description = "Send {\"read\": true} to mark every alert as read, not just the loaded ones. "
                     + "Pass upToId (the newest alert id the user has seen) so alerts arriving meanwhile stay unread. "
