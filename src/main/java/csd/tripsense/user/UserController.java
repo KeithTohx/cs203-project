@@ -80,6 +80,14 @@ public class UserController {
                 // Same answer as "no such user", so the response doesn't reveal which usernames exist.
                 throw UserNotFoundException.forUsername(username);
                 }
+
+                // an admin reading someone else's account is going past the owner-only rule, so it is traced
+                boolean adminOverride = isAdmin && !isOwner;
+                if (adminOverride) {
+                        Long adminId = authentication.getPrincipal() instanceof CurrentUser admin ? admin.getId() : null;
+                        auditService.record(AuditService.ADMIN_ACCOUNT_VIEWED, adminId, authentication.getName(),
+                                user.getId(), "viewed account '" + user.getUsername() + "'");
+                }
                 return ResponseEntity.ok(user);
         }
 

@@ -34,11 +34,15 @@ import org.springframework.web.util.HtmlUtils;
  * <ol>
  *   <li>the headline names a place (from GDELT's location column) in exactly one country, and that
  *       country is in gdelt.country-codes: use it;</li>
- *   <li>the headline names no place, and exactly one configured country is mentioned at least
- *       min-location-mentions times in the article: use it;</li>
+ *   <li>the headline names no place, and one configured country is mentioned at least
+ *       min-location-mentions times in the article and at least twice as often as any other
+ *       country (configured or not): use it;</li>
  *   <li>anything else (several countries in the headline, a country we do not support, no clear
  *       country) is dropped.</li>
  * </ol>
+ * "US", "UK", "U.S." and "UAE" in capitals count as places too. A country named in the headline is
+ * recognised from gdelt-country-names.txt even if the article's location rows spell it differently
+ * ("Myanmar" against "Burma", "England" for the UK) or have no row for it.
  * Nationalities such as "Polish" are ignored as headline places: GDELT lists them as country-level
  * locations too, but they say who is involved, not where. If gdelt.title-keywords is set, the
  * title must also match a keyword (or the article a theme); if it is empty, topic
@@ -55,12 +59,30 @@ public class GkgParser {
     private static final Pattern OUTLET_SEPARATOR =
             Pattern.compile("\\s+(?:\\||\\u2013|\\u2014|\\u00b7|::|-)\\s+");
     private static final int MAX_OUTLET_WORDS = 6;
+    // small words that stay lower case inside a Title Case outlet name ("The Times of India")
+    private static final Set<String> TITLE_CASE_SMALL_WORDS = Set.of(
+            "a", "an", "and", "at", "de", "del", "der", "des", "du", "for", "in", "la", "le",
+            "of", "on", "the", "to", "van", "von", "y", "e", "&");
+    // "US", "UK" and similar are too short and too common as words ("tell us") to match like other names,
+    // so they are matched in capitals only. Values are the FIPS codes GDELT uses.
+    private static final Pattern ABBREVIATION = Pattern.compile(
+            "(?<![\\p{L}\\p{N}])(U\\.S\\.A\\.|U\\.S\\.|USA|US|U\\.K\\.|UK|UAE)(?![\\p{L}\\p{N}])");
+    private static final Map<String, String> ABBREVIATION_CODES = Map.of(
+            "US", "US", "USA", "US", "U.S.", "US", "U.S.A.", "US",
+            "UK", "UK", "U.K.", "UK", "UAE", "AE");
+    // stands for "the headline names a country from gdelt-country-names.txt that has no code there (Congo,
+    // Korea), and no location row says which one it is"
+    private static final String UNRESOLVED = "?";
+    private static final String NOT_A_COUNTRY = "-";      // marks a region such as "South America" in the names file
+    // step 2 only tags a country that is mentioned at least this many times more than any other country
+    private static final int MIN_MARGIN = 2;
 
     private final Set<String> countryCodes;
     private final int minMentions;
     private final Pattern keywords;
     private final List<String> themePrefixes;
-    private final Set<String> countryNames;                  // lower case, from gdelt-country-names.txt
+    private final Set<String> countryNames;                  // lower case, real countries in gdelt-country-names.txt
+    private final Map<String, String> needleCodes;           // normalised name -> FIPS code, "" if unknown, "-" if not a country
 
     public GkgParser(@Value("${gdelt.country-codes}") String countryCodes,
                      @Value("${gdelt.min-location-mentions}") int minMentions,
@@ -74,7 +96,16 @@ public class GkgParser {
         this.themePrefixes = themePrefixes.isBlank()
                 ? List.of()
                 : Arrays.asList(themePrefixes.split("\\s*,\\s*"));
-        this.countryNames = loadCountryNames();
+        Map<String, String> listed = loadCountryNames();            // lower case name -> code
+        this.countryNames = listed.entrySet().stream()
+                .filter(e -> !NOT_A_COUNTRY.equals(e.getValue()))
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toUnmodifiableSet());
+        Map<String, String> needles = new HashMap<>();
+        listed.forEach((name, code) -> {
+            if (name.length() >= MIN_PLACE_NAME_LENGTH) needles.put(normalise(name), code);
+        });
+        this.needleCodes = Map.copyOf(needles);
     }
 
     /** Returns an article if this GKG row is a titled, English web article about one supported country. */
@@ -88,10 +119,11 @@ public class GkgParser {
         String title = extractTitle(f[26]);
         if (title == null) return Optional.empty();
 
+        // the cheap topic filter runs first, so tagging only runs on rows that could be kept
+        if (keywords != null && !keywords.matcher(title).find() && !hasTheme(f[8])) return Optional.empty();
+
         Optional<String> country = tagCountry(title, f[10]);
         if (country.isEmpty()) return Optional.empty();
-
-        if (keywords != null && !keywords.matcher(title).find() && !hasTheme(f[8])) return Optional.empty();
 
         try {
             LocalDateTime published = LocalDateTime.parse(f[1], BATCH);
@@ -142,7 +174,9 @@ public class GkgParser {
     // The outlet is not part of the story and its name can contain a place ("Bridport and Lyme Regis
     // News"), so it is cut off before looking for places. Only the last separator is used, and only when
     //   - what follows is short (at most MAX_OUTLET_WORDS words) and shorter than the headline before it,
-    //   - and it is not itself the name of a place or country in the article ("Storm damage - Bangkok").
+    //   - it is written in Title Case like a name ("Tokyo Daily News"), not a descriptor
+    //     ("what we know", "live updates"), which is part of the headline,
+    //   - and it is not just place names from the article ("Storm damage - Bangkok, Thailand").
     // The stored title is not changed, this only affects where places are looked for.
     private String withoutOutletName(String title, List<String[]> blocks) {
         Matcher m = OUTLET_SEPARATOR.matcher(title);
@@ -158,21 +192,56 @@ public class GkgParser {
         String tail = title.substring(end).strip();
         if (headline.isEmpty() || tail.isEmpty()) return title;
         if (tail.split("\\s+").length > MAX_OUTLET_WORDS || tail.length() >= headline.length()) return title;
+        if (!looksLikeName(tail)) return title;
 
-        String tailKey = tail.toLowerCase(Locale.ROOT);
-        if (countryNames.contains(tailKey)) return title;                     // "Floods - Thailand"
-        for (String[] p : blocks) {
-            for (String place : placeNames(p[1].strip())) {
-                if (place.toLowerCase(Locale.ROOT).equals(tailKey)) return title;   // "Storm damage - Bangkok"
-            }
-        }
+        if (consistsOfPlaces(tail, blocks)) return title;          // "Floods - Thailand", "Storm damage - Bangkok, Thailand"
         return headline;
     }
 
+    // True if every comma-separated part of the text is a country name or a place in the article's rows.
+    private boolean consistsOfPlaces(String text, List<String[]> blocks) {
+        Set<String> places = new HashSet<>(countryNames);
+        for (String[] p : blocks) {
+            for (String place : placeNames(p[1].strip())) places.add(place.toLowerCase(Locale.ROOT));
+        }
+        boolean any = false;
+        for (String part : text.split(",")) {
+            String key = part.strip().toLowerCase(Locale.ROOT);
+            if (key.isEmpty()) continue;
+            if (!places.contains(key)) return false;
+            any = true;
+        }
+        return any;
+    }
+
+    // True if every word that starts with a letter is capitalised, apart from small words such as "of".
+    private static boolean looksLikeName(String text) {
+        for (String word : text.split("\\s+")) {
+            int i = 0;
+            while (i < word.length() && !Character.isLetter(word.charAt(i))) i++;
+            if (i == word.length()) continue;                              // "2024", "&": nothing to check
+            if (Character.isUpperCase(word.charAt(i))) continue;
+            if (!TITLE_CASE_SMALL_WORDS.contains(word.toLowerCase(Locale.ROOT))) return false;
+        }
+        return true;
+    }
+
     // Country codes of every location whose name appears in the headline.
+    // Longer names are matched first and removed from the headline once matched, so "South Sudan" does not
+    // also count as "Sudan", nor "New York" as "York", "Northern Ireland" as "Ireland", "New Mexico" as
+    // "Mexico" or "North Korea" as "Korea". Country names from gdelt-country-names.txt take part in the
+    // removal even when the article has no location row for them.
     private Set<String> countriesNamedInHeadline(String title, List<String[]> blocks) {
         String headline = normalise(title);
-        Set<String> codes = new HashSet<>();
+
+        // needle -> country codes of the location rows with that name (empty if no row has it)
+        Map<String, Set<String>> found = new HashMap<>();
+        Set<String> regions = new HashSet<>();                  // names that are not countries: they only hide shorter ones
+        for (Map.Entry<String, String> e : needleCodes.entrySet()) {
+            if (!headline.contains(e.getKey())) continue;
+            found.computeIfAbsent(e.getKey(), k -> new HashSet<>());
+            if (NOT_A_COUNTRY.equals(e.getValue())) regions.add(e.getKey());
+        }
         for (String[] p : blocks) {
             String name = p[1].strip();
             if (name.isEmpty()) continue;
@@ -183,10 +252,41 @@ public class GkgParser {
                 String needle = normalise(candidate);
                 if (candidate.length() >= MIN_PLACE_NAME_LENGTH && needle.length() > 2
                         && headline.contains(needle)) {
-                    codes.add(p[2]);
+                    found.computeIfAbsent(needle, k -> new HashSet<>()).add(p[2]);
                 }
             }
         }
+
+        List<String> longestFirst = new ArrayList<>(found.keySet());
+        longestFirst.sort((x, y) -> y.length() - x.length());
+
+        Set<String> codes = new HashSet<>();
+        for (String needle : longestFirst) {
+            if (!headline.contains(needle)) continue;          // already used up by a longer name
+            Set<String> named = found.get(needle);
+            if (regions.contains(needle)) {
+                // "South America": not a country, but it hides the "America" inside it
+            } else if (!named.isEmpty()) {
+                codes.addAll(named);                            // GDELT's own rows decide first ("Gaza" is IS there)
+            } else if (!needleCodes.get(needle).isEmpty()) {
+                codes.add(needleCodes.get(needle));             // no row for it, or one spelled differently
+            } else {
+                // a name shared by several countries (Congo, Korea) and no row says which: still a place,
+                // so the article must not fall through to the mention counts
+                codes.add(UNRESOLVED);
+            }
+            headline = headline.replace(needle, " ");          // the needle starts and ends with a space
+        }
+        codes.addAll(abbreviationsIn(title));
+        return codes;
+    }
+
+    // Country codes for "US", "U.K." and the like. Skipped in all-capitals headlines, where "US" may be a pronoun.
+    private static Set<String> abbreviationsIn(String title) {
+        Set<String> codes = new HashSet<>();
+        if (title.equals(title.toUpperCase(Locale.ROOT))) return codes;
+        Matcher m = ABBREVIATION.matcher(title);
+        while (m.find()) codes.add(ABBREVIATION_CODES.get(m.group(1)));
         return codes;
     }
 
@@ -202,17 +302,29 @@ public class GkgParser {
         return names;
     }
 
-    // Exactly one configured country with at least min-location-mentions mentions, else empty.
+    // The country the article keeps mentioning, or empty if there is not one clear winner. Every country
+    // is counted, supported or not, so an article that mentions the US ten times and Japan three times
+    // is not tagged Japan. The winner must be configured, have at least min-location-mentions
+    // mentions and at least MIN_MARGIN times as many as the runner-up.
     private Optional<String> onlyCountryMentionedOften(List<String[]> blocks) {
         Map<String, Integer> counts = new HashMap<>();
-        for (String[] p : blocks) {
-            if (countryCodes.contains(p[2])) counts.merge(p[2], 1, Integer::sum);
+        for (String[] p : blocks) counts.merge(p[2], 1, Integer::sum);
+
+        String top = null;
+        int topCount = 0;
+        int second = 0;
+        for (Map.Entry<String, Integer> e : counts.entrySet()) {
+            if (e.getValue() > topCount) {
+                second = topCount;
+                topCount = e.getValue();
+                top = e.getKey();
+            } else if (e.getValue() > second) {
+                second = e.getValue();
+            }
         }
-        List<String> often = counts.entrySet().stream()
-                .filter(e -> e.getValue() >= minMentions)
-                .map(Map.Entry::getKey)
-                .toList();
-        return often.size() == 1 ? Optional.of(often.get(0)) : Optional.empty();
+        if (top == null || !countryCodes.contains(top)) return Optional.empty();
+        if (topCount < minMentions || topCount < MIN_MARGIN * second) return Optional.empty();
+        return Optional.of(top);
     }
 
     // lower case, punctuation turned into spaces, padded with spaces, so "Poland's" contains " poland "
@@ -221,17 +333,21 @@ public class GkgParser {
         return " " + t + " ";
     }
 
-    private Set<String> loadCountryNames() {
+    // One "Name|CODE" per line, "Name" alone when several countries use it, "Name|-" for a region.
+    private Map<String, String> loadCountryNames() {
         try (InputStream in = GkgParser.class.getResourceAsStream(COUNTRY_NAMES_FILE)) {
             if (in == null) {
                 throw new IllegalStateException(COUNTRY_NAMES_FILE + " is missing from src/main/resources");
             }
             BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
-            return reader.lines()
-                    .map(String::strip)
-                    .filter(s -> !s.isEmpty() && !s.startsWith("#"))
-                    .map(s -> s.toLowerCase(Locale.ROOT))
-                    .collect(Collectors.toUnmodifiableSet());
+            Map<String, String> names = new HashMap<>();
+            for (String line : (Iterable<String>) reader.lines()::iterator) {
+                String t = line.strip();
+                if (t.isEmpty() || t.startsWith("#")) continue;
+                String[] parts = t.split("\\|", 2);
+                names.put(parts[0].strip().toLowerCase(Locale.ROOT), parts.length > 1 ? parts[1].strip() : "");
+            }
+            return names;
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

@@ -18,4 +18,7 @@ public interface RecommendationRepository extends JpaRepository<Recommendation, 
 
     // every recommendation hanging off this user's impacts; must be removed before the impacts
     void deleteByImpactUserId(Long userId);
+
+    // everything ever suggested to one user, for the admin console
+    List<Recommendation> findByImpactUserIdOrderByIdDesc(Long userId);
 }

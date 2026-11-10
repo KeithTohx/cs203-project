@@ -136,14 +136,23 @@ export const debounce = (action, waitMs = 300) => {
 // two-click confirm for buttons that remove things, so a misclick does not lose anything.
 // the first click shows confirmText and a second click runs onConfirm. it goes back to normal when the mouse
 // leaves the button or focus moves away, and touch and keyboard (which have no "leave") get a 4 second timeout.
-// gives back a function that puts the button back to normal, for buttons that stay on the page after confirming
-export function confirmTwice(button, { confirmText, onConfirm, onArm = () => { }, onDisarm = () => { } }) {
+// gives back a function that puts the button back to normal, for buttons that stay on the page after confirming.
+// roomForConfirm makes the button wide enough for confirmText from the start, so it does not grow when
+// clicked. otherwise a button in a tight row can wrap onto the next line, out from under the mouse,
+// which counts as leaving it and cancels the confirm
+export function confirmTwice(button, {
+    confirmText, onConfirm, onArm = () => { }, onDisarm = () => { }, roomForConfirm = false,
+}) {
     const original = { text: button.textContent, label: button.getAttribute("aria-label") };
     let timer;
+    let widthBeforeArming = "";
+    if (roomForConfirm) makeRoomForConfirm(button, confirmText);
+
     const disarm = () => {
         clearTimeout(timer);
         if (!button.dataset.confirming) return;
         delete button.dataset.confirming;
+        button.style.minWidth = widthBeforeArming;
         button.textContent = original.text;
         if (original.label == null) button.removeAttribute("aria-label");
         else button.setAttribute("aria-label", original.label);
@@ -152,6 +161,11 @@ export function confirmTwice(button, { confirmText, onConfirm, onArm = () => { }
     button.addEventListener("click", event => {
         if (!button.dataset.confirming) {
             button.dataset.confirming = "1";
+
+            // kept at least as wide as before, so a shorter confirm text never pulls the button out
+            // from under the mouse, which would count as leaving it and cancel the confirm
+            widthBeforeArming = button.style.minWidth;
+            button.style.minWidth = `${button.offsetWidth}px`;
             button.textContent = confirmText;
             const action = original.label ?? original.text;   // "Remove Ski at Niseko" -> "Click again to remove Ski at Niseko"
             button.setAttribute("aria-label", `Click again to ${action.charAt(0).toLowerCase()}${action.slice(1)}`);
@@ -166,6 +180,25 @@ export function confirmTwice(button, { confirmText, onConfirm, onArm = () => { }
     // touch is left out, since a finger "leaves" the button the moment it lifts, which would cancel every tap
     button.addEventListener("pointerleave", event => { if (event.pointerType === "mouse") disarm(); });
     return disarm;
+}
+
+// sizes a button for the wider of its own text and confirmText. both are measured in one go, before the
+// browser paints, so nothing flickers. a hidden button has no size yet, so it is skipped, and this is
+// called again once it shows
+export function makeRoomForConfirm(button, confirmText) {
+    const isHidden = button.offsetWidth === 0;
+    const isConfirming = Boolean(button.dataset.confirming);
+    if (isHidden || isConfirming) return;
+
+    const ownText = button.textContent;
+    button.style.minWidth = "";
+    const ownWidth = button.offsetWidth;
+
+    button.textContent = confirmText;
+    const confirmWidth = button.offsetWidth;
+    button.textContent = ownText;
+
+    button.style.minWidth = `${Math.max(ownWidth, confirmWidth)}px`;
 }
 
 // the bottom corner every toast stacks in, made the first time one is shown

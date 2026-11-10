@@ -12,7 +12,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for GkgParser
- * Tests row parsing, country tagging (headline first, then mention count) and title extraction
+ * Tests row parsing, country tagging (headline first, then mention count with a margin), outlet-name
+ * stripping, overlapping place names and title extraction
  */
 @DisplayName("GkgParser Unit Tests")
 class GkgParserTest {
@@ -56,6 +57,19 @@ class GkgParserTest {
 
     private Optional<GkgArticle> parse(String title, String locations) {
         return parser("").parse(line("1", "1", title, locations, ""));
+    }
+
+    // same, but with other countries configured, for places outside Japan and Thailand
+    private Optional<GkgArticle> parseWith(String countryCodes, String title, String locations) {
+        return new GkgParser(countryCodes, 3, "", "NATURAL_DISASTER")
+                .parse(line("1", "1", title, locations, ""));
+    }
+
+    // the same location block repeated, at different offsets
+    private static String repeat(String type, String name, String country, int times) {
+        String[] out = new String[times];
+        for (int i = 0; i < times; i++) out[i] = block(type, name, country, 10 + i * 40);
+        return String.join(";", out);
     }
 
     // ===== VALID ROWS =====
@@ -250,6 +264,261 @@ class GkgParserTest {
 
         assertTrue(parse("Typhoon hits New York", usa3x).isEmpty());
         assertTrue(parse("Typhoon hits the east coast", usa3x).isEmpty());
+    }
+
+    // TESTS: a headline place with the outlet name after " - " is looked up without the outlet name
+    @Test
+    @DisplayName("Should ignore a place in the outlet name at the end of the title")
+    void parse_ShouldIgnorePlaceInOutletName() {
+        // "Tokyo Daily News" is the outlet, so only Bangkok counts. Without the strip this is two countries.
+        String locations = blocks(
+                block("4", "Bangkok, Thailand", "TH", 10),
+                block("4", "Tokyo, Japan", "JA", 50));
+
+        Optional<GkgArticle> result = parse("Floods hit Bangkok - Tokyo Daily News", locations);
+
+        assertTrue(result.isPresent());
+        assertEquals(Set.of("TH"), result.get().countryCodes());
+    }
+
+    // TESTS: a tail that is not Title Case is part of the headline, not an outlet name
+    @Test
+    @DisplayName("Should not strip a tail that is not written like a name")
+    void parse_ShouldNotStripTail_WhenNotTitleCase() {
+        String locations = blocks(
+                block("4", "Bangkok, Thailand", "TH", 10),
+                block("4", "Tokyo, Japan", "JA", 50));
+
+        // "what Tokyo knows" is part of the headline, so the headline names two countries
+        assertTrue(parse("Floods hit Bangkok and surrounding areas - what Tokyo knows", locations).isEmpty());
+    }
+
+    // TESTS: a tail that is a place or country in the article stays part of the headline
+    @Test
+    @DisplayName("Should not strip a tail that is a place")
+    void parse_ShouldNotStripTail_WhenTailIsAPlace() {
+        Optional<GkgArticle> city = parse("Storm damage - Bangkok", block("4", "Bangkok, Thailand", "TH", 10));
+        Optional<GkgArticle> country = parse("Heavy rain expected across the region - Thailand",
+                block("1", "Thailand", "TH", 10));
+
+        assertEquals(Set.of("TH"), city.orElseThrow().countryCodes());
+        assertEquals(Set.of("TH"), country.orElseThrow().countryCodes());
+    }
+
+    // TESTS: a tail made only of place names ("Bangkok, Thailand") is part of the headline
+    @Test
+    @DisplayName("Should not strip a tail that is a list of places")
+    void parse_ShouldNotStripTail_WhenTailIsAListOfPlaces() {
+        Optional<GkgArticle> result = parse("Storm damage across the region - Bangkok, Thailand",
+                block("4", "Bangkok, Krung Thep Mahanakhon, Thailand", "TH", 10));
+
+        assertEquals(Set.of("TH"), result.orElseThrow().countryCodes());
+    }
+
+    // ===== NAMES THAT CONTAIN OTHER PLACE NAMES =====
+
+    // TESTS: "South Sudan" is not also "Sudan" (the article lists both, as GDELT often does)
+    @Test
+    @DisplayName("Should not count Sudan as named when the headline says South Sudan")
+    void parse_ShouldPreferTheLongerName_SouthSudan() {
+        String locations = blocks(
+                block("1", "South Sudan", "OD", 5),
+                block("1", "Sudan", "SU", 60));
+
+        Optional<GkgArticle> result = parseWith("OD,SU", "Floods displace thousands in South Sudan", locations);
+
+        assertEquals(Set.of("OD"), result.orElseThrow().countryCodes());
+    }
+
+    // TESTS: the longer name is removed only once, so a real second country is still seen
+    @Test
+    @DisplayName("Should still see Sudan when the headline names both countries")
+    void parse_ShouldStillSeeBothCountries_WhenHeadlineNamesSudanAndSouthSudan() {
+        String locations = blocks(
+                block("1", "South Sudan", "OD", 5),
+                block("1", "Sudan", "SU", 60));
+
+        assertTrue(parseWith("OD,SU", "South Sudan and Sudan agree ceasefire", locations).isEmpty());
+    }
+
+    // TESTS: names from gdelt-country-names.txt are removed even when the article has no row for them
+    @Test
+    @DisplayName("Should not tag Sudan for a South Sudan headline when only Sudan is listed")
+    void parse_ShouldNotTagSudan_WhenHeadlineSaysSouthSudanAndOnlySudanIsListed() {
+        assertTrue(parseWith("SU", "Floods displace thousands in South Sudan",
+                block("1", "Sudan", "SU", 5)).isEmpty());
+    }
+
+    @Test
+    @DisplayName("Should prefer the Democratic Republic of the Congo over Congo")
+    void parse_ShouldPreferTheLongerName_Congo() {
+        String locations = blocks(
+                block("1", "Democratic Republic of the Congo", "CG", 5),
+                block("1", "Congo", "CF", 60));
+
+        Optional<GkgArticle> result = parseWith("CG", "Cholera outbreak in Democratic Republic of the Congo", locations);
+
+        assertEquals(Set.of("CG"), result.orElseThrow().countryCodes());
+    }
+
+    @Test
+    @DisplayName("Should prefer New York over York")
+    void parse_ShouldPreferTheLongerName_NewYork() {
+        String locations = blocks(
+                block("4", "New York, New York, United States", "US", 5),
+                block("4", "York, York, United Kingdom", "UK", 60));
+
+        Optional<GkgArticle> result = parseWith("US,UK", "Storm hits New York", locations);
+
+        assertEquals(Set.of("US"), result.orElseThrow().countryCodes());
+    }
+
+    @Test
+    @DisplayName("Should prefer Northern Ireland over Ireland")
+    void parse_ShouldPreferTheLongerName_NorthernIreland() {
+        String locations = blocks(
+                block("4", "Northern Ireland, United Kingdom", "UK", 5),
+                block("1", "Ireland", "EI", 60));
+
+        Optional<GkgArticle> result = parseWith("UK", "Snow closes roads across Northern Ireland", locations);
+
+        assertEquals(Set.of("UK"), result.orElseThrow().countryCodes());
+    }
+
+    @Test
+    @DisplayName("Should prefer New Mexico over Mexico")
+    void parse_ShouldPreferTheLongerName_NewMexico() {
+        String locations = blocks(
+                block("4", "New Mexico, United States", "US", 5),
+                block("1", "Mexico", "MX", 60));
+
+        Optional<GkgArticle> result = parseWith("US", "Wildfire spreads in New Mexico", locations);
+
+        assertEquals(Set.of("US"), result.orElseThrow().countryCodes());
+    }
+
+    @Test
+    @DisplayName("Should prefer North Korea over Korea")
+    void parse_ShouldPreferTheLongerName_NorthKorea() {
+        String locations = blocks(
+                block("1", "North Korea", "KN", 5),
+                block("1", "Korea", "KS", 60));
+
+        Optional<GkgArticle> result = parseWith("KN", "North Korea fires missile", locations);
+
+        assertEquals(Set.of("KN"), result.orElseThrow().countryCodes());
+    }
+
+    // ===== STEP 2 MARGIN =====
+
+    // TESTS: a configured country mentioned 3 times is not tagged when another country is mentioned far more
+    @Test
+    @DisplayName("Should drop a row when an unsupported country is mentioned much more than Japan")
+    void parse_ShouldDropRow_WhenAnotherCountryDominates() {
+        String locations = blocks(
+                repeat("4", "Tokyo, Japan", "JA", 3),
+                repeat("3", "New York, United States", "US", 10));
+
+        assertTrue(parse("Flights cancelled after storm", locations).isEmpty());
+    }
+
+    // TESTS: at least twice as many mentions as the runner-up is enough, even if the runner-up is configured
+    @Test
+    @DisplayName("Should tag the country with at least twice the mentions of the next one")
+    void parse_ShouldTag_WhenCountryHasTwiceTheMentions() {
+        String locations = blocks(
+                repeat("4", "Tokyo, Japan", "JA", 6),
+                repeat("4", "Bangkok, Thailand", "TH", 3));
+
+        assertEquals(Set.of("JA"), parse("Flights cancelled after storm", locations).orElseThrow().countryCodes());
+    }
+
+    @Test
+    @DisplayName("Should drop a row when the top country has less than twice the next one")
+    void parse_ShouldDropRow_WhenMarginIsTooThin() {
+        String locations = blocks(
+                repeat("4", "Tokyo, Japan", "JA", 5),
+                repeat("4", "Bangkok, Thailand", "TH", 3));
+
+        assertTrue(parse("Flights cancelled after storm", locations).isEmpty());
+    }
+
+    // ===== ABBREVIATIONS AND DIFFERENT SPELLINGS =====
+
+    // TESTS: "US" in the headline is a country, so US + Japan is two countries
+    @Test
+    @DisplayName("Should drop a row when the headline names the US and Japan")
+    void parse_ShouldDropRow_WhenHeadlineSaysUsAndJapan() {
+        String locations = block("1", "Japan", "JA", 30);
+
+        assertTrue(parse("US imposes new tariffs on Japan", locations).isEmpty());
+        assertTrue(parse("U.S. imposes new tariffs on Japan", locations).isEmpty());
+        assertTrue(parse("UK and Japan sign trade deal", locations).isEmpty());
+    }
+
+    // TESTS: "us" the pronoun is not the US, and an all-capitals headline is not searched for abbreviations
+    @Test
+    @DisplayName("Should not read the word us as the US")
+    void parse_ShouldNotReadPronounAsUs() {
+        String locations = block("4", "Tokyo, Japan", "JA", 10);
+
+        assertEquals(Set.of("JA"), parse("Tell us what Tokyo airport did", locations).orElseThrow().countryCodes());
+        assertEquals(Set.of("JA"), parse("TELL US WHAT TOKYO AIRPORT DID", locations).orElseThrow().countryCodes());
+    }
+
+    // TESTS: a headline that says "US" and nothing else names an unsupported country
+    @Test
+    @DisplayName("Should drop a row about the US when only Japan is configured, even if Japan is mentioned often")
+    void parse_ShouldDropRow_WhenHeadlineSaysUsAndJapanIsMentionedOften() {
+        assertTrue(parse("US airlines cancel flights", JAPAN_3X).isEmpty());
+    }
+
+    // TESTS: the headline says "Myanmar", the rows say "Burma": the code comes from the names file
+    @Test
+    @DisplayName("Should tag the country when the headline spells it differently from the location rows")
+    void parse_ShouldTagCountry_WhenHeadlineSpellsItDifferentlyFromTheRows() {
+        // Thailand is mentioned three times, but the story is about Myanmar
+        String locations = blocks(
+                block("1", "Burma", "BM", 5),
+                repeat("4", "Bangkok, Thailand", "TH", 3));
+
+        assertEquals(Set.of("BM"), parseWith("BM,TH", "Myanmar junta closes border", locations)
+                .orElseThrow().countryCodes());
+        assertTrue(parseWith("TH", "Myanmar junta closes border", locations).isEmpty());
+    }
+
+    // TESTS: a country in the headline counts even when the article has no location row for it
+    @Test
+    @DisplayName("Should tag the country named in the headline when the rows have no entry for it")
+    void parse_ShouldTagCountry_WhenRowsHaveNoEntryForIt() {
+        // the rows mention Japan three times, which must not win over France
+        assertEquals(Set.of("FR"), parseWith("FR,JA", "Toy maker confirms site closures across France", JAPAN_3X)
+                .orElseThrow().countryCodes());
+    }
+
+    // TESTS: England, Scotland and Wales are the UK
+    @Test
+    @DisplayName("Should read England as the United Kingdom")
+    void parse_ShouldReadEnglandAsUk() {
+        assertEquals(Set.of("UK"), parseWith("UK", "Castle Combe named among England's friendliest towns",
+                block("4", "Castle Combe, Wiltshire, United Kingdom", "UK", 10)).orElseThrow().countryCodes());
+    }
+
+    // TESTS: "South America" is not "America", so it is not the US
+    @Test
+    @DisplayName("Should not read South America as the United States")
+    void parse_ShouldNotReadSouthAmericaAsUs() {
+        Optional<GkgArticle> result = parseWith("UK,US", "Tarantulas native to South America arrive in Cotswolds",
+                block("4", "Cotswolds, Gloucestershire, United Kingdom", "UK", 10));
+
+        assertEquals(Set.of("UK"), result.orElseThrow().countryCodes());
+    }
+
+    // TESTS: a name shared by two countries with no row to say which: dropped, not guessed from the counts
+    @Test
+    @DisplayName("Should drop a row when the headline says Congo and nothing says which Congo")
+    void parse_ShouldDropRow_WhenHeadlineNameIsSharedByTwoCountries() {
+        assertTrue(parseWith("JA", "Flooding displaces thousands in Congo", JAPAN_3X).isEmpty());
     }
 
     // ===== TITLE KEYWORD / THEME FILTER =====

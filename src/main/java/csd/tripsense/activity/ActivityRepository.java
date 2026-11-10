@@ -2,6 +2,7 @@ package csd.tripsense.activity;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -12,6 +13,9 @@ import org.springframework.stereotype.Repository;
 public interface ActivityRepository extends JpaRepository<Activity, Long> {
 
     List<Activity> findByItineraryIdOrderByDateStart(Long itineraryId);
+
+    // every activity on every one of a user's trips, for the admin console
+    List<Activity> findByItineraryUserIdOrderByDateStart(Long userId);
 
     // Activities in one country that have not finished yet and have no impact row for this news,
     // so one article is never judged twice against the same activity. The itinerary and its user
@@ -31,4 +35,11 @@ public interface ActivityRepository extends JpaRepository<Activity, Long> {
     List<Activity> findPendingForNews(@Param("newsId") Long newsId,
                                       @Param("countryId") Long countryId,
                                       @Param("now") LocalDateTime now);
+
+    // see ItineraryRepository.findRevision, including why this is Number and not Long
+    @Query("""
+            select coalesce(a.revision, 0L) from Activity a
+            where a.id = :id and a.identityKey = :identityKey
+            """)
+    Optional<Number> findRevision(@Param("id") Long id, @Param("identityKey") String identityKey);
 }

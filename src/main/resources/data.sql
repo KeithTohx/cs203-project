@@ -52,31 +52,33 @@ INSERT OR IGNORE INTO activity (id, itinerary_id, name, address, date_start, dat
     (15, 7, 'Ha Long Bay overnight cruise','Bai Chay, Quang Ninh, Vietnam',     '2026-12-05 08:00:00', '2026-12-06 11:00:00', 'BEACH_WATER'),
     (16, 8, 'Doi Suthep temple',          'Doi Suthep, Chiang Mai, Thailand',   '2027-01-21 08:00:00', '2027-01-21 11:00:00', 'SIGHTSEEING');
 
+-- dated from today, not fixed: the evaluator asks whether the trouble still reaches
+-- the trip, so a story stuck in september would never match anything again
 INSERT OR IGNORE INTO news (id, title, description, source, url, published_at) VALUES
     (1, 'Magnitude 6.8 earthquake strikes near Hokkaido',
         'A strong earthquake hit southern Hokkaido, with aftershocks expected and some ski resorts suspending lifts.',
-        'Japan Meteorological Agency', 'https://www.jma.go.jp/jma/indexe.html', '2026-09-20 08:30:00'),
+        'Japan Meteorological Agency', 'https://www.jma.go.jp/jma/indexe.html', datetime('now','-3 days')),
     (2, 'Flooding closes Bangkok tourist areas',
         'Heavy rain has flooded several districts in central Bangkok, closing some attractions.',
-        'Bangkok Post', 'https://www.bangkokpost.com/', '2026-09-21 14:00:00'),
+        'Bangkok Post', 'https://www.bangkokpost.com/', datetime('now','-4 days')),
     (3, 'Typhoon warning issued for northern Vietnam coast',
         'Authorities warn of strong winds and rough seas, with boat services likely to be suspended.',
-        'VnExpress', 'https://e.vnexpress.net/', '2026-09-22 06:45:00'),
+        'VnExpress', 'https://e.vnexpress.net/', datetime('now','-2 days')),
     (4, 'Mount Batur volcanic activity raised to alert level',
         'Increased activity has led officials to restrict access to hiking routes around the crater.',
-        'Jakarta Post', 'https://www.thejakartapost.com/', '2026-09-23 10:15:00'),
+        'Jakarta Post', 'https://www.thejakartapost.com/', datetime('now','-5 days')),
     (5, 'Grand Palace closed for royal ceremony',
         'The palace will be closed to visitors for one day next week for a ceremony.',
-        'Thai PBS', 'https://world.thaipbs.or.th/', '2026-09-24 09:00:00'),
+        'Thai PBS', 'https://world.thaipbs.or.th/', datetime('now','-6 days')),
     (6, 'Rail strike disrupts Seoul metro services',
         'A partial strike is reducing train frequency on several lines during peak hours.',
-        'Korea Herald', 'https://www.koreaherald.com/', '2026-09-25 07:20:00'),
+        'Korea Herald', 'https://www.koreaherald.com/', datetime('now','-7 days')),
     (7, 'Haze levels rise across Southeast Asia',
         'Air quality has worsened in northern Thailand and parts of the region due to seasonal burning.',
-        'Channel NewsAsia', 'https://www.channelnewsasia.com/', '2026-09-26 12:00:00'),
+        'Channel NewsAsia', 'https://www.channelnewsasia.com/', datetime('now','-8 days')),
     (8, 'Universal Studios Singapore to close for maintenance',
         'The park will close for several days for scheduled works, with dates to be confirmed.',
-        'The Straits Times', 'https://www.straitstimes.com/', '2026-09-27 16:30:00');
+        'The Straits Times', 'https://www.straitstimes.com/', datetime('now','-9 days'));
 
 INSERT OR IGNORE INTO news_country (news_id, country_id) VALUES
     (1, 1),   -- Hokkaido quake: Japan
@@ -89,20 +91,22 @@ INSERT OR IGNORE INTO news_country (news_id, country_id) VALUES
     (8, 2);   -- USS maintenance: Singapore
 
 -- reason is what the model would have written, so evaluate() serves these from the db instead of
--- calling ollama again. a null reason counts as not yet evaluated, see ImpactServiceImpl
-INSERT OR IGNORE INTO impact (id, user_id, news_id, itinerary_id, activity_id, impacted, reason) VALUES
-    (1,  1, 1, 1, 1,    1, 'Niseko is in Hokkaido and lifts may be suspended by aftershocks during the ski days.'),
-    (2,  1, 1, 1, 2,    1, 'Jozankei Onsen is near Sapporo, so the visit could be closed for safety checks after the quake.'),
-    (3,  1, 1, 1, NULL, 1, 'The whole trip is in southern Hokkaido where the quake struck, so travel and lodging may be disrupted.'),
-    (4,  2, 2, 2, 4,    1, 'The Grand Palace is in central Bangkok, where flooding has closed attractions.'),
-    (5,  2, 5, 2, 4,    0, 'The closure is for one day next week and does not fall on the planned palace visit.'),
-    (6,  1, 8, 3, 8,    1, 'Universal Studios Singapore closes for maintenance, which may fall on the planned park day.'),
-    (7,  4, 6, 4, NULL, 1, 'The trip relies on Seoul metro services, which the partial strike is reducing at peak hours.'),
-    (8,  5, 4, 5, 13,   1, 'Access to hiking routes around the crater is restricted, which covers the sunrise trek.'),
-    (9,  4, 3, 7, 15,   1, 'Boat services on the northern coast are likely suspended, which would stop the cruise.'),
-    (10, 5, 7, 8, NULL, 0, 'The haze is seasonal across the region and nothing on the Chiang Mai trip is closed.'),
+-- calling ollama again. a null reason counts as not yet evaluated, see ImpactServiceImpl.
+-- prompt_version is Impact.CURRENT_PROMPT_VERSION, so raise it here when that goes up, otherwise
+-- every start clears these, inserts them again and pays the model to judge them again
+INSERT OR IGNORE INTO impact (id, user_id, news_id, itinerary_id, activity_id, impacted, reason, prompt_version) VALUES
+    (1,  1, 1, 1, 1,    1, 'Niseko is in Hokkaido and lifts may be suspended by aftershocks during the ski days.', 2),
+    (2,  1, 1, 1, 2,    1, 'Jozankei Onsen is near Sapporo, so the visit could be closed for safety checks after the quake.', 2),
+    (3,  1, 1, 1, NULL, 1, 'The whole trip is in southern Hokkaido where the quake struck, so travel and lodging may be disrupted.', 2),
+    (4,  2, 2, 2, 4,    1, 'The Grand Palace is in central Bangkok, where flooding has closed attractions.', 2),
+    (5,  2, 5, 2, 4,    0, 'The closure is for one day next week and does not fall on the planned palace visit.', 2),
+    (6,  1, 8, 3, 8,    1, 'Universal Studios Singapore closes for maintenance, which may fall on the planned park day.', 2),
+    (7,  4, 6, 4, NULL, 1, 'The trip relies on Seoul metro services, which the partial strike is reducing at peak hours.', 2),
+    (8,  5, 4, 5, 13,   1, 'Access to hiking routes around the crater is restricted, which covers the sunrise trek.', 2),
+    (9,  4, 3, 7, 15,   1, 'Boat services on the northern coast are likely suspended, which would stop the cruise.', 2),
+    (10, 5, 7, 8, NULL, 0, 'The haze is seasonal across the region and nothing on the Chiang Mai trip is closed.', 2),
     -- not impacted, so karwei's japan trip has something for the filter to drop
-    (11, 1, 1, 1, 3,    0, 'The Sapporo Beer Museum is indoors in Higashi-ku and was not reported damaged.');
+    (11, 1, 1, 1, 3,    0, 'The Sapporo Beer Museum is indoors in Higashi-ku and was not reported damaged.', 2);
 -- recommendations for karwei's trips, so the demo has advice to show without calling ollama.
 -- generate() keys "already done" off the row existing, so these are served straight back.
 -- suggested_option_id points at activity_option, which comes from options.sql
@@ -135,3 +139,9 @@ UPDATE recommendation SET status = 'PENDING' WHERE status IS NULL;
 UPDATE activity
 SET country_id = (SELECT country_id FROM itinerary WHERE itinerary.id = activity.itinerary_id)
 WHERE country_id IS NULL;
+
+-- Seed rows (and rows saved before identity_key existed) have no identity key, so give each one a
+-- random one. Without it a deleted trip's id going to a new trip could not be told apart from the
+-- old trip (see Itinerary.identityKey). Safe to re-run: it only touches rows still missing a key.
+UPDATE itinerary SET identity_key = lower(hex(randomblob(16))) WHERE identity_key IS NULL;
+UPDATE activity SET identity_key = lower(hex(randomblob(16))) WHERE identity_key IS NULL;

@@ -1,7 +1,9 @@
 package csd.tripsense.itinerary;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
@@ -38,6 +40,48 @@ public class Itinerary {
 
     @Column(name = "date_end")
     private LocalDateTime dateEnd;
+
+    // goes up by one each time something the model is shown about the trip changes (its name,
+    // country or dates). every verdict records the revision it was judged on, which is how a
+    // verdict about the old details is told apart from one about the new ones.
+    // null on rows made before this existed, which reads as revision 0.
+    // a Long and not an Integer: the sqlite dialect drops the type from the id column when a
+    // table has another integer column, and then sqlite stops generating ids
+    @Column(name = "revision")
+    @JsonIgnore
+    private Long revision;
+
+    public long currentRevision() {
+        if (revision == null) {
+            return 0;
+        }
+        return revision;
+    }
+
+    public void bumpRevision() {
+        revision = currentRevision() + 1;
+    }
+
+    // random, set once when the trip is first saved and never changed. sqlite hands a deleted
+    // row's id to the next insert, and a new trip starts back at revision 0, so the id and revision
+    // together cannot tell a trip from the one that replaced it. this can.
+    // rows made before this existed are filled in by data.sql on startup
+    @Column(name = "identity_key", length = 36, updatable = false)
+    @JsonIgnore
+    @Setter(AccessLevel.NONE)
+    private String identityKey;
+
+    // always a fresh key, even if the request body sent one, so no two trips can ever share it
+    @PrePersist
+    void assignIdentityKey() {
+        identityKey = UUID.randomUUID().toString();
+    }
+
+    // when an admin last changed this trip or its activities, for the note the traveller sees.
+    // ignored in request bodies, since travellers post this entity directly and could set it
+    @Column(name = "admin_edited_at")
+    @JsonIgnore
+    private Instant adminEditedAt;
 
     // the foreign keys live on activity and impact (mappedBy), these just let jpa find them.
     // deleting an itinerary deletes its activities and impacts too, instead of leaving rows

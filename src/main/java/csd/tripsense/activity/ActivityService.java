@@ -1,6 +1,7 @@
 package csd.tripsense.activity;
 
 import java.util.List;
+import java.util.Optional;
 import java.time.LocalDateTime;
 
 public interface ActivityService {
@@ -44,6 +45,13 @@ public interface ActivityService {
     Activity updateActivity(Long id, Activity newActivityInfo);
 
     /**
+     * Same as updateActivity, but can keep the verdicts judged on the old details
+     * @param keepVerdicts true carries the verdicts over to the new details instead of clearing
+     *                     them, see ItineraryService.updateItinerary
+     */
+    Activity updateActivity(Long id, Activity newActivityInfo, boolean keepVerdicts);
+
+    /**
      * Removes Activity by its unique identifier
      * @param id the unique identifier of the Activity to remove
      * @throws ActivityNotFoundException if no Activity exists with the given ID
@@ -58,5 +66,9 @@ public interface ActivityService {
      * @return activities still waiting for an impact decision on this news (empty if none)
      */
     List<Activity> getActivitiesPendingForNews(Long newsId, Long countryId, LocalDateTime now);
+
+    // the activity's revision as it is in the database right now (see Activity.revision), or
+    // empty if this activity has been deleted, including when a new one has since been given its id
+    Optional<Long> findRevision(Activity activity);
 
 }

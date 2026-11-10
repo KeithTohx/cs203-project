@@ -203,6 +203,47 @@ class GdeltIngestJobTest {
         assertEquals(List.of(article(2).url()), articleUrls(batchCaptor.getValue()));
     }
 
+    // TESTS: Set<String> seenTitles = newsService.findExistingTitles(...);
+    //        + if (!seenTitles.add(article.title())) continue;
+    @Test
+    @DisplayName("Should judge one story once when several outlets carry the same headline")
+    void run_ShouldJudgeOneStoryOnce_WhenOutletsShareAHeadline() throws Exception {
+        GkgArticle first = new GkgArticle("https://a.com/1", "Quake hits Japan", "d", "a.com",
+                LocalDateTime.of(2026, 10, 20, 7, 0), Set.of("JA"));
+        GkgArticle second = new GkgArticle("https://b.com/1", "Quake hits Japan", "d", "b.com",
+                LocalDateTime.of(2026, 10, 20, 7, 0), Set.of("JA"));
+        when(client.latestGkgUrl()).thenReturn(Optional.of(FILE_A));
+        doAnswer(inv -> {
+            Consumer<String> consumer = inv.getArgument(1);
+            consumer.accept("a");
+            consumer.accept("b");
+            return null;
+        }).when(client).readLines(eq(FILE_A), any());
+        when(parser.parse("a")).thenReturn(Optional.of(first));
+        when(parser.parse("b")).thenReturn(Optional.of(second));
+        when(relevanceFilter.judgeBatch(anyList())).thenReturn(List.of(true));
+
+        job(true, 300, 10).run();
+
+        // only the first outlet's copy reaches the model, the rest of the syndication is dropped
+        verify(relevanceFilter, times(1)).judgeBatch(batchCaptor.capture());
+        assertEquals(List.of(first.url()), articleUrls(batchCaptor.getValue()));
+    }
+
+    @Test
+    @DisplayName("Should skip a story whose headline is already in the database")
+    void run_ShouldSkipArticle_WhenHeadlineAlreadyStored() throws Exception {
+        when(client.latestGkgUrl()).thenReturn(Optional.of(FILE_A));
+        givenFile(FILE_A, 1, 2);
+        when(newsService.findExistingTitles(any())).thenReturn(Set.of(article(1).title()));
+        when(relevanceFilter.judgeBatch(anyList())).thenReturn(List.of(true));
+
+        job(true, 300, 10).run();
+
+        verify(relevanceFilter, times(1)).judgeBatch(batchCaptor.capture());
+        assertEquals(List.of(article(2).url()), articleUrls(batchCaptor.getValue()));
+    }
+
     // ===== PER-RUN CAP AND CARRY-OVER =====
 
     // TESTS: List<GkgArticle> toCheck = pending.size() > maxPerRun ? pending.subList(0, maxPerRun) : pending;

@@ -151,9 +151,12 @@ class AlertStreamHttpTest {
 
         when(ai.ask(anyString(), any(Class.class))).thenAnswer(invocation -> {
             Class<?> verdictType = invocation.getArgument(1);
-            var constructor = verdictType.getDeclaredConstructor(boolean.class, String.class);
+            var constructor = verdictType.getDeclaredConstructors()[0];
             constructor.setAccessible(true);
-            return constructor.newInstance(true, "Resort closed after earthquake");
+            // an impacted answer has to name a kind or the service overrules it
+            Class<?> kind = constructor.getParameterTypes()[1];
+            return constructor.newInstance("Resort closed after earthquake",
+                    Enum.valueOf((Class<Enum>) kind, "DISASTER"), 90, true);
         });
     }
 

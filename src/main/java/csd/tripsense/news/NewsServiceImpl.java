@@ -90,6 +90,16 @@ public class NewsServiceImpl implements NewsService {
     }
 
     @Override
+    public Set<String> findExistingTitles(Collection<String> titles) {
+        if (titles.isEmpty()) {
+            return Set.of();
+        }
+        return newsRepository.findByTitleIn(titles).stream()
+                .map(News::getTitle)
+                .collect(Collectors.toSet());
+    }
+
+    @Override
     public Set<String> findExistingUrls(Collection<String> urls) {
         if (urls.isEmpty()) {
             return Set.of();
@@ -102,6 +112,14 @@ public class NewsServiceImpl implements NewsService {
     @Override
     public List<News> getNewsByCountrySince(Long countryId, LocalDateTime since) {
         return newsRepository.findByCountryIdSince(countryId, since);
+    }
+
+    @Override
+    public List<News> getNewsByIdsAboutCountry(Collection<Long> newsIds, Long countryId) {
+        if (newsIds.isEmpty()) {
+            return List.of();
+        }
+        return newsRepository.findByIdInAndCountryId(newsIds, countryId);
     }
 
 }

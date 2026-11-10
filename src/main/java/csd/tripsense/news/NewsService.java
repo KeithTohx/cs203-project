@@ -49,6 +49,9 @@ public interface NewsService {
      */
     Set<String> findExistingUrls(Collection<String> urls);
 
+    // headlines we already hold, so the same story from another outlet is not stored twice
+    Set<String> findExistingTitles(Collection<String> titles);
+
         /**
        * News about a country published at or after a cut-off.
        * @param countryId the unique identifier of the Country
@@ -56,5 +59,9 @@ public interface NewsService {
        * @return matching news, newest first (empty if none)
        */
       List<News> getNewsByCountrySince(Long countryId, LocalDateTime since);
+
+      // the articles with these ids that are about one country, however old. used to judge again
+      // the articles whose verdicts an edit cleared. ids that no longer exist are left out
+      List<News> getNewsByIdsAboutCountry(Collection<Long> newsIds, Long countryId);
 
 }

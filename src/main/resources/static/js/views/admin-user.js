@@ -1,6 +1,7 @@
 // admin only: one account's details and activity, with role changes, disable, enable and delete
 import { api } from "../api.js";
 import { createActionFilter, createAuditTable } from "../audit.js";
+import { mountUserData } from "./admin-data.js";
 import { confirmTwice, createPager, escapeHtml, flash, loading, noMatches, showError } from "../util.js";
 
 // what the hint under the details says, depending on what can be done to the account
@@ -61,7 +62,7 @@ const createAccountCard = (account, isSelf) => {
     `;
 };
 
-// deleting is for good, so it sits apart like on the account page.
+// deleting is for good, so it sits in its own card straight under the account details.
 // hidden while the account is an admin, since the backend only deletes plain user accounts
 const createDangerZone = account => `
     <section class="card danger-zone" id="danger-zone"${account.role === "ADMIN" ? " hidden" : ""}>
@@ -105,6 +106,8 @@ export async function showAdminUser(root, user, onAuthLost, id) {
         <p><a href="#/admin/users">← All users</a></p>
         <h1>${isDeleted ? `Deleted account #${userId}` : escapeHtml(account.username)}</h1>
         ${accountSection}
+        ${account && !isSelf ? createDangerZone(account) : ""}
+        ${account ? `<div id="trip-data"></div>` : ""}
         <section class="card">
             <div class="row">
                 <h2>Activity</h2>
@@ -114,7 +117,6 @@ export async function showAdminUser(root, user, onAuthLost, id) {
             </div>
             <div id="activity"></div>
         </section>
-        ${account && !isSelf ? createDangerZone(account) : ""}
     `;
 
     const activity = root.querySelector("#activity");
@@ -148,6 +150,12 @@ export async function showAdminUser(root, user, onAuthLost, id) {
 
     drawActivity(activityResult.value);
     actionFilter.addEventListener("change", () => loadActivity(0));
+
+    // a deleted account has nothing left to show, only its history
+    if (account) {
+        const tripData = root.querySelector("#trip-data");
+        mountUserData(tripData, userId, onAuthLost, { onChange: () => loadActivity(0) });
+    }
     activity.addEventListener("click", event => {
         const pageButton = event.target.closest("[data-page]");
         if (pageButton) loadActivity(Number(pageButton.dataset.page));

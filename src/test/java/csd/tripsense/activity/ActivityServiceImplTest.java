@@ -172,8 +172,8 @@ class ActivityServiceImplTest {
     }
 
     @Test
-    @DisplayName("Should not publish a created event when an activity is updated")
-    void updateActivity_ShouldNotPublish() {
+    @DisplayName("Should not publish anything when an update changes nothing the activity was judged on")
+    void updateActivity_ShouldNotPublish_WhenNothingJudgedChanged() {
         Activity existing = new Activity();
         existing.setId(10L);
         existing.setItinerary(japanTrip);
@@ -183,7 +183,87 @@ class ActivityServiceImplTest {
         activityService.updateActivity(10L, new Activity());
 
         verifyNoInteractions(events);
-       // edits are not re-evaluated, only creation is
+    }
+
+    @Test
+    @DisplayName("Should not publish anything when only the end time changes, the model never saw it")
+    void updateActivity_ShouldNotPublish_WhenOnlyEndChanges() {
+        Activity existing = storedActivity();
+        when(activityRepository.findById(10L)).thenReturn(Optional.of(existing));
+        when(activityRepository.save(any(Activity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Activity changes = sameAs(existing);
+        changes.setDateEnd(LocalDateTime.of(2027, 1, 8, 18, 0));
+        activityService.updateActivity(10L, changes);
+
+        verifyNoInteractions(events);
+        // its verdicts still stand, so they must still match
+        assertEquals(0, existing.currentRevision());
+    }
+
+    @Test
+    @DisplayName("Should publish an edited event when the name, address or start changes")
+    void updateActivity_ShouldPublish_WhenJudgedFieldChanges() {
+        Activity existing = storedActivity();
+        when(activityRepository.findById(10L)).thenReturn(Optional.of(existing));
+        when(activityRepository.save(any(Activity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Activity changes = sameAs(existing);
+        changes.setAddress("Furano, Hokkaido");
+        activityService.updateActivity(10L, changes);
+
+        verify(events).publishEvent(new ActivityEditedEvent(10L));
+        assertEquals(1, existing.currentRevision());
+    }
+
+    @Test
+    @DisplayName("Should say the edit keeps the verdicts when asked to")
+    void updateActivity_KeepVerdicts_PublishesWithTheChoice() {
+        Activity existing = storedActivity();
+        when(activityRepository.findById(10L)).thenReturn(Optional.of(existing));
+        when(activityRepository.save(any(Activity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Activity changes = sameAs(existing);
+        changes.setName("Ski at Niseko!");
+        activityService.updateActivity(10L, changes, true);
+
+        verify(events).publishEvent(new ActivityEditedEvent(10L, true));
+        assertEquals(1, existing.currentRevision());
+    }
+
+    @Test
+    @DisplayName("Should publish an edited event when the activity moves to another trip")
+    void updateActivity_ShouldPublish_WhenMovedToAnotherTrip() {
+        Activity existing = storedActivity();
+        when(activityRepository.findById(10L)).thenReturn(Optional.of(existing));
+        when(itineraryService.getItineraryById(2L)).thenReturn(thailandTrip);
+        when(activityRepository.save(any(Activity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Activity changes = sameAs(existing);
+        changes.setItinerary(thailandTrip);
+        activityService.updateActivity(10L, changes);
+
+        verify(events).publishEvent(new ActivityEditedEvent(10L));
+        assertEquals(1, existing.currentRevision());
+    }
+
+    private Activity storedActivity() {
+        Activity existing = new Activity();
+        existing.setId(10L);
+        existing.setItinerary(japanTrip);
+        existing.setName("Ski at Niseko");
+        existing.setAddress("Niseko, Hokkaido");
+        existing.setDateStart(LocalDateTime.of(2027, 1, 8, 9, 0));
+        return existing;
+    }
+
+    // a request body with the same judged details, so a test can change just one of them
+    private static Activity sameAs(Activity stored) {
+        Activity body = new Activity();
+        body.setName(stored.getName());
+        body.setAddress(stored.getAddress());
+        body.setDateStart(stored.getDateStart());
+        return body;
     }
     // ===== DELETE =====
 

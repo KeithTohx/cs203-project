@@ -1,10 +1,11 @@
 // every alert, newest first, with older ones on demand and a filter for unread ones
 import { api } from "../api.js";
 import {
-    alertMetaParts, alertTitle, findGroupWithAlert, groupAlerts, isGroupUnread, markAlertsRead, markAllAlertsRead,
-    onAlertsChanged, waitForSaves,
+    adminChangeLink, adminChangeTitle, alertMetaParts, alertTitle, byNewestFirst, findGroupWithAlert, getAdminChanges,
+    groupAlerts, isAdminChangeUnread, isGroupUnread, markAdminChangeRead, markAdminChangesRead, markAlertsRead,
+    markAllAlertsRead, onAlertsChanged, waitForSaves,
 } from "../alerts.js";
-import { emptyState, escapeHtml, hostnameOf, loading, pageHead, safeUrl, showError } from "../util.js";
+import { emptyState, escapeHtml, hostnameOf, loading, pageHead, safeUrl, showError, timeTag } from "../util.js";
 import { icon } from "../icons.js";
 
 // the same as the bell loads, the backend caps a page at 100
@@ -49,6 +50,31 @@ const createAlertItem = group => {
     `;
 };
 
+// one thing an admin changed, in the same list as the news alerts with an "Admin" tag.
+// it opens its trip and can be marked read the same way
+const createAdminChangeItem = change => {
+    const unread = isAdminChangeUnread(change);
+    const meta = [escapeHtml(change.message), timeTag(change.createdAt)].filter(part => part).join(" · ");
+
+    return `
+        <li class="news-item alert-item${unread ? " is-new" : ""}">
+            <div class="news-head">
+                <strong>
+                    <a href="${adminChangeLink(change)}" data-open-change="${Number(change.id)}">
+                        ${unread ? `<span class="sr-only">New: </span>` : ""}${adminChangeTitle(change)}
+                    </a>
+                </strong>
+                <span class="tag admin">Admin</span>
+                ${unread ? `<span class="tag">New</span>` : ""}
+            </div>
+            <p class="meta">${meta}</p>
+            ${unread
+                ? `<button class="link-button" type="button" data-read-change="${Number(change.id)}">Mark as read</button>`
+                : ""}
+        </li>
+    `;
+};
+
 const createViewSwitch = (view, unreadCount) => `
     <div class="view-switch" role="group" aria-label="Which alerts to show">
         <button class="ghost small" type="button" data-view="all" aria-pressed="${view === "all"}">All alerts</button>
@@ -62,7 +88,8 @@ const createViewSwitch = (view, unreadCount) => `
 export async function showAlerts(root, user, onAuthLost, onLeave) {
     root.innerHTML = `
         ${pageHead("Alerts")}
-        <p class="meta page-intro">News that affects your trips, newest first.</p>
+        <p class="meta page-intro">News that affects your trips, and anything an admin changed in
+            them, newest first.</p>
         <div id="alerts-switch"></div>
         <div id="alerts-error"></div>
         <ul class="news-list" id="alerts-list"></ul>
@@ -92,6 +119,24 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
         return groups.filter(isGroupUnread);
     };
 
+    // the newest admin changes are all loaded at once, but news alerts come a page at a time.
+    // while older alerts are still to load, a change older than the oldest one shown waits for them,
+    // so the list never jumps back in time
+    const shownChanges = () => {
+        let changes = getAdminChanges().content;
+        if (currentView === "unread") changes = changes.filter(isAdminChangeUnread);
+
+        if (!hasMore) return changes;
+
+        const oldestShown = loadedAlerts[loadedAlerts.length - 1];
+        if (!oldestShown) return [];
+
+        const cutOff = new Date(oldestShown.createdAt);
+        return changes.filter(change => new Date(change.createdAt) >= cutOff);
+    };
+
+    const allUnreadCount = () => unreadCount + getAdminChanges().unreadCount;
+
     // loaded alerts are left out, since a new one can arrive live while a page of them is still loading
     const addAlerts = (alerts, { atTop }) => {
         const loadedIds = new Set(loadedAlerts.map(alert => alert.id));
@@ -115,7 +160,7 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
             return Number(group ? group.id : drawnId);
         };
 
-        const { view, readGroup, openGroup, sourceGroup } = focused.dataset;
+        const { view, readGroup, openGroup, sourceGroup, readChange, openChange } = focused.dataset;
         const selectors = [];
         if (view) selectors.push(`[data-view="${view}"]`);
         if (readGroup) {
@@ -130,6 +175,8 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
             const id = currentIdFor(sourceGroup);
             selectors.push(`[data-source-group="${id}"]`, `[data-open-group="${id}"]`);
         }
+        if (readChange) selectors.push(`[data-read-change="${readChange}"]`, `[data-open-change="${readChange}"]`);
+        if (openChange) selectors.push(`[data-open-change="${openChange}"]`);
         if (focused.matches("[data-read-all]")) selectors.push("[data-read-all]");
 
         const isKnown = selectors.length > 0;
@@ -146,14 +193,17 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
 
     const draw = () => {
         const focusSelectors = findFocusSelectors();
-        const groups = shownGroups();
-        switchContainer.innerHTML = createViewSwitch(currentView, unreadCount);
-        list.innerHTML = groups.map(createAlertItem).join("");
+        const newsEntries = shownGroups().map(group => ({ createdAt: group.createdAt, html: createAlertItem(group) }));
+        const changeEntries = shownChanges().map(change => ({ createdAt: change.createdAt, html: createAdminChangeItem(change) }));
+        const entries = [...newsEntries, ...changeEntries].sort(byNewestFirst);
+
+        switchContainer.innerHTML = createViewSwitch(currentView, allUnreadCount());
+        list.innerHTML = entries.map(entry => entry.html).join("");
         loadMoreButton.hidden = !hasMore;
         restoreFocus(focusSelectors);
 
         // a live change can land while the list is reloading, which is not the same as there being no alerts
-        if (groups.length) {
+        if (entries.length) {
             status.innerHTML = "";
         } else if (isReloading) {
             status.innerHTML = `<div class="msg">Loading…</div>`;
@@ -289,14 +339,27 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
         }
     };
 
-    // only up to the newest alert on this page, so one that arrives while it is open stays unread
+    // only up to the newest alert on this page, so one that arrives while it is open stays unread.
+    // the admin changes go too, up to the newest one loaded
     const markAllRead = async () => {
         const newestShownId = loadedAlerts[0]?.id ?? null;
         errorBox.innerHTML = "";
         try {
-            await markAllAlertsRead(newestShownId);
+            await Promise.all([markAllAlertsRead(newestShownId), markAdminChangesRead()]);
         } catch (error) {
             await showSaveFailure(error);
+        }
+    };
+
+    const markChangeRead = async id => {
+        const change = getAdminChanges().content.find(candidate => candidate.id === Number(id));
+        if (!change) return;
+
+        errorBox.innerHTML = "";
+        try {
+            await markAdminChangeRead(change);
+        } catch (error) {
+            if (list.isConnected) showError(errorBox, error, onAuthLost);
         }
     };
 
@@ -316,6 +379,13 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
     });
 
     list.addEventListener("click", event => {
+        // like a news alert: the button marks it read, and the trip link marks it read on the way
+        const readChangeButton = event.target.closest("[data-read-change]");
+        if (readChangeButton) return markChangeRead(readChangeButton.dataset.readChange);
+
+        const changeLink = event.target.closest("[data-open-change]");
+        if (changeLink) return markChangeRead(changeLink.dataset.openChange);
+
         const readButton = event.target.closest("[data-read-group]");
         if (readButton) {
             const group = findGroup(readButton.dataset.readGroup);
@@ -336,6 +406,11 @@ export async function showAlerts(root, user, onAuthLost, onLeave) {
     // keeps this list in step with the bell: new alerts go on top and reads show here too.
     // a failed save or a count that moved elsewhere, eg in another tab, means the list is loaded again
     const stopListening = onAlertsChanged(change => {
+        if (change.adminChanges) {
+            draw();
+            return;
+        }
+
         if (change.saveFailed || change.outOfStep) {
             reload();
             return;

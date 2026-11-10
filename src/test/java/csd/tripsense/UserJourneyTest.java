@@ -134,6 +134,7 @@ class UserJourneyTest {
         impact.setNews(earthquake);
         impact.setImpacted(true);
         impact.setReason("Lifts may stay shut after the earthquake");
+        impact.setPromptVersion(Impact.CURRENT_PROMPT_VERSION);
         impactRepository.saveAndFlush(impact);
     }
 

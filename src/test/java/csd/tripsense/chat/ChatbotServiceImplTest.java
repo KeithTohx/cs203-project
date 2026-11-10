@@ -40,6 +40,8 @@ import csd.tripsense.itinerary.ItineraryService;
 import csd.tripsense.news.News;
 import csd.tripsense.user.preference.PreferenceService;
 import csd.tripsense.user.preference.UserPreference;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 
 // unit tests for ChatbotServiceImpl, the chatbot on the itinerary page.
@@ -79,10 +81,13 @@ class ChatbotServiceImplTest {
     // stands in for the ai model: remembers the last prompt and always gives the same answer
     private static class FakeModel implements ChatModel {
         private Prompt lastPrompt;
+        // runs while the model is still "writing", for checking what the service does in the meantime
+        private Runnable whileAnswering = () -> { };
 
         @Override
         public org.springframework.ai.chat.model.ChatResponse call(Prompt prompt) {
             lastPrompt = prompt;
+            whileAnswering.run();
             return reply("The lifts may be closed, so check with the resort.");
         }
 
@@ -107,8 +112,11 @@ class ChatbotServiceImplTest {
         ChatClient chatClient = ChatClient.builder(model)
                 .defaultAdvisors(MessageChatMemoryAdvisor.builder(chatMemory).build())
                 .build();
-        chatbotService = new ChatbotServiceImpl(chatClient, chatMemory, itineraryService, activityService,
-                impactService, preferenceService, JsonMapper.builder().build(), chatMemoryRepository);
+        // no model list, so the fallback just runs the request as it is given
+        ChatService chatService = new ChatServiceImpl(ChatClient.builder(model), 0, "");
+        chatbotService = new ChatbotServiceImpl(chatClient, chatService, chatMemory, itineraryService,
+                activityService, impactService, preferenceService, JsonMapper.builder().build(),
+                chatMemoryRepository);
 
         Country japan = new Country();
         japan.setName("Japan");
@@ -275,6 +283,91 @@ class ChatbotServiceImplTest {
 
         // Assert
         assertEquals(List.of("The lifts ", "may be closed."), pieces);
+    }
+
+    // ===== ONE ANSWER AT A TIME =====
+
+    @Test
+    @DisplayName("Should say it is answering while the model writes, and not once the answer is in")
+    void status_ShouldBeAnswering_OnlyWhileTheModelWrites() {
+        // Arrange
+        givenTrip(List.of(), 0);
+        List<Boolean> seenWhileAnswering = new java.util.ArrayList<>();
+        model.whileAnswering = () -> seenWhileAnswering.add(chatbotService.status(USER_ID, ITINERARY_ID).answering());
+
+        // Act
+        chatbotService.askChatBot(USER_ID, ITINERARY_ID, "Can I still ski?");
+
+        // Assert
+        assertEquals(List.of(true), seenWhileAnswering);
+        assertFalse(chatbotService.status(USER_ID, ITINERARY_ID).answering());
+    }
+
+    @Test
+    @DisplayName("Should refuse a second question while the first is answered, so the first answer is not written over")
+    void askChatBot_ShouldReturnConflict_WhenStillAnsweringTheLastQuestion() {
+        // Arrange - the second question arrives mid answer, eg from the same traveller after a reload
+        givenTrip(List.of(), 0);
+        List<Throwable> refused = new java.util.ArrayList<>();
+        model.whileAnswering = () -> refused.add(assertThrows(ResponseStatusException.class,
+                () -> chatbotService.askChatBot(USER_ID, ITINERARY_ID, "Hello?")));
+
+        // Act
+        chatbotService.askChatBot(USER_ID, ITINERARY_ID, "Can I still ski?");
+
+        // Assert - refused, and the stored chat is the first question and its answer only
+        ResponseStatusException conflict = (ResponseStatusException) refused.get(0);
+        assertEquals(HttpStatus.CONFLICT, conflict.getStatusCode());
+        assertEquals(List.of(new ChatResponse("user", "Can I still ski?"),
+                new ChatResponse("assistant", "The lifts may be closed, so check with the resort.")),
+                chatbotService.history(USER_ID, ITINERARY_ID));
+    }
+
+    @Test
+    @DisplayName("Should take questions again once the model fails, rather than staying stuck")
+    void askChatBot_ShouldAllowANewQuestion_WhenTheLastAnswerFailed() {
+        // Arrange
+        givenTrip(List.of(), 0);
+        model.whileAnswering = () -> {
+            throw new IllegalStateException("model is down");
+        };
+        assertThrows(IllegalStateException.class,
+                () -> chatbotService.askChatBot(USER_ID, ITINERARY_ID, "Can I still ski?"));
+
+        // Act
+        model.whileAnswering = () -> { };
+        String answer = chatbotService.askChatBot(USER_ID, ITINERARY_ID, "Can I still ski?");
+
+        // Assert
+        assertEquals("The lifts may be closed, so check with the resort.", answer);
+    }
+
+    @Test
+    @DisplayName("Should not clear the chat while an answer is still being written into it")
+    void reset_ShouldReturnConflict_WhenStillAnswering() {
+        // Arrange
+        givenTrip(List.of(), 0);
+        List<Throwable> refused = new java.util.ArrayList<>();
+        model.whileAnswering = () -> refused.add(assertThrows(ResponseStatusException.class,
+                () -> chatbotService.reset(USER_ID, ITINERARY_ID)));
+
+        // Act
+        chatbotService.askChatBot(USER_ID, ITINERARY_ID, "Can I still ski?");
+
+        // Assert
+        assertEquals(HttpStatus.CONFLICT, ((ResponseStatusException) refused.get(0)).getStatusCode());
+        assertEquals(2, chatMemory.get("7:3").size());
+    }
+
+    @Test
+    @DisplayName("Should take questions again once a streamed answer is done")
+    void streamChatBot_ShouldAllowANewQuestion_WhenStreamFinished() {
+        // Arrange
+        givenTrip(List.of(), 0);
+        chatbotService.streamChatBot(USER_ID, ITINERARY_ID, "Can I still ski?").collectList().block();
+
+        // Act + Assert
+        assertFalse(chatbotService.status(USER_ID, ITINERARY_ID).answering());
     }
 
     // ===== HISTORY AND RESET =====

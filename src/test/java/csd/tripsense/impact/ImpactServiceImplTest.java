@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -11,12 +12,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionOperations;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityService;
+import csd.tripsense.alert.Alert;
+import csd.tripsense.alert.AlertsRemovedEvent;
 import csd.tripsense.chat.ChatService;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryService;
@@ -35,7 +38,6 @@ class ImpactServiceImplTest {
     @Mock private NewsService newsService;
     @Mock private org.springframework.context.ApplicationEventPublisher events;
 
-    @InjectMocks
     private ImpactServiceImpl impactService;
 
     private User user;
@@ -45,6 +47,14 @@ class ImpactServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        // runs the guarded save straight away, there is no database to open a transaction on
+        impactService = new ImpactServiceImpl(impactRepository, chatService, itineraryService,
+                activityService, newsService, events, TransactionOperations.withoutTransaction());
+
+        // nothing has been edited since it was loaded, unless a test says otherwise
+        lenient().when(itineraryService.findRevision(any(Itinerary.class))).thenReturn(Optional.of(0L));
+        lenient().when(activityService.findRevision(any(Activity.class))).thenReturn(Optional.of(0L));
+
         user = mock(User.class);
 
         itinerary = new Itinerary();
@@ -66,13 +76,58 @@ class ImpactServiceImplTest {
     // ---------------------------------------------------------------- helpers
 
     /** Verdict is a private record, so build it by reflection from whatever type is requested. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
     private void givenModelAnswers(boolean impacted, String reason) {
+        givenModelAnswers(impacted, reason, 90);
+    }
+
+    // the days the model claims the trouble lasts, which the service caps and checks against the trip
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void givenModelAnswers(boolean impacted, String reason, int lastsDays) {
         when(chatService.ask(anyString(), any(Class.class))).thenAnswer(inv -> {
             Class<?> type = inv.getArgument(1);
-            var constructor = type.getDeclaredConstructor(boolean.class, String.class);
+            var constructor = type.getDeclaredConstructors()[0];
             constructor.setAccessible(true);
-            return constructor.newInstance(impacted, reason);
+            // an impacted answer has to name a kind, NONE is what the service overrules
+            Class<?> kind = constructor.getParameterTypes()[1];
+            return constructor.newInstance(reason,
+                    Enum.valueOf((Class<Enum>) kind, impacted ? "DISASTER" : "NONE"), lastsDays, impacted);
         });
+    }
+
+    /** Builds a verdict the model never backs up, so the service should overrule it. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void givenModelAnswersWithoutAKind(String reason) {
+        when(chatService.ask(anyString(), any(Class.class))).thenAnswer(inv -> {
+            Class<?> type = inv.getArgument(1);
+            var constructor = type.getDeclaredConstructors()[0];
+            constructor.setAccessible(true);
+            Class<?> kind = constructor.getParameterTypes()[1];
+            return constructor.newInstance(reason, Enum.valueOf((Class<Enum>) kind, "NONE"), 0, true);
+        });
+    }
+
+    // same as above but naming the kind, since the cap that applies depends on it
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void givenModelAnswers(String kindName, String reason, int lastsDays) {
+        when(chatService.ask(anyString(), any(Class.class))).thenAnswer(inv -> {
+            Class<?> type = inv.getArgument(1);
+            var constructor = type.getDeclaredConstructors()[0];
+            constructor.setAccessible(true);
+            Class<?> kind = constructor.getParameterTypes()[1];
+            return constructor.newInstance(reason, Enum.valueOf((Class<Enum>) kind, kindName),
+                    lastsDays, true);
+        });
+    }
+
+    // the window is measured from when we first saw the story
+    private void givenNewsSeenNow() {
+        news.setPublishedAt(LocalDateTime.now());
+    }
+
+    private void givenNoStoredItineraryVerdict() {
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.empty());
     }
 
     private void givenSaveEchoes() {
@@ -83,6 +138,7 @@ class ImpactServiceImplTest {
         Impact stored = new Impact();
         stored.setImpacted(true);
         stored.setReason(reason);
+        stored.setPromptVersion(Impact.CURRENT_PROMPT_VERSION);
         return stored;
     }
 
@@ -100,6 +156,38 @@ class ImpactServiceImplTest {
         assertSame(stored, result);
         verifyNoInteractions(chatService);
         verify(impactRepository, never()).save(any(Impact.class));
+    }
+
+    @Test
+    @DisplayName("Should overrule an impacted answer the model could not name a kind for")
+    void evaluateItineraryForNews_ShouldNotImpact_WhenNoKindNamed() {
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.empty());
+        givenModelAnswersWithoutAKind("Box office record for a monster film");
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateItineraryForNews(itinerary, news);
+
+        // the model said yes but backed it with nothing, which is how the noise used to get in
+        assertFalse(result.getImpacted());
+        assertFalse(result.getAlertEligible());
+    }
+
+    @Test
+    @DisplayName("Should reuse the verdict already given for the same headline instead of asking again")
+    void evaluateItineraryForNews_ShouldReuseVerdict_WhenSameHeadlineAlreadyJudged() {
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.empty());
+        when(impactRepository.findFirstByItineraryIdAndActivityIsNullAndNewsTitleAndReasonIsNotNull(
+                1L, "Earthquake near Hokkaido"))
+                .thenReturn(Optional.of(storedImpact("Resorts closed")));
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateItineraryForNews(itinerary, news);
+
+        assertTrue(result.getImpacted());
+        assertEquals("Resorts closed", result.getReason());
+        verifyNoInteractions(chatService);
     }
 
     @Test
@@ -204,6 +292,244 @@ class ImpactServiceImplTest {
         assertThrows(RuntimeException.class, () -> impactService.evaluateActivityForNews(activity, news));
 
         verify(impactRepository, never()).save(any(Impact.class));
+    }
+
+    // ===== verdicts and edits (revisions) =====
+
+    @Test
+    @DisplayName("Should record which revision of the trip a new verdict was judged on")
+    void evaluateItineraryForNews_ShouldRecordJudgedRevision() {
+        itinerary.setRevision(3L);
+        when(itineraryService.findRevision(itinerary)).thenReturn(Optional.of(3L));
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.empty());
+        givenModelAnswers(true, "Quake affects Hokkaido trips");
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateItineraryForNews(itinerary, news);
+
+        assertEquals(3L, result.getJudgedRevision());
+    }
+
+    @Test
+    @DisplayName("Should ask the model again when the stored verdict was judged on an older revision of the trip")
+    void evaluateItineraryForNews_ShouldAskAgain_WhenStoredVerdictIsFromOlderRevision() {
+        itinerary.setRevision(2L);
+        when(itineraryService.findRevision(itinerary)).thenReturn(Optional.of(2L));
+        Impact judgedInJapan = storedImpact("Quake near the trip");
+        judgedInJapan.setJudgedRevision(1L);
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.of(judgedInJapan));
+        givenModelAnswers(false, "Different country");
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateItineraryForNews(itinerary, news);
+
+        // a fresh row, so the old row's alert, advice and rejection go with the old row
+        verify(impactRepository).delete(judgedInJapan);
+        assertNotSame(judgedInJapan, result);
+        assertEquals("Different country", result.getReason());
+        assertEquals(2L, result.getJudgedRevision());
+    }
+
+    @Test
+    @DisplayName("Should throw the verdict away when the trip is edited while the model is answering")
+    void evaluateItineraryForNews_ShouldNotSave_WhenTripEditedDuringModelCall() {
+        // loaded at revision 0, but the edit committed while the model was answering
+        when(itineraryService.findRevision(itinerary)).thenReturn(Optional.of(1L));
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.empty());
+        givenModelAnswers(true, "Quake affects Hokkaido trips");
+
+        assertThrows(EditedDuringEvaluationException.class,
+                () -> impactService.evaluateItineraryForNews(itinerary, news));
+
+        // nothing saved means no alert either
+        verify(impactRepository, never()).save(any(Impact.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("Should throw the verdict away when the trip is deleted while the model is answering")
+    void evaluateItineraryForNews_ShouldNotSave_WhenTripDeletedDuringModelCall() {
+        when(itineraryService.findRevision(itinerary)).thenReturn(Optional.empty());
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.empty());
+        givenModelAnswers(true, "Quake affects Hokkaido trips");
+
+        assertThrows(EditedDuringEvaluationException.class,
+                () -> impactService.evaluateItineraryForNews(itinerary, news));
+
+        verify(impactRepository, never()).save(any(Impact.class));
+    }
+
+    @Test
+    @DisplayName("Should throw the verdict away when the activity is edited while the model is answering")
+    void evaluateActivityForNews_ShouldNotSave_WhenActivityEditedDuringModelCall() {
+        when(activityService.findRevision(activity)).thenReturn(Optional.of(1L));
+        when(impactRepository.findFirstByNewsIdAndActivityId(5L, 10L)).thenReturn(Optional.empty());
+        givenModelAnswers(true, "Niseko lifts suspended");
+
+        assertThrows(EditedDuringEvaluationException.class,
+                () -> impactService.evaluateActivityForNews(activity, news));
+
+        verify(impactRepository, never()).save(any(Impact.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("Should keep the verdict another run saved while the model was answering, instead of storing the pair twice")
+    void evaluateActivityForNews_ShouldKeepOtherRunsVerdict_WhenSavedMeanwhile() {
+        Impact savedByOtherRun = storedImpact("Lifts closed");
+        // nothing stored when this run started, the other run's verdict is there by the time it saves
+        when(impactRepository.findFirstByNewsIdAndActivityId(5L, 10L))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(savedByOtherRun));
+        givenModelAnswers(true, "Niseko lifts suspended");
+
+        Impact result = impactService.evaluateActivityForNews(activity, news);
+
+        assertSame(savedByOtherRun, result);
+        // no second row, and no second alert for the traveller
+        verify(impactRepository, never()).save(any(Impact.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("Should give the verdict a new key every time it is written, even when a seed row is filled in place")
+    void evaluateActivityForNews_ShouldGiveVerdictNewKey_WhenWritten() {
+        Impact seed = storedImpact(null);
+        seed.setVerdictKey("written-before");
+        when(impactRepository.findFirstByNewsIdAndActivityId(5L, 10L)).thenReturn(Optional.of(seed));
+        givenModelAnswers(true, "Niseko lifts suspended");
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateActivityForNews(activity, news);
+
+        assertSame(seed, result);
+        assertNotNull(result.getVerdictKey());
+        assertNotEquals("written-before", result.getVerdictKey());
+    }
+
+    @Test
+    @DisplayName("Should tell the traveller's browser an alert went when the verdict it came from is replaced")
+    void evaluateItineraryForNews_ShouldAnnounceRemovedAlert_WhenReplacedVerdictHadOne() {
+        when(user.getId()).thenReturn(3L);
+        itinerary.setRevision(2L);
+        when(itineraryService.findRevision(itinerary)).thenReturn(Optional.of(2L));
+        Impact alerted = storedImpact("Quake near the trip");
+        alerted.setItinerary(itinerary);
+        alerted.setJudgedRevision(1L);
+        alerted.setAlerts(List.of(new Alert(alerted)));
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.of(alerted));
+        // the new details are not affected, so no new alert will arrive to refresh the bell
+        givenModelAnswers(false, "Different country");
+        givenSaveEchoes();
+
+        impactService.evaluateItineraryForNews(itinerary, news);
+
+        verify(impactRepository).delete(alerted);
+        verify(events).publishEvent(new AlertsRemovedEvent(3L));
+    }
+
+    @Test
+    @DisplayName("Should say nothing about alerts when the replaced verdict never had one")
+    void evaluateItineraryForNews_ShouldNotAnnounceRemoval_WhenReplacedVerdictHadNoAlert() {
+        itinerary.setRevision(2L);
+        when(itineraryService.findRevision(itinerary)).thenReturn(Optional.of(2L));
+        Impact notAlerted = storedImpact("Quake near the trip");
+        notAlerted.setJudgedRevision(1L);
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.of(notAlerted));
+        givenModelAnswers(false, "Different country");
+        givenSaveEchoes();
+
+        impactService.evaluateItineraryForNews(itinerary, news);
+
+        verify(events, never()).publishEvent(any(AlertsRemovedEvent.class));
+    }
+
+    // ===== hasCurrentVerdict =====
+
+    @Test
+    @DisplayName("Should report a current verdict only when it was judged on the details the trip has now")
+    void hasCurrentVerdict_Itinerary_ShouldMatchRevision() {
+        itinerary.setRevision(2L);
+        Impact judgedEarlier = storedImpact("Quake near the trip");
+        judgedEarlier.setJudgedRevision(1L);
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.of(judgedEarlier));
+
+        assertFalse(impactService.hasCurrentVerdict(itinerary, news));
+
+        judgedEarlier.setJudgedRevision(2L);
+        assertTrue(impactService.hasCurrentVerdict(itinerary, news));
+    }
+
+    @Test
+    @DisplayName("Should not count a seed row with no reason, or a missing row, as a current activity verdict")
+    void hasCurrentVerdict_Activity_ShouldNeedAReason() {
+        when(impactRepository.findFirstByNewsIdAndActivityId(5L, 10L))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(storedImpact(null)))
+                .thenReturn(Optional.of(storedImpact("Lifts closed")));
+
+        assertFalse(impactService.hasCurrentVerdict(activity, news));
+        assertFalse(impactService.hasCurrentVerdict(activity, news));
+        assertTrue(impactService.hasCurrentVerdict(activity, news));
+    }
+
+    // ===== findUnchanged =====
+
+    private Impact activityVerdict(Long id, String key) {
+        Impact verdict = storedImpact("Lifts closed");
+        verdict.setId(id);
+        verdict.setActivity(activity);
+        verdict.setItinerary(itinerary);
+        verdict.setVerdictKey(key);
+        return verdict;
+    }
+
+    @Test
+    @DisplayName("Should hand back the stored impact when it is still the verdict that was read")
+    void findUnchanged_ShouldReturnStored_WhenSameVerdict() {
+        Impact seen = activityVerdict(40L, "key-a");
+        Impact stored = activityVerdict(40L, "key-a");
+        when(impactRepository.findById(40L)).thenReturn(Optional.of(stored));
+
+        assertEquals(Optional.of(stored), impactService.findUnchanged(seen));
+    }
+
+    @Test
+    @DisplayName("Should not mistake a new verdict that reused the id for the one that was read")
+    void findUnchanged_ShouldBeEmpty_WhenIdReusedByNewVerdict() {
+        Impact seen = activityVerdict(40L, "key-a");
+        // the edit deleted 40 and sqlite gave the id to the verdict judged on the new details
+        Impact replacement = activityVerdict(40L, "key-b");
+        when(impactRepository.findById(40L)).thenReturn(Optional.of(replacement));
+
+        assertTrue(impactService.findUnchanged(seen).isEmpty());
+    }
+
+    @Test
+    @DisplayName("Should be empty once the impact has been deleted")
+    void findUnchanged_ShouldBeEmpty_WhenDeleted() {
+        when(impactRepository.findById(40L)).thenReturn(Optional.empty());
+
+        assertTrue(impactService.findUnchanged(activityVerdict(40L, "key-a")).isEmpty());
+    }
+
+    @Test
+    @DisplayName("Should be empty when the activity was edited after the verdict was judged")
+    void findUnchanged_ShouldBeEmpty_WhenActivityEditedSince() {
+        Impact seen = activityVerdict(40L, "key-a");
+        Impact stored = activityVerdict(40L, "key-a");
+        stored.setJudgedRevision(0L);
+        activity.setRevision(1L);
+        when(impactRepository.findById(40L)).thenReturn(Optional.of(stored));
+
+        assertTrue(impactService.findUnchanged(seen).isEmpty());
     }
 
     // ===== evaluate (the existing API endpoint, must keep its behaviour) =====
@@ -468,5 +794,107 @@ class ImpactServiceImplTest {
         // the same row is updated, a second row for the pair would be re-asked forever
         assertEquals(42L, result.getId());
         assertEquals("Lifts are shut.", result.getReason());
+    }
+
+    // ===== the event window =====
+
+    @Test
+    @DisplayName("Should not impact a trip when the trouble is over long before it starts")
+    void evaluateItineraryForNews_ShouldNotImpact_WhenTroubleEndsBeforeTheTrip() {
+        givenNoStoredItineraryVerdict();
+        givenNewsSeenNow();
+        itinerary.setDateStart(LocalDateTime.now().plusDays(60));
+        givenModelAnswers("TRANSPORT", "Flights cancelled by the storm", 7);
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateItineraryForNews(itinerary, news);
+
+        // a week of cancellations cannot reach a trip two months out
+        assertFalse(result.getImpacted());
+    }
+
+    @Test
+    @DisplayName("Should impact a trip when the trouble plausibly lasts into it")
+    void evaluateItineraryForNews_ShouldImpact_WhenTroubleLastsIntoTheTrip() {
+        givenNoStoredItineraryVerdict();
+        givenNewsSeenNow();
+        itinerary.setDateStart(LocalDateTime.now().plusDays(30));
+        givenModelAnswers("DISASTER", "Quake damaged the rail line", 90);
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateItineraryForNews(itinerary, news);
+
+        assertTrue(result.getImpacted());
+    }
+
+    @Test
+    @DisplayName("Should cap the days the model asks for at what its kind really lasts")
+    void evaluateItineraryForNews_ShouldCapTheModelsEstimate() {
+        givenNoStoredItineraryVerdict();
+        givenNewsSeenNow();
+        itinerary.setDateStart(LocalDateTime.now().plusDays(100));
+        // a strike does not shut a country for a year, whatever the model says
+        givenModelAnswers("TRANSPORT", "Rail strike", 365);
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateItineraryForNews(itinerary, news);
+
+        assertFalse(result.getImpacted());
+    }
+
+    @Test
+    @DisplayName("Should fall back to the cap when the model gives no number of days")
+    void evaluateItineraryForNews_ShouldUseTheCap_WhenNoDaysGiven() {
+        givenNoStoredItineraryVerdict();
+        givenNewsSeenNow();
+        itinerary.setDateStart(LocalDateTime.now().plusDays(30));
+        givenModelAnswers("DISASTER", "Quake near the resort", 0);
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateItineraryForNews(itinerary, news);
+
+        // no answer must not mean no impact, the cap stands in
+        assertTrue(result.getImpacted());
+    }
+
+    @Test
+    @DisplayName("Should keep the verdict when the trip has no dates to compare")
+    void evaluateItineraryForNews_ShouldKeepVerdict_WhenTripHasNoDates() {
+        givenNoStoredItineraryVerdict();
+        news.setPublishedAt(LocalDateTime.now().minusDays(400));
+        givenModelAnswers("DISASTER", "Quake near the resort", 5);
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateItineraryForNews(itinerary, news);
+
+        assertTrue(result.getImpacted());
+    }
+
+    @Test
+    @DisplayName("Should not impact an activity when the trouble is over before it")
+    void evaluateActivityForNews_ShouldNotImpact_WhenTroubleEndsBeforeIt() {
+        when(impactRepository.findFirstByNewsIdAndActivityId(5L, 10L)).thenReturn(Optional.empty());
+        givenNewsSeenNow();
+        activity.setDateStart(LocalDateTime.now().plusDays(45));
+        givenModelAnswers("UNREST", "Protests in the city centre", 30);
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateActivityForNews(activity, news);
+
+        assertFalse(result.getImpacted());
+    }
+
+    @Test
+    @DisplayName("Should judge an activity with no date of its own against the trip dates")
+    void evaluateActivityForNews_ShouldUseTripDates_WhenActivityHasNoDate() {
+        when(impactRepository.findFirstByNewsIdAndActivityId(5L, 10L)).thenReturn(Optional.empty());
+        givenNewsSeenNow();
+        itinerary.setDateStart(LocalDateTime.now().plusDays(60));
+        givenModelAnswers("TRANSPORT", "Airport closed by snow", 14);
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateActivityForNews(activity, news);
+
+        assertFalse(result.getImpacted());
     }
 }

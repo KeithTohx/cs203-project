@@ -115,9 +115,10 @@ const createRejectButton = (impact, isDismissed) => {
     const target = impact.activityName ?? "the whole itinerary";
     const ids = (impact.ids ?? [impact.id]).map(Number).join(",");
 
-    const button = (reject, label, kind, description) => `
+    const button = (reject, label, kind, description, pressed = false) => `
         <button class="${kind} small impact-action" type="button"
                 data-impact="${ids}" data-reject="${reject}"
+                aria-pressed="${pressed}"
                 aria-label="${escapeHtml(description)}">${label}</button>
     `;
 
@@ -128,11 +129,11 @@ const createRejectButton = (impact, isDismissed) => {
     if (isDismissed) {
         return group(button(false, "Restore", "", `Restore news impact on ${target}`));
     }
-    // already confirmed: say so, and leave only the way back
-    if (isConfirmed(impact)) {
-        return group(`<span class="tag ok">Affects me</span>${notRelevant}`);
-    }
-    return group(button(false, "This affects me", "accept", `Confirm the news impact on ${target}`)
+    // both states are real buttons, the tick is what says which one is on. a tag here read as a
+    // dead button sitting next to a live one
+    const confirmed = isConfirmed(impact);
+    return group(button(false, confirmed ? "&#10003; Affects me" : "This affects me", "accept",
+            `Confirm the news impact on ${target}`, confirmed)
         + notRelevant);
 };
 
@@ -214,6 +215,33 @@ const ACTION_LABELS = {
     MONITOR: "Watch for updates",
     CANCEL: "Cancel activity",
 };
+// what an accepted decision looks like on the activity itself. cancelling reads as a loss, the
+// rest are changes the traveller still has to make
+const DECIDED_LABELS = {
+    REPLACE: { text: "Swapped", tagClass: "tag bad" },
+    RELOCATE: { text: "Moved", tagClass: "tag warn" },
+    RESCHEDULE: { text: "Rescheduled", tagClass: "tag warn" },
+    MONITOR: { text: "Watching", tagClass: "tag" },
+    CANCEL: { text: "Cancelled", tagClass: "tag bad" },
+};
+
+// component: the badge on an activity the traveller has accepted advice for. the headline is
+// trimmed because it sits on one line beside the activity name
+const createAcceptedBadge = accepted => {
+    if (!accepted) return "";
+
+    const label = DECIDED_LABELS[accepted.action] ?? { text: "Changed", tagClass: "tag" };
+    const story = newsTitleOf(accepted.newsTitle) ?? "";
+    const shortStory = story.length > 42 ? story.slice(0, 41).trimEnd() + "…" : story;
+
+    return `
+        <span class="accepted-badge" title="${escapeHtml(story)}">
+            <span class="${label.tagClass}">${label.text}</span>
+            ${shortStory ? `<span class="meta">due to ${escapeHtml(shortStory)}</span>` : ""}
+        </span>
+    `;
+};
+
 // how a decision reads once it has been made. pending has nothing to show
 const STATUS_LABELS = {
     ACCEPTED: { text: "Accepted", tagClass: "tag ok", rowClass: "accepted", decidedWord: "Accepted" },
@@ -316,17 +344,16 @@ const createNewsRow = (event, impact, advice, busyImpactIds) => `
         ${impact.reason
             ? `<details class="reason"><summary>Why?</summary><p class="meta">${escapeHtml(impact.reason)}</p></details>`
             : ""}
-        ${!isConfirmed(impact)
-            ? ""
-            : advice.length
-                ? `<ul class="advice-list paired">${advice.map(recommendation =>
-                        createRecommendation(recommendation, busyImpactIds)).join("")}</ul>`
-                : `<p class="awaiting-advice meta">No advice yet · use "Suggest what to do"</p>`}
+        ${isConfirmed(impact) && advice.length
+            ? `<ul class="advice-list paired">${advice.map(recommendation =>
+                    createRecommendation(recommendation, busyImpactIds)).join("")}</ul>`
+            : ""}
     </li>`;
 
 // component: the news aimed at one activity, or at the trip as a whole. closed by default,
 // since a long trip collects dozens of stories and the timeline has to stay readable
-const createNewsAccordion = (events, targetKey, byImpact, busyImpactIds, label, shown = {}) => {
+const createNewsAccordion = (events, targetKey, byImpact, busyImpactIds, label, shown = {},
+                             isPast = false, isSuggesting = false) => {
     const rows = events
         .map(event => ({ event, impact: event.byTarget.get(targetKey) }))
         .filter(({ impact }) => impact);
@@ -338,6 +365,9 @@ const createNewsAccordion = (events, targetKey, byImpact, busyImpactIds, label, 
         ? impact.ids.flatMap(id => byImpact.get(id) ?? [])
         : [];
     const adviceCount = rows.reduce((total, row) => total + adviceFor(row.impact).length, 0);
+    // confirmed here but nothing suggested for it yet. one button covers all of them, since
+    // asking is one call for the whole trip anyway
+    const waiting = rows.filter(row => isConfirmed(row.impact) && !adviceFor(row.impact).length).length;
     const kind = `news-${targetKey}`;
 
     return `
@@ -345,7 +375,9 @@ const createNewsAccordion = (events, targetKey, byImpact, busyImpactIds, label, 
             <summary>
                 <span class="group-label">${label} (${rows.length})</span>
                 ${adviceCount ? `<span class="tag ok">${adviceCount} suggested</span>` : ""}
+                ${waiting ? `<span class="tag warn">${waiting} to advise</span>` : ""}
             </summary>
+            ${waiting && !isPast ? `<p class="suggest-row">${createSuggestButton(waiting, 0, false, isSuggesting)}</p>` : ""}
             <ul class="activity-news">${pageOf(rows, shown[kind]).map(({ event, impact }) =>
                 createNewsRow(event, impact, adviceFor(impact), busyImpactIds)).join("")}</ul>
             ${createMoreButton(rows, shown[kind], kind)}
@@ -447,11 +479,14 @@ const createDecisionLog = recommendations => {
 const createPlanSection = (impactedOnly, recommendations, isPast, isSuggesting, busyImpactIds, shown = {}) => {
     if (!impactedOnly.length) return "";
 
-    const { current, dismissed, missingCount, staleCount } = planFor(impactedOnly, recommendations);
+    const { current, dismissed, staleCount } = planFor(impactedOnly, recommendations);
 
-    // a trip that is over has nothing left to change
-    const canSuggest = (missingCount > 0 || staleCount > 0) && !isPast;
-    const suggestButton = canSuggest ? createSuggestButton(missingCount, staleCount, current.length > 0, isSuggesting) : "";
+    // a trip that is over has nothing left to change. what is merely missing is asked for on the
+    // activity it belongs to, so only outdated advice is left for the card to offer
+    const canSuggest = staleCount > 0 && !isPast;
+    // 0 missing on purpose: anything missing is asked for on its own activity, so this button
+    // only ever means redo the outdated ones
+    const suggestButton = canSuggest ? createSuggestButton(0, staleCount, current.length > 0, isSuggesting) : "";
 
     return `
         <section class="plan">
@@ -483,13 +518,17 @@ const createDismissedAdviceSection = (dismissed, busyImpactIds, shown = {}) => {
 
 // component: the activities in one itinerary as a timeline, a red dot marks those hit by news.
 // editing happens on the itinerary's edit page
-const createActivityList = (itineraryId, activities, impactedActivityIds, adviceFor = () => "") => {
+const createActivityList = (itineraryId, activities, impactedActivityIds, adviceFor = () => "",
+                            acceptedFor = () => null) => {
     const addLink = `<a class="btn small add" href="#/itineraries/${itineraryId}/activities/new">${icon("plus")}Add activity</a>`;
     if (!activities.length) return `<p class="meta">No activities planned yet.</p>${addLink}`;
     return `<ol class="timeline">${sortByStart(activities).map(activity => `
         <li${impactedActivityIds.has(activity.id) ? ` class="hit"` : ""}>
-            <strong>${escapeHtml(activity.name)}</strong>
-            <br><span class="meta">${[escapeHtml(activity.address), dateRange(activity.dateStart, activity.dateEnd)].filter(Boolean).join(" · ")}</span>
+            <div class="activity-head">
+                <strong>${escapeHtml(activity.name)}</strong>
+                ${createAcceptedBadge(acceptedFor(activity.id))}
+            </div>
+            <span class="meta">${[escapeHtml(activity.address), dateRange(activity.dateStart, activity.dateEnd)].filter(Boolean).join(" · ")}</span>
             ${adviceFor(activity.id)}
         </li>`).join("")}</ol>${addLink}`;
 };
@@ -675,8 +714,39 @@ export const createLatestNews = detailsList => {
     `;
 };
 
+// how many of a trip's admin changes its card lists, the rest are on the alerts page
+const ADMIN_CHANGES_SHOWN = 3;
+
+// component: says an admin changed this trip or its activities, and lists what they changed.
+// adminChanges are this trip's own, newest first, the same ones the alerts show
+const createAdminEditNote = (itinerary, adminChanges = []) => {
+    const lastChanged = itinerary.adminEditedAt ?? adminChanges[0]?.createdAt;
+    if (!lastChanged) return "";
+
+    const shown = adminChanges.slice(0, ADMIN_CHANGES_SHOWN);
+    const changeList = shown.length
+        ? `
+            <ul class="meta admin-edit-list">
+                ${shown.map(change => `<li>${escapeHtml(change.message)} ${timeTag(change.createdAt)}</li>`).join("")}
+            </ul>
+        `
+        : "";
+    const linkText = adminChanges.length > shown.length ? "See every change" : "See it in your alerts";
+
+    return `
+        <div class="admin-edit-note">
+            <p class="meta">
+                ${icon("pencil")}Changed by an admin ${timeTag(lastChanged)}.
+                <a href="#/alerts">${linkText}</a>
+            </p>
+            ${changeList}
+        </div>
+    `;
+};
+
 // component: one itinerary card
-const createItineraryCard = ({ itinerary, activities, impacts, recommendations, failed, isSuggesting, busyRecommendations, shown }) => {
+const createItineraryCard = ({ itinerary, activities, impacts, recommendations, adminChanges,
+                               failed, isSuggesting, busyRecommendations, shown }) => {
     const itineraryId = Number(itinerary.id);
     const shownCounts = shown ?? {};
     const isPast = isTripOver(itinerary);
@@ -689,6 +759,15 @@ const createItineraryCard = ({ itinerary, activities, impacts, recommendations, 
     const dismissedEvents = groupByEvent(dismissed);
     // worked out once here so every news row can find the advice that came out of it
     const byImpact = adviceByImpact(planFor(impactedOnly, recommendations).current);
+    // what the traveller accepted, so the activity can say so without opening anything
+    const acceptedByActivity = new Map();
+    for (const recommendation of recommendations) {
+        if (recommendation.status !== "ACCEPTED" || recommendation.activityId == null) continue;
+        const seen = acceptedByActivity.get(recommendation.activityId);
+        if (!seen || new Date(recommendation.decidedAt) > new Date(seen.decidedAt)) {
+            acceptedByActivity.set(recommendation.activityId, recommendation);
+        }
+    }
 
     // a past trip says so, an upcoming one shows its countdown, green once it has started
     let timingTag = "";
@@ -705,10 +784,11 @@ const createItineraryCard = ({ itinerary, activities, impacts, recommendations, 
             <h3>Activities</h3>
             ${createActivityList(itineraryId, activities, impactedActivityIds, activityId =>
                 createNewsAccordion(events, activityId, byImpact, busyRecommendations ?? new Set(),
-                    "Affected news", shownCounts))}
+                    "Affected news", shownCounts, isPast, isSuggesting),
+                activityId => acceptedByActivity.get(activityId) ?? null)}
             ${createPlanSection(impactedOnly, recommendations, isPast, isSuggesting, busyRecommendations ?? new Set(), shownCounts)}
             ${createNewsAccordion(events, "trip", byImpact, busyRecommendations ?? new Set(),
-                "News affecting the whole trip", shownCounts)}
+                "News affecting the whole trip", shownCounts, isPast, isSuggesting)}
             ${createDismissedSection(dismissedEvents, shownCounts)}
             <p class="err" data-impact-error role="alert"></p>`;
 
@@ -733,6 +813,7 @@ const createItineraryCard = ({ itinerary, activities, impacts, recommendations, 
                 <span>${flagOrPin(itinerary.countryName)}${escapeHtml(itinerary.countryName)}</span>
                 <span>${icon("calendar")}${dateRange(itinerary.dateStart, itinerary.dateEnd)}</span>
             </p>
+            ${createAdminEditNote(itinerary, adminChanges)}
             ${body}
         </article>
     `;
@@ -850,7 +931,10 @@ async function suggestPlans(button, detailsById, onAuthLost, onChange) {
     details.isSuggesting = true;
     button.disabled = true;
     button.textContent = "Working it out…";
-    card.querySelector("[data-suggest-status]").textContent = "This can take a few seconds for each activity.";
+    // every accordion that was waiting has its own button and status line
+    card.querySelectorAll("[data-suggest-status]").forEach(status => {
+        status.textContent = "This can take a few seconds for each activity.";
+    });
     card.querySelector("[data-impact-error]").textContent = "";
 
     let generated;
@@ -1035,9 +1119,23 @@ export async function showItineraries(root, user, onAuthLost, tripId = null) {
     };
 
     try {
-        // the backend sends an empty body instead of [] when the user has no itineraries
-        const itineraries = (await api.itineraries(user.id)) ?? [];
-        const itinerariesWithDetails = await Promise.all(itineraries.map(loadDetails));
+        // the backend sends an empty body instead of [] when the user has no itineraries.
+        // admin changes are only extra, so a failed load just leaves the cards without them
+        const [itineraries, adminChangePage] = await Promise.all([
+            api.itineraries(user.id),
+            api.adminChanges().catch(error => {
+                if (error.status === 401) throw error;
+                return null;
+            }),
+        ]);
+        const allAdminChanges = adminChangePage?.content ?? [];
+        const changesOn = itinerary => allAdminChanges.filter(change => change.itineraryExists
+            && Number(change.itineraryId) === Number(itinerary.id));
+
+        const itinerariesWithDetails = await Promise.all((itineraries ?? []).map(async itinerary => {
+            const details = await loadDetails(itinerary);
+            return { ...details, adminChanges: changesOn(itinerary) };
+        }));
         itinerariesWithDetails.forEach(details => {
             // working state for this card, kept beside the server data so a redraw does not lose it
             details.busyRecommendations = new Set();

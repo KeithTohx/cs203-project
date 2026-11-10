@@ -1,11 +1,15 @@
 package csd.tripsense.chat;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.stereotype.Service;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 import tools.jackson.databind.ObjectMapper;
 
@@ -62,6 +66,7 @@ public class ChatbotServiceImpl implements ChatbotService {
         """;
 
     private final ChatClient chatClient;
+    private final ChatService chatService;
     private final ChatMemory chatMemory;
     private final ItineraryService itineraryService;
     private final ActivityService activityService;
@@ -70,14 +75,57 @@ public class ChatbotServiceImpl implements ChatbotService {
     private final ObjectMapper mapper;
     private final ChatMemoryRepository chatMemoryRepository; 
 
+    // the conversations the model is answering right now. the memory advisor saves the question
+    // before the model is asked and the answer after, each time by reading the whole conversation
+    // and writing it back. a second question in the meantime, eg from the same traveller after a
+    // reload, would write over the first answer, so only one question per conversation runs at once.
+    // the answer still finishes and is saved when the browser that asked has gone, and a reloaded
+    // page reads this to wait for it. kept in memory, which is enough for the single server we run
+    private final Set<String> answering = ConcurrentHashMap.newKeySet();
+
     @Override
     public String askChatBot(Long userId, Long itineraryId, String prompt) {
-        return buildRequest(userId, itineraryId, prompt).call().content();
+        ChatClient.ChatClientRequestSpec request = buildRequest(userId, itineraryId, prompt);   // ownership check first
+        String conversation = startAnswering(userId, itineraryId);
+        try {
+            return chatService.runWithFallback(request, spec -> spec.call().content());
+        } finally {
+            answering.remove(conversation);
+        }
     }
 
     @Override
     public Flux<String> streamChatBot(Long userId, Long itineraryId, String prompt) {
-        return buildRequest(userId, itineraryId, prompt).stream().content();
+        ChatClient.ChatClientRequestSpec request = buildRequest(userId, itineraryId, prompt);
+        // a streamed failure arrives inside the flux, not as a throw, so there is nothing to catch
+        // and retry. picking a model known to have budget is the most that can be done here
+        chatService.firstAvailableModel()
+                .ifPresent(model -> request.options(ChatOptions.builder().model(model)));
+        String conversation = startAnswering(userId, itineraryId);
+        try {
+            return request.stream().content()
+                    .doFinally(signal -> answering.remove(conversation));
+        } catch (RuntimeException e) {
+            answering.remove(conversation);
+            throw e;
+        }
+    }
+
+    @Override
+    public ChatStatus status(Long userId, Long itineraryId) {
+        itineraryService.getItineraryByIdAndUserId(itineraryId, userId);   // ownership check
+        boolean isAnswering = answering.contains(conversationId(userId, itineraryId));
+        return new ChatStatus(isAnswering);
+    }
+
+    private String startAnswering(Long userId, Long itineraryId) {
+        String conversation = conversationId(userId, itineraryId);
+        boolean isFirst = answering.add(conversation);
+        if (!isFirst) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "The assistant is still answering your last question. Wait for that answer first.");
+        }
+        return conversation;
     }
 
     @Override
@@ -91,7 +139,14 @@ public class ChatbotServiceImpl implements ChatbotService {
     @Override
     public void reset(Long userId, Long itineraryId) {
         itineraryService.getItineraryByIdAndUserId(itineraryId, userId);   // ownership check
-        chatMemory.clear(conversationId(userId, itineraryId));
+
+        // the answer being written would be saved straight back into the cleared chat
+        String conversation = conversationId(userId, itineraryId);
+        if (answering.contains(conversation)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "The assistant is still answering. Clear the chat once the answer is in.");
+        }
+        chatMemory.clear(conversation);
     }
     @Override
     public void deleteAllConversationsFor(Long userId) {

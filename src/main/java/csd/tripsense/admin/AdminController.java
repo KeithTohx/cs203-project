@@ -4,6 +4,7 @@ import csd.tripsense.audit.AuditEntryResponse;
 import csd.tripsense.audit.AuditService;
 import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.auth.SessionService;
+import csd.tripsense.user.AccountRuleException;
 import csd.tripsense.user.User;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -20,6 +21,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+
+import java.util.function.Supplier;
 
 /** Everything under /api/admin is for ADMIN accounts only (USER gets 403, not logged in gets 401). */
 @RestController
@@ -69,7 +72,7 @@ public class AdminController {
         if (admin == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Not logged in");
         }
-        User user = adminService.disableUser(id, admin.getId());
+        User user = refusalsAudited(admin, id, "disable", () -> adminService.disableUser(id, admin.getId()));
 
         sessionService.expireSessionsFor(user.getId());   // kick them out now, not when the session times out
         auditService.record(AuditService.ACCOUNT_DISABLED, admin.getId(), admin.getEmail(), user.getId(),
@@ -84,7 +87,8 @@ public class AdminController {
                                        @AuthenticationPrincipal CurrentUser admin) {
         if (admin == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Not logged in");
         String previousRole = adminService.getUser(id).getRole();
-        User user = adminService.changeRole(id, request.role(), admin.getId());
+        User user = refusalsAudited(admin, id, "change role to " + request.role(),
+                () -> adminService.changeRole(id, request.role(), admin.getId()));
         sessionService.expireSessionsFor(id);
         auditService.record(AuditService.ROLE_CHANGED, admin.getId(), admin.getEmail(), id,
                 "role changed from " + previousRole + " to " + user.getRole());
@@ -134,7 +138,7 @@ public class AdminController {
         if (admin == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Not logged in");
         }
-        User deleted = adminService.deleteUser(id, admin.getId());
+        User deleted = refusalsAudited(admin, id, "delete", () -> adminService.deleteUser(id, admin.getId()));
 
         sessionService.expireSessionsFor(deleted.getId());   // kick the deleted user out immediately
         auditService.record(AuditService.ACCOUNT_DELETED, admin.getId(), admin.getEmail(), deleted.getId(),
@@ -144,7 +148,9 @@ public class AdminController {
 
     @Operation(summary = "Review user actions",
             description = "Audit trail, newest first. Filter with 'email' (part of the actor's email) and/or 'action' "
-                    + "(LOGIN, LOGIN_FAILED, LOGOUT, REGISTER, PROFILE_UPDATED, PASSWORD_CHANGED, ACCOUNT_DISABLED, ACCOUNT_ENABLED, ACCOUNT_DELETED, ROLE_CHANGED, ITINERARY_CREATED, ITINERARY_UPDATED, ITINERARY_DELETED).")
+                    + "(LOGIN, LOGIN_FAILED, LOGOUT, REGISTER, PROFILE_UPDATED, PASSWORD_CHANGED, ACCOUNT_DISABLED, ACCOUNT_ENABLED, ACCOUNT_DELETED, ROLE_CHANGED, ITINERARY_CREATED, ITINERARY_UPDATED, ITINERARY_DELETED, SQL_QUERY,"
+                    + "IMPACT_REJECTED, IMPACT_RESTORED, IMPACT_DELETED, RECOMMENDATION_ACCEPTED, RECOMMENDATION_DISMISSED, "
+                    + "RECOMMENDATION_REOPENED, RECOMMENDATION_REGENERATED, ADMIN_ACCOUNT_VIEWED, ADMIN_ACTION_REFUSED).")
     @ApiResponse(responseCode = "200", description = "One page of audit entries")
     @ApiResponse(responseCode = "403", description = "Not an admin")
     @GetMapping("/audit")
@@ -154,5 +160,17 @@ public class AdminController {
             @RequestParam(name = "page", defaultValue = "0") int page,
             @RequestParam(name = "size", defaultValue = "20") int size) {
         return PageResponse.from(adminService.reviewActions(email, action, page, size));
+    }
+
+    // an admin action the safety rules turned down (eg demoting the last admin) is an attempted override,
+    // so it is traced before the 400 or 409 goes back. the action itself saves nothing in that case
+    private User refusalsAudited(CurrentUser admin, Long targetId, String attempted, Supplier<User> action) {
+        try {
+            return action.get();
+        } catch (AccountRuleException refused) {
+            String details = "tried to " + attempted + " user " + targetId + ": " + refused.getMessage();
+            auditService.record(AuditService.ADMIN_ACTION_REFUSED, admin.getId(), admin.getEmail(), targetId, details);
+            throw refused;
+        }
     }
 }

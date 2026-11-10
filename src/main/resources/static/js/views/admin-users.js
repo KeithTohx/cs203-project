@@ -1,6 +1,10 @@
 // admin only: every account, searched and paged on the backend
 import { api } from "../api.js";
-import { createPager, debounce, escapeHtml, loading, noMatches, pageHead, showError } from "../util.js";
+import { createPager, debounce, escapeHtml, flash, formPage, loading, noMatches, pageHead,
+         passwordProblem, PASSWORD_MAX, PASSWORD_MIN, showError } from "../util.js";
+
+// same rule as the backend, the "-" is escaped because pattern attributes use the strict "v" regex mode
+const USERNAME_PATTERN = "[A-Za-z0-9_.\\-]+";
 
 const PAGE_SIZES = [10, 20];
 
@@ -72,7 +76,7 @@ const findById = async search => {
 
 export async function showAdminUsers(root, user, onAuthLost) {
     root.innerHTML = `
-        ${pageHead("Users")}
+        ${pageHead("Users", `<a class="btn" href="#/admin/users/new">New user</a>`)}
         <div class="card">
             <div class="row filters">
                 <label for="user-search" class="sr-only">Search users</label>
@@ -150,4 +154,42 @@ export async function showAdminUsers(root, user, onAuthLost) {
     });
 
     loadPage(0);
+}
+
+// admin only: make an account by hand with any role, eg a throwaway traveller for testing
+export function showNewUser(root, user, onAuthLost) {
+    formPage(root, {
+        title: "New user",
+        cancelLink: "#/admin/users",
+        onAuthLost,
+        submitLabel: "Create",
+        fieldsHtml: `
+            <label for="username">Username</label>
+            <input id="username" name="username" minlength="3" maxlength="30" required autocomplete="off"
+                pattern="${USERNAME_PATTERN}" title="Letters, digits, '.', '_' and '-' only">
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" required autocomplete="off">
+            <label for="password">Password (${PASSWORD_MIN} to ${PASSWORD_MAX} characters)</label>
+            <input id="password" name="password" type="password" minlength="${PASSWORD_MIN}" required autocomplete="new-password">
+            <label for="role">Role</label>
+            <select id="role" name="role">
+                <option value="USER" selected>USER</option>
+                <option value="ADMIN">ADMIN</option>
+            </select>
+            <p class="meta hint">They log in with this email and password. Creating an account is recorded in the activity log.</p>
+        `,
+        onSubmit: async inputs => {
+            const problem = passwordProblem(inputs.password.value);
+            if (problem) throw new Error(problem);
+
+            const created = await api.adminCreateUser({
+                username: inputs.username.value.trim(),
+                email: inputs.email.value.trim(),
+                password: inputs.password.value,
+                role: inputs.role.value,
+            });
+            flash(`${created.username}'s account was created.`);
+            location.hash = `/admin/users/${Number(created.id)}`;
+        },
+    });
 }

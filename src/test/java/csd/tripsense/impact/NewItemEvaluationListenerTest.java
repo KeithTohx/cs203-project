@@ -7,6 +7,8 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,10 +19,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityCreatedEvent;
+import csd.tripsense.activity.ActivityEditedEvent;
 import csd.tripsense.activity.ActivityService;
 import csd.tripsense.country.Country;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryCreatedEvent;
+import csd.tripsense.itinerary.ItineraryEditedEvent;
+import csd.tripsense.itinerary.ItineraryNotFoundException;
 import csd.tripsense.itinerary.ItineraryService;
 import csd.tripsense.news.News;
 import csd.tripsense.news.NewsService;
@@ -303,6 +308,46 @@ class NewItemEvaluationListenerTest {
         verify(impactService, times(1)).evaluateActivityForNews(any(Activity.class), any(News.class));
     }
 
+    @Test
+    @DisplayName("Should not count verdicts that are reused without the model against max-calls")
+    void onItineraryEdited_ShouldSpendCapOnlyOnMissingVerdicts() {
+        // after a rename only the two whole trip verdicts were cleared, the activity verdicts stand
+        Itinerary trip = givenActiveTrip();
+        News first = news(10L);
+        News second = news(11L);
+        givenNews(first, second);
+        when(activityService.getActivitiesByItinerary(ITINERARY_ID))
+                .thenReturn(List.of(activity(100L), activity(101L), activity(102L)));
+        when(impactService.hasCurrentVerdict(any(Activity.class), any(News.class))).thenReturn(true);
+        when(impactService.hasCurrentVerdict(any(Itinerary.class), any(News.class))).thenReturn(false);
+        when(impactService.evaluateItineraryForNews(any(Itinerary.class), any(News.class)))
+                .thenReturn(new Impact());
+
+        listener(true, 5, 2).onItineraryEdited(new ItineraryEditedEvent(ITINERARY_ID));
+
+        // both missing verdicts fit in a budget of two model calls
+        verify(impactService).evaluateItineraryForNews(trip, first);
+        verify(impactService).evaluateItineraryForNews(trip, second);
+        verify(impactService, never()).evaluateActivityForNews(any(Activity.class), any(News.class));
+    }
+
+    @Test
+    @DisplayName("Should only ask the model about an edited activity for the news it has no current verdict on")
+    void onActivityEdited_ShouldSkipNewsAlreadyJudged() {
+        Activity act = givenActivityOnActiveTrip();
+        News judged = news(10L);
+        News missing = news(11L);
+        givenNews(judged, missing);
+        when(impactService.hasCurrentVerdict(act, judged)).thenReturn(true);
+        when(impactService.hasCurrentVerdict(act, missing)).thenReturn(false);
+        when(impactService.evaluateActivityForNews(act, missing)).thenReturn(new Impact());
+
+        listener(true, 5, 1).onActivityEdited(new ActivityEditedEvent(ACTIVITY_ID));
+
+        verify(impactService, never()).evaluateActivityForNews(act, judged);
+        verify(impactService).evaluateActivityForNews(act, missing);
+    }
+
     // ===== NEW ACTIVITY =====
 
     @Test
@@ -400,5 +445,139 @@ class NewItemEvaluationListenerTest {
         when(activityService.getActivityById(ACTIVITY_ID)).thenThrow(new RuntimeException("db down"));
 
         assertDoesNotThrow(() -> activityCreated(listener(true, 5, 200)));
+    }
+
+    // ===== EDITED ITINERARY OR ACTIVITY =====
+
+    @Test
+    @DisplayName("Should do nothing for an edited trip or activity when evaluation is disabled")
+    void onEdited_ShouldDoNothing_WhenDisabled() {
+        NewItemEvaluationListener disabled = listener(false, 5, 200);
+
+        disabled.onItineraryEdited(new ItineraryEditedEvent(ITINERARY_ID));
+        disabled.onActivityEdited(new ActivityEditedEvent(ACTIVITY_ID));
+
+        verifyNoInteractions(itineraryService, activityService, newsService, impactService);
+    }
+
+    @Test
+    @DisplayName("Should judge an edited trip like a new one, so the pairs whose verdicts were cleared are asked again")
+    void onItineraryEdited_ShouldEvaluateTripAndActivities() {
+        Itinerary trip = givenActiveTrip();
+        News recent = news(10L);
+        Activity act = activity(100L);
+        givenNews(recent);
+        when(activityService.getActivitiesByItinerary(ITINERARY_ID)).thenReturn(List.of(act));
+
+        listener(true, 5, 200).onItineraryEdited(new ItineraryEditedEvent(ITINERARY_ID));
+
+        // the evaluator reuses verdicts judged on the current details, so this only calls the
+        // model for the ones StaleVerdictCleaner removed
+        verify(impactService).evaluateItineraryForNews(trip, recent);
+        verify(impactService).evaluateActivityForNews(act, recent);
+    }
+
+    @Test
+    @DisplayName("Should judge an edited activity again, and not the trip itself")
+    void onActivityEdited_ShouldEvaluateOnlyTheActivity() {
+        Activity act = givenActivityOnActiveTrip();
+        News recent = news(10L);
+        givenNews(recent);
+
+        listener(true, 5, 200).onActivityEdited(new ActivityEditedEvent(ACTIVITY_ID));
+
+        verify(impactService).evaluateActivityForNews(act, recent);
+        verify(impactService, never()).evaluateItineraryForNews(any(Itinerary.class), any(News.class));
+    }
+
+    @Test
+    @DisplayName("Should keep judging the other pairs when one is edited mid-run, it is not the model failing")
+    void onItineraryEdited_ShouldKeepGoing_WhenAPairWasEditedMidRun() {
+        Itinerary trip = givenActiveTrip();
+        News first = news(10L);
+        News second = news(11L);
+        News third = news(12L);
+        News fourth = news(13L);
+        givenNews(first, second, third, fourth);
+        when(activityService.getActivitiesByItinerary(ITINERARY_ID)).thenReturn(List.of());
+        // three in a row would stop the run if they counted as model failures
+        when(impactService.evaluateItineraryForNews(eq(trip), any(News.class)))
+                .thenThrow(new EditedDuringEvaluationException("Itinerary", ITINERARY_ID))
+                .thenThrow(new EditedDuringEvaluationException("Itinerary", ITINERARY_ID))
+                .thenThrow(new EditedDuringEvaluationException("Itinerary", ITINERARY_ID))
+                .thenReturn(new Impact());
+
+        listener(true, 5, 200).onItineraryEdited(new ItineraryEditedEvent(ITINERARY_ID));
+
+        verify(impactService).evaluateItineraryForNews(trip, fourth);
+    }
+
+    // ---------------------------------------------------------------- articles whose verdicts an edit cleared
+
+    private static VerdictsClearedEvent clearedOnTrip(Long... newsIds) {
+        return new VerdictsClearedEvent(Map.of(ITINERARY_ID, Set.of(newsIds)), Map.of());
+    }
+
+    @Test
+    @DisplayName("Should judge cleared articles again however old they are, looking them up by id in the trip's current country")
+    void onVerdictsCleared_RejudgesClearedArticlesInCurrentCountry() {
+        Itinerary trip = givenActiveTrip();
+        News monthOld = news(50);
+        when(newsService.getNewsByIdsAboutCountry(Set.of(50L, 51L), COUNTRY_ID)).thenReturn(List.of(monthOld));
+
+        listener(true, 5, 200).onVerdictsCleared(clearedOnTrip(50L, 51L));
+
+        // 51 is about another country now, so the lookup leaves it out and it is never asked about
+        verify(impactService).evaluateItineraryForNews(trip, monthOld);
+        verify(impactService, times(1)).evaluateItineraryForNews(any(Itinerary.class), any(News.class));
+        verify(newsService, never()).getNewsByCountrySince(any(), any());
+    }
+
+    @Test
+    @DisplayName("Should not ask again about a cleared article the edit's own run has already judged")
+    void onVerdictsCleared_SkipsArticlesJudgedMeanwhile() {
+        Itinerary trip = givenActiveTrip();
+        News recent = news(50);
+        when(newsService.getNewsByIdsAboutCountry(Set.of(50L), COUNTRY_ID)).thenReturn(List.of(recent));
+        when(impactService.hasCurrentVerdict(trip, recent)).thenReturn(true);
+
+        listener(true, 5, 200).onVerdictsCleared(clearedOnTrip(50L));
+
+        verify(impactService, never()).evaluateItineraryForNews(any(Itinerary.class), any(News.class));
+    }
+
+    @Test
+    @DisplayName("Should judge an activity's cleared articles against the activity, and carry on past a deleted trip")
+    void onVerdictsCleared_ActivityArticlesJudged_DeletedTripSkipped() {
+        when(itineraryService.getItineraryById(ITINERARY_ID)).thenThrow(new ItineraryNotFoundException(ITINERARY_ID));
+        Activity skiing = givenActivityOnActiveTrip();
+        News monthOld = news(52);
+        when(newsService.getNewsByIdsAboutCountry(Set.of(52L), COUNTRY_ID)).thenReturn(List.of(monthOld));
+        VerdictsClearedEvent cleared = new VerdictsClearedEvent(
+                Map.of(ITINERARY_ID, Set.of(50L)),
+                Map.of(ACTIVITY_ID, Set.of(52L)));
+
+        listener(true, 5, 200).onVerdictsCleared(cleared);
+
+        verify(impactService).evaluateActivityForNews(skiing, monthOld);
+        verify(impactService, never()).evaluateItineraryForNews(any(Itinerary.class), any(News.class));
+    }
+
+    @Test
+    @DisplayName("Should not judge cleared articles again for a trip that has already ended")
+    void onVerdictsCleared_EndedTrip_JudgesNothing() {
+        when(itineraryService.getItineraryById(ITINERARY_ID)).thenReturn(trip(LocalDateTime.now().minusDays(1)));
+
+        listener(true, 5, 200).onVerdictsCleared(clearedOnTrip(50L));
+
+        verifyNoInteractions(newsService, impactService);
+    }
+
+    @Test
+    @DisplayName("Should do nothing with cleared articles when evaluation is turned off")
+    void onVerdictsCleared_Disabled_DoesNothing() {
+        listener(false, 5, 200).onVerdictsCleared(clearedOnTrip(50L));
+
+        verifyNoInteractions(itineraryService, newsService, impactService);
     }
 }
