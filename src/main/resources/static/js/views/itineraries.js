@@ -455,6 +455,18 @@ const createLatestNews = detailsList => {
     `;
 };
 
+// component: says an admin changed this trip or its activities, with a link to what they changed
+const createAdminEditNote = itinerary => {
+    if (!itinerary.adminEditedAt) return "";
+
+    return `
+        <p class="meta admin-edit-note">
+            ${icon("pencil")}Changed by an admin ${timeTag(itinerary.adminEditedAt)}.
+            <a href="#/alerts">See what changed</a>
+        </p>
+    `;
+};
+
 // component: one itinerary card
 const createItineraryCard = ({ itinerary, activities, impacts, recommendations, failed, isSuggesting }) => {
     const itineraryId = Number(itinerary.id);
@@ -503,6 +515,7 @@ const createItineraryCard = ({ itinerary, activities, impacts, recommendations, 
                 <span>${flagOrPin(itinerary.countryName)}${escapeHtml(itinerary.countryName)}</span>
                 <span>${icon("calendar")}${dateRange(itinerary.dateStart, itinerary.dateEnd)}</span>
             </p>
+            ${createAdminEditNote(itinerary)}
             ${body}
             <p>
                 <button class="ghost" data-chat="${itineraryId}" data-chat-name="${escapeHtml(itinerary.name)}" aria-haspopup="dialog">

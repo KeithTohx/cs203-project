@@ -45,6 +45,13 @@ public interface ActivityService {
     Activity updateActivity(Long id, Activity newActivityInfo);
 
     /**
+     * Same as updateActivity, but can keep the verdicts judged on the old details
+     * @param keepVerdicts true carries the verdicts over to the new details instead of clearing
+     *                     them, see ItineraryService.updateItinerary
+     */
+    Activity updateActivity(Long id, Activity newActivityInfo, boolean keepVerdicts);
+
+    /**
      * Removes Activity by its unique identifier
      * @param id the unique identifier of the Activity to remove
      * @throws ActivityNotFoundException if no Activity exists with the given ID

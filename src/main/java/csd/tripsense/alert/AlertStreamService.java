@@ -1,6 +1,7 @@
 package csd.tripsense.alert;
 
 import csd.tripsense.auth.CurrentUser;
+import csd.tripsense.notice.AdminChangedEvent;
 import csd.tripsense.user.UserRepository;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -103,6 +104,28 @@ public class AlertStreamService {
         }
         for (Connection connection : recipients) {
             send(connection, SseEmitter.event().name("alerts-changed").data("GET /api/alerts for the current list"));
+        }
+    }
+
+    // only says that something changed, the page then loads the notice from
+    // GET /api/user/me/admin-changes like it loads alerts
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onAdminChanged(AdminChangedEvent event) {
+        try {
+            delivery.execute(() -> deliverAdminChange(event.userId()));
+        } catch (RejectedExecutionException exception) {
+            log.warn("Live delivery busy; admin change for user {} shows on the next load", event.userId());
+        }
+    }
+
+    // package private for the same reason as deliver
+    void deliverAdminChange(Long userId) {
+        Set<Connection> recipients = connections.get(userId);
+        if (recipients == null) {
+            return;
+        }
+        for (Connection connection : recipients) {
+            send(connection, SseEmitter.event().name("admin-change").data("changed"));
         }
     }
 

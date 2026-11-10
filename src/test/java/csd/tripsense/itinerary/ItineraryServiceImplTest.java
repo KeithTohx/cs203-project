@@ -170,6 +170,20 @@ class ItineraryServiceImplTest {
     }
 
     @Test
+    @DisplayName("Should still raise the revision and publish when the edit keeps the verdicts, saying it keeps them")
+    void updateItinerary_KeepVerdicts_PublishesWithTheChoice() {
+        Itinerary stored = trip(1L, 7L, 1L, "Japan Ski Trip");
+        when(itineraryRepository.findById(1L)).thenReturn(Optional.of(stored));
+        when(itineraryRepository.save(stored)).thenReturn(stored);
+
+        itineraryService.updateItinerary(1L, trip(null, 7L, 1L, "Japan Ski Trip!"), true);
+
+        // the cleaner carries the verdicts over to this revision instead of clearing them
+        verify(events).publishEvent(new ItineraryEditedEvent(1L, true));
+        assertEquals(1, stored.currentRevision());
+    }
+
+    @Test
     @DisplayName("Should publish an edited event and move the activities when the country changes")
     void updateItinerary_ShouldPublishAndMoveActivities_WhenCountryChanges() {
         Itinerary stored = trip(1L, 7L, 1L, "Ski Trip");

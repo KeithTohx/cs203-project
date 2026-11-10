@@ -54,6 +54,13 @@ public class StaleVerdictCleaner {
     @Transactional
     public void onItineraryEdited(ItineraryEditedEvent event) {
         List<Impact> onTrip = impacts.findByItineraryId(event.itineraryId());
+        if (event.keepVerdicts()) {
+            int kept = carryOver(onTrip);
+            log.info("Itinerary {} edited: kept {} verdicts judged on the old details",
+                    event.itineraryId(), kept);
+            return;
+        }
+
         int cleared = clearOutOfDate(onTrip);
         log.info("Itinerary {} edited: cleared {} verdicts judged on the old details",
                 event.itineraryId(), cleared);
@@ -63,9 +70,38 @@ public class StaleVerdictCleaner {
     @Transactional
     public void onActivityEdited(ActivityEditedEvent event) {
         List<Impact> forActivity = impacts.findByActivityId(event.activityId());
+        if (event.keepVerdicts()) {
+            int kept = carryOver(forActivity);
+            log.info("Activity {} edited: kept {} verdicts judged on the old details",
+                    event.activityId(), kept);
+            return;
+        }
+
         int cleared = clearOutOfDate(forActivity);
         log.info("Activity {} edited: cleared {} verdicts judged on the old details",
                 event.activityId(), cleared);
+    }
+
+    // the edit was too small to change any verdict, so the out of date ones are marked as judged on
+    // the new details. the verdict key stays, since the verdict itself has not changed and advice
+    // drafted from it still holds. the managed rows are saved when the edit commits
+    private static int carryOver(List<Impact> verdicts) {
+        List<Impact> outOfDate = verdicts.stream()
+                .filter(verdict -> !verdict.isJudgedOnCurrentDetails())
+                .toList();
+
+        for (Impact verdict : outOfDate) {
+            verdict.setJudgedRevision(currentRevisionOf(verdict));
+        }
+        return outOfDate.size();
+    }
+
+    // the revision a verdict has to carry to count as current, see Impact.isJudgedOnCurrentDetails
+    private static long currentRevisionOf(Impact verdict) {
+        if (verdict.getActivity() != null) {
+            return verdict.getActivity().currentRevision();
+        }
+        return verdict.getItinerary().currentRevision();
     }
 
     private int clearOutOfDate(List<Impact> verdicts) {

@@ -298,7 +298,7 @@ public class RecommendationServiceImpl implements RecommendationService {
      * was made. A row with no createdAt either (seeded data) is left alone.
      * createdAt is a LocalDateTime made with LocalDateTime.now(), so it is in the server's zone
      */
-    static boolean isStale(Recommendation recommendation, UserPreference prefs) {
+    public static boolean isStale(Recommendation recommendation, UserPreference prefs) {
         Instant writtenFor = recommendation.getPreferencesVersion();
         if (writtenFor != null) {
             return writtenFor.isBefore(prefs.getUpdatedAt());

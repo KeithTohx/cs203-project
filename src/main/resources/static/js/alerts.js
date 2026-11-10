@@ -22,6 +22,9 @@ const state = {
     toastTimer: null,
     onAuthLost: () => { },
     redraw: () => { },
+    // what an admin changed in this account's trips. the bell shows these as one alert, however many there are
+    adminChanges: { content: [], unreadCount: 0 },
+    adminChangesLoaded: false,   // the first load only remembers the count, like seenIds for alerts
 };
 
 // ---------------------------------------------------------------- grouping and wording, shared with the alerts page
@@ -212,9 +215,66 @@ const isFromOldSession = session => session !== saveSession;
 // for the alerts page, so its own loads also wait until the server has every read
 export const waitForSaves = () => saveQueue;
 
+// ---------------------------------------------------------------- admin changes, one alert for all of them
+
+export const getAdminChanges = () => state.adminChanges;
+
+// kept apart from the alerts themselves, so a failure here never holds up the alerts or the other way round
+let latestAdminChangesLoad = 0;
+
+async function refreshAdminChanges() {
+    const userId = state.userId;
+    if (userId == null) return;
+
+    latestAdminChangesLoad += 1;
+    const thisLoad = latestAdminChangesLoad;
+
+    let page;
+    try {
+        page = await api.adminChanges();
+    } catch (error) {
+        if (error.status === 401) sessionEnded();
+        return;   // keeps what was shown, the next check tries again
+    }
+    const isOutdated = state.userId !== userId || thisLoad !== latestAdminChangesLoad;
+    if (isOutdated) return;
+
+    const countBefore = state.adminChanges.unreadCount;
+    const isFirstLoad = !state.adminChangesLoaded;
+    state.adminChanges = { content: page?.content ?? [], unreadCount: page?.unreadCount ?? 0 };
+    state.adminChangesLoaded = true;
+    draw();
+
+    const hasNewOnes = !isFirstLoad && state.adminChanges.unreadCount > countBefore;
+    if (hasNewOnes) announceAdminChange();
+    tellListeners({ adminChanges: state.adminChanges });
+}
+
+// marks every admin change read up to the newest one loaded, so one arriving meanwhile stays unread
+export async function markAdminChangesRead() {
+    const upToId = state.adminChanges.content[0]?.id ?? null;
+    if (!state.adminChanges.unreadCount) return;
+
+    const now = new Date().toISOString();
+    for (const change of state.adminChanges.content) change.readAt ??= now;
+    state.adminChanges = { ...state.adminChanges, unreadCount: 0 };
+    draw();
+    tellListeners({ adminChanges: state.adminChanges });
+
+    try {
+        await api.markAdminChangesRead(upToId);
+    } catch (error) {
+        if (error.status === 401) return sessionEnded();
+        throw error;
+    } finally {
+        refreshAdminChanges();   // picks up the real count, and undoes the read if saving failed
+    }
+}
+
 async function refresh() {
     const userId = state.userId;
     if (userId == null) return;
+    refreshAdminChanges();
     if (savesRunning > 0) return;   // the queue reloads once saving is done
 
     latestRefresh += 1;
@@ -315,6 +375,7 @@ function connectStream() {
     // alerts deleted on the server, eg after an edit to the trip. no new alert may follow,
     // and polling is off while the stream is up, so this is the only thing that clears them
     stream.addEventListener("alerts-changed", refreshAfterRemoval);
+    stream.addEventListener("admin-change", refreshAdminChanges);
     stream.addEventListener("error", () => {
         if (stream.readyState !== EventSource.CLOSED) return;
         if (state.stream === stream) state.stream = null;
@@ -416,13 +477,34 @@ const createAlertItem = group => {
     `;
 };
 
+// every unread admin change in one entry, the alerts page lists them one by one
+const createAdminChangeItem = () => {
+    const { content, unreadCount } = state.adminChanges;
+    if (!unreadCount) return "";
+
+    const changes = unreadCount === 1 ? "1 change" : `${unreadCount} changes`;
+    const meta = [changes, timeTag(content[0]?.createdAt)].filter(part => part).join(" · ");
+
+    return `
+        <li class="is-new">
+            <a href="#/alerts" data-admin-changes-link>
+                <span class="sr-only">New: </span>
+                <strong>An admin changed your trips</strong>
+                <span class="meta">${meta}</span>
+            </a>
+        </li>
+    `;
+};
+
 const createPanel = () => {
     const groups = groupsInBell();
     const shown = groups.slice(0, MOST_SHOWN);
-    const hasUnread = shown.some(isGroupUnread);
+    const adminChangeItem = createAdminChangeItem();
+    const hasUnread = shown.some(isGroupUnread) || Boolean(adminChangeItem);
 
-    const list = shown.length
-        ? `<ul>${shown.map(createAlertItem).join("")}</ul>`
+    const items = adminChangeItem + shown.map(createAlertItem).join("");
+    const list = items
+        ? `<ul>${items}</ul>`
         : `<p class="meta">No alerts right now. News affecting your trips still shows on your itineraries.</p>`;
     const hiddenCount = groups.length - shown.length;
     const viewAllText = hiddenCount > 0 ? `View all alerts (${hiddenCount} more)` : "View all alerts";
@@ -442,7 +524,9 @@ const createPanel = () => {
 // counts condensed alerts like the panel lists them, so news hitting three activities on one trip counts once.
 // the bell only loads the newest 20, so when the backend has more unread than are loaded a + says there are others
 const createBadgeText = () => {
-    const unreadGroups = groupsInBell().filter(isGroupUnread).length;
+    // admin changes count as one, however many there are
+    const adminChangeCount = state.adminChanges.unreadCount ? 1 : 0;
+    const unreadGroups = groupsInBell().filter(isGroupUnread).length + adminChangeCount;
     const unreadLoaded = state.alerts.filter(isUnread).length;
     const hasOlderUnread = state.unreadCount > unreadLoaded;
 
@@ -454,7 +538,7 @@ const createBadgeText = () => {
 
 // the bell is drawn from scratch, so whatever had focus inside it is remembered as a selector and found again.
 // these are the things in the bell that can take focus
-const focusableSelectors = ["#alert-button", "[data-bell-read-all]", "[data-view-all]", ".alert-panel h2"];
+const focusableSelectors = ["#alert-button", "[data-bell-read-all]", "[data-view-all]", "[data-admin-changes-link]", ".alert-panel h2"];
 
 const findFocusSelector = () => {
     const focused = document.activeElement;
@@ -577,7 +661,7 @@ function announceNewAlerts(newAlerts) {
 
     // alerts arriving while a pop-up is still up join it, so there is only ever one, grouped like the bell.
     // its text changes in place rather than the whole pop-up sliding in again
-    const shownToast = document.querySelector(".alert-toast:not(.leaving)");
+    const shownToast = document.querySelector(".alert-toast:not(.admin-change-toast):not(.leaving)");
     const alreadyShown = shownToast ? state.toastAlerts : [];
     state.toastAlerts = [...newAlerts, ...alreadyShown];
 
@@ -587,6 +671,39 @@ function announceNewAlerts(newAlerts) {
     // goes on its own, the alert stays in the bell for later. joining it starts the time again
     clearTimeout(state.toastTimer);
     state.toastTimer = setTimeout(() => removeToast(toast), TOAST_SHOWN_MS);
+}
+
+// its own pop-up, so it never gets mixed into the news ones. a second change while it is up
+// only updates its text
+let adminChangeToastTimer = null;
+
+function announceAdminChange() {
+    if (state.isOpen) return;
+
+    const { content, unreadCount } = state.adminChanges;
+    const latest = content[0];
+    const text = unreadCount === 1 && latest
+        ? escapeHtml(latest.message)
+        : `${unreadCount} changes are waiting for you.`;
+
+    let toast = document.querySelector(".admin-change-toast:not(.leaving)");
+    if (!toast) {
+        toast = createToast();
+        toast.classList.add("admin-change-toast");
+
+        // a pencil rather than the news icon, since this is not about the news
+        const newsIcon = toast.querySelector(":scope > svg");
+        newsIcon?.insertAdjacentHTML("afterend", icon("pencil"));
+        newsIcon?.remove();
+    }
+    toast.querySelector(".alert-toast-body").innerHTML = `
+        <strong>An admin changed your trips</strong>
+        <span class="meta">${text}</span>
+        <a href="#/alerts" data-view-all>See what changed</a>
+    `;
+
+    clearTimeout(adminChangeToastTimer);
+    adminChangeToastTimer = setTimeout(() => removeToast(toast), TOAST_SHOWN_MS);
 }
 
 // ---------------------------------------------------------------- panel actions
@@ -605,6 +722,7 @@ function close({ returnFocus = false } = {}) {
 
 // a failure shows itself, since the bell reloads with the alerts still unread
 async function readAll() {
+    markAdminChangesRead().catch(() => { });   // reloads by itself on failure
     const finished = markAllAlertsRead();
     state.slot?.querySelector(".alert-panel h2")?.focus();
 
@@ -639,7 +757,7 @@ document.addEventListener("click", event => {
     const link = event.target.closest("[data-alert-link]");
     if (link) return goToTrip(link);
 
-    if (event.target.closest("[data-view-all]")) return close();
+    if (event.target.closest("[data-view-all], [data-admin-changes-link]")) return close();
 
     if (state.isOpen && !event.target.closest(".alert-bell")) close();
 });
@@ -679,6 +797,7 @@ export function stopAlerts() {
     clearInterval(state.pollTimer);
     clearTimeout(state.toastTimer);
     clearTimeout(burstTimer);
+    clearTimeout(adminChangeToastTimer);
 
     // saves still running for this account carry on, but no longer hold back the next account's loads
     saveSession += 1;
@@ -700,4 +819,6 @@ export function stopAlerts() {
     removalsReceived = 0;
     removalsCovered = 0;
     state.toastTimer = null;
+    state.adminChanges = { content: [], unreadCount: 0 };
+    state.adminChangesLoaded = false;
 }
