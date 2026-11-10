@@ -29,8 +29,7 @@ class AlertEmailStoreTest {
         assertThat(store.claim(1L, alert.getCreatedAt().plusSeconds(1))).isEmpty();
 
         verifyNoInteractions(evaluations);
-        verify(groups).findById("10:20");
-        verify(groups, never()).saveAndFlush(any());
+        verifyNoInteractions(groups);
         verify(alerts).deferEmail(1L, 0, EmailStatus.PENDING, alert.getCreatedAt().plusSeconds(30));
     }
     @org.junit.jupiter.params.ParameterizedTest

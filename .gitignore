@@ -8,6 +8,7 @@ data/*.db
 data/*.db-shm
 data/*.db-wal
 data/*.bak
+logs/
 
 ### Scratch cache from tools/build-options.py, the generated options.sql is committed ###
 tools/.cache/

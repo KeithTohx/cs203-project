@@ -157,8 +157,8 @@ class AlertEmailSenderTest {
         assertEquals(1, recipients.length);
         assertEquals("traveller@example.com", recipients[0].toString());
         String subject = message.getSubject();
-        assertEquals("TripSense | Itinerary alert: Japan trip", subject);
-        assertThat(body(message, "text/html")).contains("Itinerary alert", "What happened",
+        assertEquals("TripSense | Itinerary summary: Japan trip", subject);
+        assertThat(body(message, "text/html")).contains("Itinerary summary", "What happened",
                 "How this may affect you", "Read source article");
 
         String body = body(message, "text/plain");
@@ -169,7 +169,7 @@ class AlertEmailSenderTest {
         assertEquals("<tripsense-alert-stable-key@tripsense.local>", message.getMessageID());
     }
 
-    @Test void activityEmailHasDistinctScopeAndEscapesUntrustedContent() throws Exception {
+    @Test void singleActivityUsesItinerarySummaryAndEscapesUntrustedContent() throws Exception {
         JavaMailSender mail = mailSender;
         when(mailSenders.getObject()).thenReturn(mailSender);
         when(mail.createMimeMessage()).thenReturn(new MimeMessage(Session.getInstance(new Properties())));
@@ -181,11 +181,11 @@ class AlertEmailSenderTest {
         var captor = ArgumentCaptor.forClass(MimeMessage.class);
         verify(mail).send(captor.capture());
         MimeMessage message = captor.getValue(); message.saveChanges();
-        assertThat(message.getSubject()).startsWith("TripSense | Activity alert: Trek").endsWith(" | Bali")
+        assertThat(message.getSubject()).isEqualTo("TripSense | Itinerary summary: Bali")
                 .doesNotContain("\r", "\n");
         assertThat(message.getHeader("Bcc")).isNull();
-        assertThat(body(message, "text/plain")).contains("ACTIVITY ALERT", "one activity", "Itinerary: Bali", "Alert reference: 31");
-        assertThat(body(message, "text/html")).contains("Activity alert", "&lt;sunrise&gt;", "&lt;script&gt;", "Source &amp; news")
+        assertThat(body(message, "text/plain")).contains("ITINERARY SUMMARY", "one activity", "Itinerary: Bali", "Alert reference: 31");
+        assertThat(body(message, "text/html")).contains("Itinerary summary", "&lt;sunrise&gt;", "&lt;script&gt;", "Source &amp; news")
                 .doesNotContain("<script>", "javascript:", "Read source article", "itinerary overall");
     }
 
@@ -204,7 +204,7 @@ class AlertEmailSenderTest {
         var captor = ArgumentCaptor.forClass(MimeMessage.class);
         verify(mail, times(1)).send(captor.capture());
         MimeMessage message = captor.getValue(); message.saveChanges();
-        assertThat(message.getSubject()).isEqualTo("TripSense | Disruption summary: Japan trip");
+        assertThat(message.getSubject()).isEqualTo("TripSense | Itinerary summary: Japan trip");
         assertThat(body(message, "text/plain")).contains("Overall itinerary", "Activity: Niseko skiing",
                 "Ski lifts are closed", "Activity cancelled");
         assertThat(body(message, "text/html")).contains("Overall itinerary", "Activity: Niseko skiing",
@@ -224,6 +224,24 @@ class AlertEmailSenderTest {
         MimeMessage message = captor.getValue(); message.saveChanges();
         assertThat(body(message, "text/plain")).contains("Some activities have not been assessed", "available assessments");
         assertThat(body(message, "text/html")).contains("Some activities have not been assessed", "available assessments");
+    }
+
+    @Test void itinerarySummaryContainsEveryArticlesTitleSourceAndReason() throws Exception {
+        when(mailSenders.getObject()).thenReturn(mailSender);
+        when(mailSender.createMimeMessage()).thenReturn(new MimeMessage(Session.getInstance(new Properties())));
+        var other = new AlertResponse(2L, 5L, 3L, "Japan trip", null, null, 9L,
+                "Rail <strike>", "Rail source", "https://example.com/rail", "Trains suspended",
+                Instant.now(), null, EmailStatus.PENDING, null);
+        var summary = new Delivery(1L, 1, "digest-key", "traveller@example.com", delivery.alert(),
+                java.util.List.of(delivery.alert(), other), java.util.List.of());
+        new AlertEmailSender(mailSenders, true, FROM).send(summary);
+        verify(mailSender).send(messageCaptor.capture());
+        var message = messageCaptor.getValue(); message.saveChanges();
+        assertThat(message.getSubject()).isEqualTo("TripSense | Itinerary summary: Japan trip");
+        assertThat(body(message, "text/plain")).contains("Resort closure", "Rail <strike>",
+                "https://example.com/news", "https://example.com/rail", "Trains suspended");
+        assertThat(body(message, "text/html")).contains("Resort closure", "Rail &lt;strike&gt;",
+                "Rail source", "Trains suspended").doesNotContain("Rail <strike>");
     }
 
     private String body(Part part, String mimeType) throws Exception {

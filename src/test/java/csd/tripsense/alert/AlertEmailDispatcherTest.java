@@ -66,6 +66,37 @@ class AlertEmailDispatcherTest {
 
     // ===== DELIVER TESTS =====
 
+    @Test void failureSummaryReportsTimeoutWithoutLeakingExceptionText() {
+        var failure = new MailSendException("password=secret; user@example.com",
+                new java.net.SocketTimeoutException("sensitive provider response"));
+        assertThat(AlertEmailDispatcher.failureSummary(failure))
+                .isEqualTo("MailSendException -> SocketTimeoutException");
+    }
+
+    @Test void failureSummaryReportsSmtpCodeFromPerMessageFailures() {
+        var failure = new org.eclipse.angus.mail.smtp.SMTPSendFailedException(
+                "DATA", 554, "554 private provider response", null, null, null, null);
+        var wrapped = new MailSendException("private details", null,
+                java.util.Map.of(new Object(), failure));
+        assertThat(AlertEmailDispatcher.failureSummary(wrapped))
+                .isEqualTo("MailSendException -> SMTPSendFailedException SMTP 554");
+    }
+
+    @Test void failureSummaryReportsAddressRejectionWithoutLeakingAddress() throws Exception {
+        var failure = new org.eclipse.angus.mail.smtp.SMTPAddressFailedException(
+                new jakarta.mail.internet.InternetAddress("private@example.com"),
+                "RCPT TO:<private@example.com>", 550, "550 private provider response");
+        assertThat(AlertEmailDispatcher.failureSummary(failure))
+                .isEqualTo("SMTPAddressFailedException SMTP 550");
+    }
+
+    @Test void failureSummaryReportsEnhancedStatusAndSafeCategoryOnly() {
+        var failure = new jakarta.mail.SendFailedException(
+                "550 5.7.1 Message blocked: RFC 5322 Message-ID; private@example.com password=secret");
+        assertThat(AlertEmailDispatcher.failureSummary(failure))
+                .isEqualTo("SendFailedException SMTP 550 status=5.7.1 [rfc 5322] [message-id] [blocked]");
+    }
+
     @Test
     @DisplayName("Should record the email as sent when the SMTP server accepts it")
     void deliver_ShouldRecordSent_WhenSmtpAcceptsEmail() throws Exception {

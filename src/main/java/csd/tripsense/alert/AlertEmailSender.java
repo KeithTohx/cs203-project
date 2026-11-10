@@ -66,35 +66,50 @@ public class AlertEmailSender {
         helper.setFrom(from);
         helper.setTo(delivery.recipient());
         AlertResponse alert = delivery.alert();
+        long newsCount = delivery.relatedAlerts().stream().map(AlertResponse::newsId).distinct().count();
+        boolean multipleNews = newsCount > 1;
         boolean combined = delivery.relatedAlerts().size() > 1;
         boolean activityAlert = !combined && alert.activityId() != null;
-        String scope = combined ? "Disruption summary" : activityAlert ? "Activity alert" : "Itinerary alert";
-        String target = activityAlert ? text(alert.activityName()) : text(alert.itineraryName());
-        String explanation = combined ? "One news update, with the overall itinerary impact and affected activities together."
+        String scope = "Itinerary summary";
+        String target = text(alert.itineraryName());
+        String explanation = multipleNews ? "News updates for this itinerary, with the overall impact and affected activities together."
+                : combined ? "One news update, with the overall itinerary impact and affected activities together."
                 : activityAlert
-                ? "This alert concerns one activity in your itinerary."
-                : "This alert concerns your itinerary overall.";
+                ? "This itinerary summary concerns one activity in your itinerary."
+                : "This summary concerns your itinerary overall.";
         if (delivery.partialAssessment()) {
             explanation += " Some activities have not been assessed. This email includes the available assessments; "
                     + "check TripSense for any later updates.";
         }
-        String plainAssessment = delivery.relatedAlerts().stream().map(a ->
-                (a.activityId() == null ? "Overall itinerary" : "Activity: " + text(a.activityName()))
-                        + "\n" + text(a.reason())).collect(java.util.stream.Collectors.joining("\n\n"));
-        String htmlAssessment = delivery.relatedAlerts().stream().map(a -> "<div style=\"margin-bottom:16px\"><strong>"
-                + (a.activityId() == null ? "Overall itinerary" : "Activity: " + escape(a.activityName()))
-                + "</strong><br>" + escape(a.reason()) + "</div>").collect(java.util.stream.Collectors.joining());
-        helper.setSubject(("TripSense | " + scope + ": " + target
-                + (activityAlert ? " | " + text(alert.itineraryName()) : "")).replaceAll("[\\r\\n]", " "));
+        var articles = delivery.relatedAlerts().stream().collect(java.util.stream.Collectors.groupingBy(
+                AlertResponse::newsId, java.util.LinkedHashMap::new, java.util.stream.Collectors.toList()));
+        String plainAssessment = articles.values().stream().map(article -> {
+            AlertResponse news = article.getFirst();
+            String heading = multipleNews ? text(news.newsTitle()) + "\nSource: " + text(news.newsSource())
+                    + (news.newsUrl() == null ? "" : "\n" + news.newsUrl()) + "\n\n" : "";
+            return heading + article.stream().map(a ->
+                    (a.activityId() == null ? "Overall itinerary" : "Activity: " + text(a.activityName()))
+                            + "\n" + text(a.reason())).collect(java.util.stream.Collectors.joining("\n\n"));
+        }).collect(java.util.stream.Collectors.joining("\n\n"));
+        String htmlAssessment = articles.values().stream().map(article -> {
+            AlertResponse news = article.getFirst();
+            String heading = multipleNews ? "<h3>" + escape(news.newsTitle()) + "</h3><p>Source: "
+                    + escape(news.newsSource()) + sourceLink(news.newsUrl()) + "</p>" : "";
+            return heading + article.stream().map(a -> "<div style=\"margin-bottom:16px\"><strong>"
+                    + (a.activityId() == null ? "Overall itinerary" : "Activity: " + escape(a.activityName()))
+                    + "</strong><br>" + escape(a.reason()) + "</div>")
+                    .collect(java.util.stream.Collectors.joining());
+        }).collect(java.util.stream.Collectors.joining());
+        helper.setSubject(("TripSense | " + scope + ": " + target).replaceAll("[\\r\\n]", " "));
         String plain = scope.toUpperCase(java.util.Locale.ROOT) + "\n" + target
                 + "\n" + explanation + "\n\nItinerary: " + text(alert.itineraryName())
-                + (activityAlert ? "\nActivity: " + target : "")
-                + "\n\nWHAT HAPPENED\n" + text(alert.newsTitle())
+                + (activityAlert ? "\nActivity: " + text(alert.activityName()) : "")
+                + "\n\nWHAT HAPPENED\n" + (multipleNews ? newsCount + " news updates for this itinerary" : text(alert.newsTitle()))
                 + "\n\nHOW THIS MAY AFFECT YOU\n" + plainAssessment
-                + "\n\nSource: " + text(alert.newsSource())
-                + (alert.newsUrl() == null ? "" : "\n" + alert.newsUrl())
+                + (multipleNews ? "" : "\n\nSource: " + text(alert.newsSource())
+                        + (alert.newsUrl() == null ? "" : "\n" + alert.newsUrl()))
                 + "\n\nNEXT STEP\nLog in to TripSense to review this "
-                + (activityAlert ? "activity" : "itinerary") + " and decide what to do."
+                + "itinerary and decide what to do."
                 + "\n\nThis is an automated assessment. Verify important changes with your travel provider."
                 + "\nAlert reference: " + alert.id();
         String html = """
@@ -179,9 +194,10 @@ public class AlertEmailSender {
                     </body>
                 </html>
                 """.formatted(escape(scope), escape(target), escape(explanation),
-                        escape(alert.itineraryName()), activityAlert ? "<br><strong>Activity:</strong> " + escape(target) : "",
-                        escape(alert.newsTitle()), htmlAssessment, escape(alert.newsSource()),
-                        sourceLink(alert.newsUrl()), activityAlert ? "activity" : "itinerary", alert.id());
+                        escape(alert.itineraryName()), activityAlert ? "<br><strong>Activity:</strong> " + escape(alert.activityName()) : "",
+                        multipleNews ? newsCount + " news updates for this itinerary" : escape(alert.newsTitle()), htmlAssessment,
+                        multipleNews ? "Listed with each news update above" : escape(alert.newsSource()),
+                        multipleNews ? "" : sourceLink(alert.newsUrl()), "itinerary", alert.id());
         helper.setText(plain, html);
         sender.send(message);
     }

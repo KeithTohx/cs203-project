@@ -127,6 +127,20 @@ class AutomaticAlertIntegrationTest {
         for (var task : tasks.findAll()) queue.progress(task.getTaskKey(), task.getCursor(), Instant.EPOCH);
     }
 
+    @Test void itinerarySummaryWaitsForQueuedArticlesAndSendsThemTogether() {
+        News other = article("Another disruption " + UUID.randomUUID());
+        Itinerary trip = newTrip();
+        evaluator.evaluateItineraryForNews(trip, article);
+        var first = alerts.list(owner.getId(), false, null, 20).content().getFirst();
+        var now = Instant.now().plusSeconds(1);
+        assertThat(email.claim(first.id(), now)).isEmpty();
+        listener.processPending();
+        assertThat(tasks.count()).isZero();
+        var summary = email.claim(first.id(), now.plusSeconds(6)).orElseThrow();
+        assertThat(summary.relatedAlerts()).extracting(AlertResponse::newsId)
+                .containsExactlyInAnyOrder(article.getId(), other.getId());
+    }
+
     @Test void creationAutomaticallyQueuesBothAssessmentsAndOneGroupedDelivery() {
         Itinerary trip = newTrip(); Activity activity = activity(trip);
         assertThat(tasks.count()).isEqualTo(2);

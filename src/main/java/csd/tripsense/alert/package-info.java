@@ -20,7 +20,9 @@
  * <li>PATCH /api/alerts/{id} with {"read": true}: marks one alert as read. Idempotent, owner-only,
  * requires the normal CSRF token.</li>
  * <li>PATCH /api/alerts/{id}/group with {"read": true}: marks visible members of the same
- * news/trip group read through the anchor id, including members on older pages.</li>
+ * news/trip group read through the anchor id, including members on older pages. Use the newest
+ * id displayed in that group; newer arrivals stay unread. False, null and missing read values
+ * are rejected by request validation. Requires authentication and a CSRF token.</li>
  * <li>PATCH /api/alerts?upToId= with {"read": true}: marks every alert of the user as read. Pass the
  * newest alert id shown so alerts that arrive meanwhile stay unread. Returns the unreadCount left
  * afterwards. Idempotent, requires the normal CSRF token.</li>
@@ -48,23 +50,39 @@
  * <p>SMTP retries use a two-minute claim lease, at most three attempts, and a stable
  * Message-ID. SENT means accepted by the configured SMTP transport, not confirmed inbox
  * delivery. SMTP cannot guarantee exactly-once delivery if acceptance succeeds but the
- * acknowledgement is lost. After SMTP acceptance, a database confirmation failure pauses only that group
- * and retries its confirmation independently while other groups continue sending. It does not
- * mark the accepted email failed or resend it. That pending confirmation is held in memory, so a process crash before it is persisted can
- * still cause a duplicate after lease recovery. The saved in-app alert remains available if email fails.
+ * acknowledgement is lost. After SMTP acceptance, a database confirmation failure pauses only
+ * that group and retries its confirmation independently while other groups continue sending.
+ * While the process survives, confirmation retries do not resend an accepted message. Pending
+ * confirmation is held in memory: a crash before it is persisted can cause a duplicate after
+ * lease recovery, and a stable Message-ID does not guarantee inbox deduplication. Recording
+ * success before SMTP acceptance would instead risk losing emails. The saved in-app alert
+ * remains available if email fails.
  *
- * <p>Email groups wait at most 120 seconds from the first saved alert for missing assessments,
- * then send the available impacts with a partial-assessment notice. Incomplete groups are
- * deferred for 30 seconds between checks, and due work is ordered by its next-attempt time.
- * Override with alerts.email.max-group-wait-seconds and alerts.email.group-recheck-seconds.
+ * <p>Each email is an itinerary summary: ready news groups for the same itinerary are claimed
+ * atomically and sent in one message, with one section per article and its affected activities.
+ * Different itineraries are never mixed. Later news produces another summary; this is not a
+ * one-email lifetime limit. Each constituent news group retains its delivery state so a summary
+ * confirms all included alerts, retry recovery stays durable, and delivered articles are not resent.
+ * An active SMTP lease or pending acceptance confirmation prevents another email for that itinerary.
+ *
+ * <p>The shipped application.properties sets a five-second initial grouping wait and a
+ * 30-second maximum wait from the first saved alert for missing assessments. These waits
+ * overlap; they are not added together. Running assessments and queued evaluation work for the
+ * itinerary are considered across articles, so intermediate results can join the same summary.
+ * After the maximum, available impacts are sent with
+ * a partial-assessment notice. Incomplete groups are rechecked after five seconds, and the
+ * retry scanner runs every five seconds. Queue backlog, SMTP requests and failure backoff can
+ * add further delay. Configure alerts.email.initial-group-wait-seconds,
+ * alerts.email.max-group-wait-seconds, alerts.email.group-recheck-seconds and
+ * alerts.email.retry-interval-ms to override these timings.
+ * Three failed delivery attempts exhaust a group; a single transient failure does not.
  * A terminally failed group marks late members FAILED too; it is not retried automatically.
  * Later assessments from a partial summary receive a follow-up email containing only unsent
  * impacts, with a fresh delivery identity. Additions after a complete summary are SUPPRESSED.
  * Suppression is a real email status; a transactional SQLite schema upgrade preserves existing
  * rows and converts the former compatibility marker on startup.
- * A first email also waits 30 seconds (alerts.email.initial-group-wait-seconds) so activities
- * created just after the itinerary can join the initial summary. This does not wait indefinitely
- * for activities a traveller might add later.
+ * The initial grouping wait lets activities created just after the itinerary join its summary;
+ * it does not wait indefinitely for activities a traveller might add later.
  *
  * <p>After itinerary/activity creation commits, a separate transaction queues recent
  * country-matched news. A queue failure is logged without rolling back the saved trip/activity;

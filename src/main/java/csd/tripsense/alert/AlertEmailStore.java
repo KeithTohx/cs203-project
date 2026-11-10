@@ -39,7 +39,12 @@ public class AlertEmailStore {
 
     public record ClaimedAlert(Long id, int attempt) {}
     public record Delivery(Long alertId, int attempt, String key, String recipient, AlertResponse alert,
-                           List<AlertResponse> relatedAlerts, List<ClaimedAlert> claims, boolean partialAssessment) {
+                           List<AlertResponse> relatedAlerts, List<ClaimedAlert> claims, boolean partialAssessment,
+                           List<Delivery> groups) {
+        public Delivery(Long alertId, int attempt, String key, String recipient, AlertResponse alert,
+                        List<AlertResponse> relatedAlerts, List<ClaimedAlert> claims, boolean partialAssessment) {
+            this(alertId, attempt, key, recipient, alert, relatedAlerts, claims, partialAssessment, List.of());
+        }
         public Delivery(Long alertId, int attempt, String key, String recipient, AlertResponse alert,
                         List<AlertResponse> relatedAlerts, List<ClaimedAlert> claims) {
             this(alertId, attempt, key, recipient, alert, relatedAlerts, claims, false);
@@ -75,8 +80,54 @@ public class AlertEmailStore {
         var recipient = impact.getItinerary().getUser();
         if (!recipient.isEnabled()) return Optional.empty();
         Long tripId = impact.getItinerary().getId();
+        var candidates = new ArrayList<>(alerts.findItineraryEmailCandidates(tripId, RETRYABLE));
+        if (candidates.stream().noneMatch(a -> a.getId().equals(id))) candidates.add(requested);
+        if (confirmingGroups.contains(itineraryKey(tripId))) {
+            deferRetryable(candidates, now.plusSeconds(groupRecheckSeconds));
+            return Optional.empty();
+        }
+        // An active claim owns the itinerary until its SMTP request completes or its lease expires.
+        var lease = candidates.stream().filter(a -> a.getEmailStatus() == EmailStatus.SENDING)
+                .map(Alert::getEmailNextAttemptAt).filter(next -> next.isAfter(now))
+                .max(Comparator.naturalOrder());
+        if (lease.isPresent()) {
+            deferRetryable(candidates, lease.get());
+            return Optional.empty();
+        }
+        Instant batchStart = candidates.stream().map(Alert::getCreatedAt).min(Comparator.naturalOrder()).orElse(now);
+        Instant settleUntil = batchStart.plusSeconds(initialGroupWaitSeconds);
+        if (candidates.stream().allMatch(a -> a.getEmailAttempts() == 0) && now.isBefore(settleUntil)) {
+            deferRetryable(candidates, settleUntil);
+            return Optional.empty();
+        }
+        var byNews = new java.util.LinkedHashMap<Long, Alert>();
+        for (Alert candidate : candidates) {
+            if (!candidate.getEmailNextAttemptAt().isAfter(now)) {
+                byNews.putIfAbsent(candidate.getImpact().getNews().getId(), candidate);
+            }
+        }
+        var deliveries = new ArrayList<Delivery>();
+        // Claim each news group under this transaction, then send them together. The individual
+        // delivery identities remain intact for suppression, retries and edit invalidation.
+        for (Alert candidate : byNews.values()) {
+            claimNewsGroup(candidate, now, confirmingGroups).ifPresent(deliveries::add);
+        }
+        if (deliveries.isEmpty()) return Optional.empty();
+        if (deliveries.size() == 1) return Optional.of(deliveries.getFirst());
+        Delivery first = deliveries.getFirst();
+        return Optional.of(new Delivery(first.alertId(), first.attempt(), first.key(), first.recipient(),
+                first.alert(), deliveries.stream().flatMap(d -> d.relatedAlerts().stream()).toList(),
+                deliveries.stream().flatMap(d -> d.claims().stream()).toList(),
+                deliveries.stream().anyMatch(Delivery::partialAssessment), List.copyOf(deliveries)));
+    }
+
+    static String itineraryKey(Long tripId) { return "itinerary:" + tripId; }
+
+    private Optional<Delivery> claimNewsGroup(Alert requested, Instant now, java.util.Set<String> confirmingGroups) {
+        var impact = requested.getImpact();
+        Long tripId = impact.getItinerary().getId();
         Long newsId = impact.getNews().getId();
-        var group = new EmailGroup(tripId, newsId, recipient.getEmail(),
+        var group = new EmailGroup(tripId, newsId, impact.getItinerary().getUser().getEmail(),
                 alerts.findEmailGroup(tripId, newsId), emailGroups.findById(AlertEmailGroup.key(tripId, newsId)));
 
         if (prepareGroup(group, confirmingGroups, now) != ClaimDecision.PROCEED) return Optional.empty();
@@ -143,12 +194,8 @@ public class AlertEmailStore {
     private AssessmentGate waitForAssessments(EmailGroup group, Instant now) {
         List<Alert> retryable = group.retryable();
         Instant firstCreatedAt = retryable.stream().map(Alert::getCreatedAt).min(Comparator.naturalOrder()).orElse(now);
-        Instant settleUntil = firstCreatedAt.plusSeconds(initialGroupWaitSeconds);
-        if (retryable.stream().allMatch(a -> a.getEmailAttempts() == 0) && now.isBefore(settleUntil)) {
-            deferRetryable(group.members(), settleUntil);
-            return new AssessmentGate(ClaimDecision.DEFER, false);
-        }
-        boolean incomplete = evaluations.countRunning(group.tripId(), group.newsId(), now) != 0;
+        boolean incomplete = evaluations.countRunningForItinerary(group.tripId(), now) != 0
+                || evaluations.countQueuedForItinerary(group.tripId()) != 0;
         Instant deadline = firstCreatedAt.plusSeconds(maxGroupWaitSeconds);
         if (incomplete && now.isBefore(deadline)) {
             Instant recheck = now.plusSeconds(groupRecheckSeconds);
@@ -201,6 +248,10 @@ public class AlertEmailStore {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void sent(Delivery delivery, Instant now) {
+        if (!delivery.groups().isEmpty()) {
+            for (Delivery group : delivery.groups()) sent(group, now);
+            return;
+        }
         int completed=0;
         for (ClaimedAlert claim : delivery.claims()) {
             completed+=alerts.finishEmail(claim.id(),claim.attempt(),List.of(EmailStatus.SENDING),EmailStatus.SENT,now,now);

@@ -76,6 +76,9 @@ import csd.tripsense.user.UserRepository;
         "impact.eval.enabled=false",
         "impact.eval.new-itinerary.enabled=false",
         "alerts.email.initial-group-wait-seconds=0",
+        // Fixed virtual-clock windows for the deadline and backoff scenarios below.
+        "alerts.email.max-group-wait-seconds=120",
+        "alerts.email.group-recheck-seconds=30",
         "spring.sql.init.mode=never",
         "spring.jpa.hibernate.ddl-auto=create-drop",
         "spring.datasource.hikari.maximum-pool-size=1",
@@ -1577,5 +1580,79 @@ class AlertIntegrationTest {
         assertThat(emailStore.claim(alert.id(),now.plusSeconds(121),
                 java.util.Set.of(AlertEmailGroup.key(skiTrip.getId(),earthquake.getId())))).isEmpty();
         assertThat(alertRepository.findById(alert.id()).orElseThrow().getEmailAttempts()).isEqualTo(1);
+    }
+
+    @Test void groupReadEndpointRejectsFalseNullAndMissingReadWithoutChangingAlerts() throws Exception {
+        evaluate();
+        var session = login(traveller);
+        var alert = alertService.list(traveller.getId(), false, null, 20).content().getFirst();
+        for (String body : java.util.List.of(READ_FALSE, "{\"read\":null}", "{}")) {
+            mockMvc.perform(patch("/api/alerts/" + alert.id() + "/group")
+                            .session(session).with(csrf()).contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isBadRequest());
+            assertThat(alertRepository.findById(alert.id()).orElseThrow().getReadAt()).isNull();
+        }
+    }
+
+    @Test void itineraryEmailCombinesDifferentArticlesAndConfirmsEachNewsGroup() {
+        evaluate();
+        News other = new News(); other.setTitle("Airport closure");
+        other.setUrl("https://example.com/" + UUID.randomUUID());
+        other = newsRepository.saveAndFlush(other);
+        givenAiVerdict(true);
+        impactService.evaluateItineraryForNews(skiTrip, other);
+        var page = alertService.list(traveller.getId(), false, null, 20);
+        var now = Instant.now().plusSeconds(1);
+        var digest = emailStore.claim(page.content().getFirst().id(), now).orElseThrow();
+        assertThat(digest.relatedAlerts()).hasSize(2);
+        assertThat(digest.relatedAlerts()).extracting(AlertResponse::newsId)
+                .containsExactlyInAnyOrder(earthquake.getId(), other.getId());
+        assertThat(digest.groups()).hasSize(2);
+        // A second worker cannot claim a different story while the itinerary email is in flight.
+        for (var alert : page.content()) assertThat(emailStore.claim(alert.id(), now)).isEmpty();
+        emailStore.sent(digest, now);
+        for (var alert : page.content()) {
+            assertThat(alertRepository.findById(alert.id()).orElseThrow().getEmailStatus()).isEqualTo(EmailStatus.SENT);
+        }
+        for (Long newsId : java.util.List.of(earthquake.getId(), other.getId())) {
+            assertThat(emailGroups.findById(AlertEmailGroup.key(skiTrip.getId(), newsId)))
+                    .hasValueSatisfying(group -> assertThat(group.isDelivered()).isTrue());
+        }
+    }
+
+    @Test void itineraryEmailDoesNotIncludeOtherItinerariesAndCanSendNewNewsLater() {
+        evaluate();
+        var firstAlert = alertService.list(traveller.getId(), false, null, 20).content().getFirst();
+        Itinerary separate = savedTrip(traveller, skiTrip.getCountry(), "Other trip");
+        impactService.evaluateItineraryForNews(separate, earthquake);
+        var now = Instant.now().plusSeconds(1);
+        var first = emailStore.claim(firstAlert.id(), now).orElseThrow();
+        assertThat(first.relatedAlerts()).allMatch(a -> a.itineraryId().equals(skiTrip.getId()));
+        emailStore.sent(first, now);
+        News later = new News(); later.setTitle("Rail strike");
+        later.setUrl("https://example.com/" + UUID.randomUUID()); later = newsRepository.saveAndFlush(later);
+        impactService.evaluateItineraryForNews(skiTrip, later);
+        var latest = alertService.list(traveller.getId(), false, null, 20).content().getFirst();
+        var followUp = emailStore.claim(latest.id(), Instant.now().plusSeconds(1)).orElseThrow();
+        assertThat(followUp.relatedAlerts()).hasSize(1);
+        assertThat(followUp.relatedAlerts().getFirst().newsId()).isEqualTo(later.getId());
+    }
+
+    @Test void itineraryDigestRetriesTogetherAndConfirmationBlocksOtherArticles() {
+        evaluate();
+        News other = new News(); other.setTitle("Storm warning");
+        other.setUrl("https://example.com/" + UUID.randomUUID()); other = newsRepository.saveAndFlush(other);
+        impactService.evaluateItineraryForNews(skiTrip, other);
+        var newest = alertService.list(traveller.getId(), false, null, 20).content().getFirst();
+        var now = Instant.now().plusSeconds(1);
+        var first = emailStore.claim(newest.id(), now).orElseThrow();
+        emailStore.failed(first, now);
+        var retry = emailStore.claim(newest.id(), now.plusSeconds(61)).orElseThrow();
+        assertThat(retry.key()).isEqualTo(first.key());
+        assertThat(retry.claims()).hasSize(2).allMatch(claim -> claim.attempt() == 2);
+        assertThat(emailStore.claim(newest.id(), now.plusSeconds(182),
+                java.util.Set.of(AlertEmailStore.itineraryKey(skiTrip.getId())))).isEmpty();
+        emailStore.sent(retry, now.plusSeconds(183));
+        assertThat(alertRepository.findById(newest.id()).orElseThrow().getEmailStatus()).isEqualTo(EmailStatus.SENT);
     }
 }

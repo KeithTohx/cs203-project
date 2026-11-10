@@ -19,6 +19,11 @@ public interface AlertRepository extends JpaRepository<Alert, Long> {
     @Query("select a from Alert a where a.impact.itinerary.id = :tripId and a.impact.news.id = :newsId order by a.id")
     java.util.List<Alert> findEmailGroup(@Param("tripId") Long tripId, @Param("newsId") Long newsId);
 
+    @Query("select a from Alert a where a.impact.itinerary.id = :tripId and a.emailStatus in :states "
+            + "and a.impact.impacted = true and (a.impact.rejected = false or a.impact.rejected is null) order by a.id")
+    java.util.List<Alert> findItineraryEmailCandidates(@Param("tripId") Long tripId,
+                                                     @Param("states") java.util.List<EmailStatus> states);
+
     @Modifying
     @Query("update Alert a set a.emailStatus = csd.tripsense.alert.EmailStatus.SUPPRESSED, a.emailSentAt = null "
             + "where a.id = :id and a.emailAttempts = :attempts and a.emailStatus in :states")
