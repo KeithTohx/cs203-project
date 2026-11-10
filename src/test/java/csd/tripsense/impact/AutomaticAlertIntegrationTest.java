@@ -98,11 +98,20 @@ class AutomaticAlertIntegrationTest {
     private Itinerary newTrip() {
         Itinerary trip = new Itinerary(); trip.setUser(owner); trip.setCountry(country); trip.setName("Demo trip");
         trip.setDateStart(LocalDateTime.now().plusDays(1)); trip.setDateEnd(LocalDateTime.now().plusDays(2));
-        return itineraryService.addItinerary(trip);
+        Itinerary saved=itineraryService.addItinerary(trip);
+        materializeCreatedRequests(); return saved;
     }
     private Activity activity(Itinerary trip) {
         Activity a = new Activity(); a.setItinerary(trip); a.setName("Trek");
-        return activityService.addActivity(a);
+        Activity saved=activityService.addActivity(a);
+        materializeCreatedRequests(); return saved;
+    }
+    // The production worker materializes intents asynchronously. These tests suppress its wakeup
+    // and explicitly materialize outside the source transaction to inspect the durable snapshot.
+    private void materializeCreatedRequests() {
+        if (!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
+            try { queue.recoverRequests(); } catch (RuntimeException temporaryFailure) { /* recovery test retries it */ }
+        }
     }
     private NewItemEvaluationListener worker(int budget) {
         return new NewItemEvaluationListener(queue, tasks, trips, activities, news, impacts, evaluator, reporter, true, budget);
@@ -362,6 +371,7 @@ class AutomaticAlertIntegrationTest {
         replacementNews = news.saveAndFlush(replacementNews);
         Itinerary replacement = new Itinerary(); replacement.setUser(owner); replacement.setCountry(replacementCountry);
         replacement.setName("Replacement trip"); replacement = itineraryService.addItinerary(replacement);
+        queue.recoverRequests();
         assertThat(replacement.getId()).isEqualTo(deleted.getId());
         var fresh = tasks.findAll().getFirst();
         assertThat(fresh.getTaskKey()).isNotEqualTo(obsolete.getTaskKey());
@@ -523,8 +533,7 @@ class AutomaticAlertIntegrationTest {
             var c=type.getDeclaredConstructor(boolean.class,String.class);
             c.setAccessible(true); return c.newInstance(true,"Current details");
         }).when(ai).ask(anyString(),any(Class.class));
-        assertThatThrownBy(() -> advice.generate(trip.getId()))
-                .isInstanceOf(org.springframework.dao.OptimisticLockingFailureException.class);
+        advice.generate(trip.getId());
         assertThat(recommendations.findByImpactItineraryId(trip.getId()))
                 .noneMatch(r -> "Advice for the old activity".equals(r.getAdvice()));
     }

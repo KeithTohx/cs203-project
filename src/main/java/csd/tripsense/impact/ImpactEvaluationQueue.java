@@ -46,12 +46,22 @@ public class ImpactEvaluationQueue {
             requests.deleteById(requestKey);
             return;
         }
-        var articles = news.findByCountryIdSince(trip.getCountry().getId(),
+        var articles = new java.util.TreeSet<Long>(news.findByCountryIdSince(trip.getCountry().getId(),
                 LocalDateTime.ofInstant(request.map(PendingEvaluationRequest::getRequestedAt)
                         .orElseGet(Instant::now), ZoneOffset.UTC).minusDays(lookbackDays)).stream()
-                .map(n -> n.getId()).distinct().sorted().toList();
-        if (!articles.isEmpty()) tasks.save(new PendingImpactEvaluation(id, activity, articles));
+                .map(n -> n.getId()).toList());
+        if (request.isPresent() && !request.get().extraArticles().isEmpty())
+            news.findByIdInAndCountryId(request.get().extraArticles(),trip.getCountry().getId())
+                    .forEach(n -> articles.add(n.getId()));
+        if (!articles.isEmpty()) tasks.save(new PendingImpactEvaluation(id, activity, java.util.List.copyOf(articles)));
         requests.deleteById(requestKey);
+    }
+
+    /** Materialize committed intents on the worker, after the source connection has been released. */
+    @Transactional(propagation=org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public void recoverRequests() {
+        for (var request : requests.findAllByOrderByRequestedAtAsc(org.springframework.data.domain.PageRequest.of(0,50)))
+            enqueue(request.getTargetId(),request.isActivity());
     }
 
     /** A short transaction; AI calls never hold a database transaction open. */

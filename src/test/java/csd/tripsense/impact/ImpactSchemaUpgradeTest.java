@@ -23,10 +23,12 @@ class ImpactSchemaUpgradeTest {
             try (var db = DriverManager.getConnection("jdbc:sqlite:" + path); var sql = db.createStatement()) {
                 sql.execute("create table itinerary(id integer primary key, user_id bigint not null, country_id bigint not null, "
                         + "name varchar not null, date_start timestamp, date_end timestamp)");
-                sql.execute("insert into itinerary(id,user_id,country_id,name) values(31,1,1,'Legacy trip')");
+                sql.execute("alter table itinerary add column assessment_revision bigint");
+                sql.execute("insert into itinerary(id,user_id,country_id,name,assessment_revision) values(31,1,1,'Legacy trip',5)");
                 sql.execute("create table activity(id integer primary key, itinerary_id bigint not null, "
                         + "country_id bigint, name varchar not null, address varchar, category varchar, date_start timestamp, date_end timestamp)");
-                sql.execute("insert into activity(id,itinerary_id,name) values(32,31,'Legacy activity')");
+                sql.execute("alter table activity add column assessment_revision bigint");
+                sql.execute("insert into activity(id,itinerary_id,name,assessment_revision) values(32,31,'Legacy activity',3)");
                 sql.execute("""
                         create table impact (id integer primary key, activity_id bigint, itinerary_id bigint,
                         news_id bigint not null, user_id bigint not null, impacted boolean, rejected boolean,
@@ -99,5 +101,12 @@ class ImpactSchemaUpgradeTest {
                 .isInstanceOf(org.springframework.dao.DataAccessException.class);
         assertThat(sql.queryForObject("select reason from impact where id=42", String.class)).isEqualTo("Another historical row");
         assertThat(sql.queryForObject("select count(*) from pending_impact_evaluation", Integer.class)).isZero();
+    }
+
+    @Test void canonicalRevisionUpgradePreservesAlertsBranchEdits() {
+        assertThat(sql.queryForObject("select revision from itinerary where id=31",Long.class)).isEqualTo(5);
+        assertThat(sql.queryForObject("select revision from activity where id=32",Long.class)).isEqualTo(3);
+        assertThat(sql.queryForObject("select identity_key from itinerary where id=31",String.class)).isNotBlank();
+        assertThat(sql.queryForObject("select identity_key from activity where id=32",String.class)).isNotBlank();
     }
 }

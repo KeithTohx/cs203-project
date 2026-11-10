@@ -2,6 +2,7 @@ package csd.tripsense.itinerary;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
@@ -31,15 +32,47 @@ public class Itinerary {
     @PrePersist
     private void initializeAssessmentIdentity() {
         assessmentIdentity = java.util.UUID.randomUUID().toString();
+        assignIdentityKey();
     }
 
-    // Null on older rows means revision zero; identity still identifies the row's lifetime.
+    // goes up by one each time something the model is shown about the trip changes (its name,
+    // country or dates). every verdict records the revision it was judged on, which is how a
+    // verdict about the old details is told apart from one about the new ones.
+    // null on rows made before this existed, which reads as revision 0.
+    // a Long and not an Integer: the sqlite dialect drops the type from the id column when a
+    // table has another integer column, and then sqlite stops generating ids
+    @Column(name = "revision")
+    @JsonIgnore
+    private Long revision;
+
+    public long currentRevision() {
+        if (revision == null) {
+            return 0;
+        }
+        return revision;
+    }
+
+    public void bumpRevision() {
+        revision = currentRevision() + 1;
+    }
+
+    // random, set once when the trip is first saved and never changed. sqlite hands a deleted
+    // row's id to the next insert, and a new trip starts back at revision 0, so the id and revision
+    // together cannot tell a trip from the one that replaced it. this can.
+    // rows made before this existed are filled in by data.sql on startup
+    @Column(name = "identity_key", length = 36, updatable = false)
     @JsonIgnore
     @Setter(AccessLevel.NONE)
-    private Long assessmentRevision;
+    private String identityKey;
 
-    public long currentAssessmentRevision() { return assessmentRevision == null ? 0 : assessmentRevision; }
-    public void reviseAssessment() { assessmentRevision = currentAssessmentRevision() + 1; }
+    // always a fresh key, even if the request body sent one, so no two trips can ever share it
+    void assignIdentityKey() {
+        identityKey = UUID.randomUUID().toString();
+    }
+
+
+    public long currentAssessmentRevision() { return currentRevision(); }
+    public void reviseAssessment() { bumpRevision(); }
 
     @ManyToOne
     @JoinColumn(name = "user_id", nullable = false)

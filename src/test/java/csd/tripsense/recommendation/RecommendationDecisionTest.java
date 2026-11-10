@@ -20,6 +20,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.support.TransactionOperations;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityCategory;
@@ -84,8 +85,10 @@ class RecommendationDecisionTest {
         var writeGuard = mock(RecommendationWriteGuard.class);
         lenient().when(writeGuard.saveIfCurrent(any(), any())).thenAnswer(inv ->
                 ((java.util.function.Supplier<Recommendation>) inv.getArgument(1)).get());
+        org.mockito.Mockito.lenient().when(impactService.findUnchanged(any(Impact.class)))
+                .thenAnswer(inv -> Optional.of(inv.getArgument(0)));
         service = new RecommendationServiceImpl(recommendations, options, impactService,
-                itineraryService, chatService, preferenceService, access, writeGuard);
+                itineraryService, chatService, preferenceService, access, TransactionOperations.withoutTransaction(), writeGuard);
 
         User owner = mock(User.class);
         when(owner.getId()).thenReturn(karwei.getId());
@@ -227,6 +230,20 @@ class RecommendationDecisionTest {
 
         assertEquals(secondMuseum, fresh.getSuggestedOption());
         assertEquals(RecommendationStatus.PENDING, fresh.getStatus());
+    }
+
+    @Test
+    @DisplayName("Regenerating saves nothing and says so when the impact changed while the model was answering")
+    void regenerate_ShouldConflict_WhenImpactChangedMeanwhile() {
+        Recommendation rejected = stored(1L, RecommendationStatus.DISMISSED, firstMuseum);
+        when(recommendations.findById(1L)).thenReturn(Optional.of(rejected));
+        when(recommendations.findByImpactIdOrderByIdAsc(IMPACT_ID)).thenReturn(List.of(rejected));
+        when(options.findByCountry("Japan")).thenReturn(List.of(firstMuseum, secondMuseum));
+        when(chatService.ask(any(), any())).thenThrow(new RuntimeException("model down"));
+        when(impactService.findUnchanged(any(Impact.class))).thenReturn(Optional.empty());
+
+        assertThrows(AdviceOutdatedException.class, () -> service.regenerate(1L, karwei));
+        verify(recommendations, never()).save(any(Recommendation.class));
     }
 
     @Test

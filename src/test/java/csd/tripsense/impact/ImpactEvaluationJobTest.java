@@ -296,6 +296,24 @@ class ImpactEvaluationJobTest {
         verify(impactService, times(5)).evaluateItineraryForNews(any(Itinerary.class), any(News.class));
     }
 
+    @Test
+    @DisplayName("Should not count trips edited mid-run as model failures")
+    void run_ShouldKeepGoing_WhenTripsWereEditedMidRun() {
+        News n = news(10L);
+        givenCountryWithNews(n);
+        givenPendingItineraries(n, itinerary(1L), itinerary(2L), itinerary(3L), itinerary(4L));
+        // three in a row would stop the run if they counted as the model being down
+        when(impactService.evaluateItineraryForNews(any(Itinerary.class), any(News.class)))
+                .thenThrow(new EditedDuringEvaluationException("Itinerary", 1L))
+                .thenThrow(new EditedDuringEvaluationException("Itinerary", 2L))
+                .thenThrow(new EditedDuringEvaluationException("Itinerary", 3L))
+                .thenReturn(new Impact());
+
+        job(true, 200).run();
+
+        verify(impactService, times(4)).evaluateItineraryForNews(any(Itinerary.class), any(News.class));
+    }
+
     // ===== PER-RUN CAP =====
 
     @Test

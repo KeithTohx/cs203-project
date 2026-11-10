@@ -30,12 +30,12 @@ public class AssessmentSourceGuard {
         // A conditional write acquires SQLite's writer lock. A delete/reinsert cannot
         // slip between validation and persistence, even on another application instance.
         int trip = sql.update("update itinerary set assessment_identity=assessment_identity "
-                + "where id=? and assessment_identity=? and (? or coalesce(assessment_revision,0)=?)",
+                + "where id=? and assessment_identity=? and (? or coalesce(revision,0)=?)",
                 source.tripId(), source.tripIdentity(), source.activityId() != null, source.tripRevision());
         if (trip != 1) throw changed();
         if (source.activityId() != null) {
             int activity = sql.update("update activity set assessment_identity=assessment_identity "
-                    + "where id=? and itinerary_id=? and assessment_identity=? and coalesce(assessment_revision,0)=?",
+                    + "where id=? and itinerary_id=? and assessment_identity=? and coalesce(revision,0)=?",
                     source.activityId(), source.tripId(), source.activityIdentity(), source.activityRevision());
             if (activity != 1) throw changed();
         }
@@ -43,6 +43,6 @@ public class AssessmentSourceGuard {
     }
 
     private OptimisticLockingFailureException changed() {
-        return new OptimisticLockingFailureException("Assessment source was edited, deleted or replaced");
+        return new EditedDuringEvaluationException("Assessment source", null);
     }
 }

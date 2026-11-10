@@ -35,6 +35,7 @@ public class NewItemEvaluationListener {
     private final boolean enabled;
     private final int maxCalls;
     private final AtomicBoolean running = new AtomicBoolean();
+    private final AtomicBoolean wakeRequested = new AtomicBoolean();
     private final ExecutorService worker = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(1), runnable -> {
                 Thread thread = new Thread(runnable, "new-item-evaluation"); thread.setDaemon(true); return thread;
@@ -62,8 +63,21 @@ public class NewItemEvaluationListener {
     @TransactionalEventListener(phase=TransactionPhase.AFTER_COMMIT,fallbackExecution=true)
     public void onActivityEdited(ActivityEditedEvent event) { enqueue(event.activityId(),true); }
 
+    @TransactionalEventListener(phase=TransactionPhase.AFTER_COMMIT,fallbackExecution=true)
+    public void onVerdictsCleared(VerdictsClearedEvent event) {
+        if (!enabled) return;
+        event.newsIdsByTrip().keySet().forEach(id -> enqueue(id,false));
+        event.newsIdsByActivity().keySet().forEach(id -> enqueue(id,true));
+    }
+
     private void enqueue(Long targetId,boolean activity) {
         if (!enabled) return;
+        // AFTER_COMMIT still holds the source connection until its callback returns. Only wake
+        // the worker here; opening a nested transaction deadlocks a single-connection pool.
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
+            retryPending();
+            return;
+        }
         try { queue.enqueue(targetId,activity); }
         catch (RuntimeException exception) { log.warn("New-item scheduling failed after source commit"); }
         retryPending();
@@ -71,12 +85,16 @@ public class NewItemEvaluationListener {
 
     @Scheduled(fixedDelayString = "${impact.eval.new-itinerary.retry-interval-ms:30000}", initialDelay = 15000)
     public void retryPending() {
-        if (!enabled || !running.compareAndSet(false, true)) return;
+        if (!enabled) return;
+        wakeRequested.set(true);
+        if (!running.compareAndSet(false, true)) return;
         try {
             worker.execute(() -> {
-                try { processPending(); }
+                try {
+                    do { wakeRequested.set(false); processPending(); } while (wakeRequested.get());
+                }
                 catch (RuntimeException exception) { log.warn("New-item evaluation deferred; saved tasks will retry"); }
-                finally { running.set(false); }
+                finally { running.set(false); if (wakeRequested.get()) retryPending(); }
             });
         } catch (RejectedExecutionException exception) {
             running.set(false); // shutdown or busy: the durable task is still present
@@ -85,6 +103,7 @@ public class NewItemEvaluationListener {
 
     // Package-private for deterministic integration tests; production calls it through the single worker.
     void processPending() {
+        queue.recoverRequests();
         Budget budget = new Budget(maxCalls);
         int consecutiveFailures=0;
         for (PendingImpactEvaluation task : tasks.findByRetryAtLessThanEqualOrderByRetryAtAscTaskKeyAsc(
@@ -123,6 +142,8 @@ public class NewItemEvaluationListener {
                                         evaluator.evaluateItineraryForNews(trip,article);
                                         consecutiveFailures=0;
                                         progress.resolved(trip.getId(),article.getId(),null);
+                                    } catch (EditedDuringEvaluationException changed) {
+                                        anyFailed=true;
                                     } catch (RuntimeException failure) {
                                         anyFailed=true;
                                         queue.deferArticle(task.getTaskKey(),article.getId(),cursor+1);
@@ -135,6 +156,8 @@ public class NewItemEvaluationListener {
                                         evaluator.evaluateActivityForNews(target,article);
                                         consecutiveFailures=0;
                                         progress.resolved(trip.getId(),article.getId(),target.getId());
+                                    } catch (EditedDuringEvaluationException changed) {
+                                        anyFailed=true;
                                     } catch (RuntimeException failure) {
                                         anyFailed=true;
                                         queue.deferArticle(task.getTaskKey(),article.getId(),cursor+1);

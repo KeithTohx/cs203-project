@@ -2,6 +2,7 @@ package csd.tripsense.activity;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
@@ -19,6 +20,8 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
+import lombok.AccessLevel;
+import jakarta.persistence.PrePersist;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -39,15 +42,39 @@ public class Activity {
     @jakarta.persistence.PrePersist
     private void initializeAssessmentIdentity() {
         assessmentIdentity = java.util.UUID.randomUUID().toString();
+        assignIdentityKey();
     }
 
-    // Null on older rows means revision zero; identity still identifies the row's lifetime.
+    // goes up by one each time something an activity verdict depends on changes: its name,
+    // address or start, the trip it belongs to, or that trip's country. see Itinerary.revision.
+    // null on rows made before this existed, which reads as revision 0. a Long for the same
+    // reason as Itinerary.revision
+    @Column(name = "revision")
     @JsonIgnore
-    @Setter(lombok.AccessLevel.NONE)
-    private Long assessmentRevision;
+    private Long revision;
 
-    public long currentAssessmentRevision() { return assessmentRevision == null ? 0 : assessmentRevision; }
-    public void reviseAssessment() { assessmentRevision = currentAssessmentRevision() + 1; }
+    public long currentRevision() {
+        if (revision == null) {
+            return 0;
+        }
+        return revision;
+    }
+
+    public void bumpRevision() {
+        revision = currentRevision() + 1;
+    }
+
+    // see Itinerary.identityKey, an activity id is handed on the same way
+    @Column(name = "identity_key", length = 36, updatable = false)
+    @JsonIgnore
+    @Setter(AccessLevel.NONE)
+    private String identityKey;
+
+    void assignIdentityKey() {
+        identityKey = UUID.randomUUID().toString();
+    }
+    public long currentAssessmentRevision() { return currentRevision(); }
+    public void reviseAssessment() { bumpRevision(); }
 
     @ManyToOne
     @JoinColumn(name = "itinerary_id", nullable = false)

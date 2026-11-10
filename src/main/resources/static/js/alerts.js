@@ -5,6 +5,7 @@ import { escapeHtml, findToastShelf, newsTitleOf, timeTag } from "./util.js";
 import { icon } from "./icons.js";
 
 const CHECK_EVERY_MS = 60_000;
+const BELL_PAGE_SIZE = 20;
 const MOST_SHOWN = 10;
 const TOAST_SHOWN_MS = 7000;
 
@@ -17,7 +18,7 @@ const state = {
     pollTimer: null,
     slot: null,
     isOpen: false,
-    seenIds: null,       // alerts already loaded, so only ones arriving later pop up. null until the first load
+    seenKeys: null,      // alerts already loaded (see alertKey), so only ones arriving later pop up. null until the first load
     toastAlerts: [],     // what the pop-up on screen is showing, so later alerts can join it
     toastTimer: null,
     onAuthLost: () => { },
@@ -99,13 +100,43 @@ export const findGroupWithAlert = (groups, id) => {
 
 const findGroup = id => findGroupWithAlert(groupsInBell(), id);
 
-// the same alerts in the same order, each still read or unread as before
+// sqlite hands a deleted alert's id to the next one, eg when a trip edit replaces a verdict, so the id alone
+// cannot tell an alert from the one that replaced it. when it was made can
+const alertKey = alert => `${alert.id}@${alert.createdAt}`;
+
+// everything the bell and the alerts page draw from one alert, so a changed reason or name redraws too
+const drawnContent = alert => [
+    alertKey(alert),
+    isUnread(alert),
+    alert.reason,
+    alert.newsTitle,
+    alert.itineraryName,
+    alert.activityName,
+].join("\u0000");
+
+// the same alerts in the same order, each drawn exactly as before
 const isSameList = (oldAlerts, newAlerts) => {
     if (oldAlerts.length !== newAlerts.length) return false;
 
     return oldAlerts.every((alert, index) => {
         const other = newAlerts[index];
-        return alert.id === other.id && isUnread(alert) === isUnread(other);
+        return drawnContent(alert) === drawnContent(other);
+    });
+};
+
+// an alert the old list had that the new one is missing, though it would still fit in it. the list is newest
+// first and only ever loses alerts off its end as newer ones push in, so anything else was deleted or replaced
+const hasLostAlerts = (oldAlerts, newAlerts) => {
+    const newKeys = new Set(newAlerts.map(alertKey));
+    const isFullPage = newAlerts.length >= BELL_PAGE_SIZE;
+    const oldestLoadedId = newAlerts.length ? newAlerts[newAlerts.length - 1].id : null;
+
+    return oldAlerts.some(alert => {
+        const stillThere = newKeys.has(alertKey(alert));
+        if (stillThere) return false;
+
+        const couldHaveDroppedOffTheEnd = isFullPage && alert.id < oldestLoadedId;
+        return !couldHaveDroppedOffTheEnd;
     });
 };
 
@@ -123,6 +154,13 @@ let latestRefresh = 0;
 // Keep them pending until a current, successful refresh can notify the page.
 let historyRevision = 0;
 let refreshedHistoryRevision = 0;
+
+// counts the server's "alerts-changed" events, and how many of them a landed reload has covered. a reload
+// that started after one of these always redraws and tells the alerts page to reload, even when the ids,
+// read states and count all look the same, since a replacement alert can match the deleted one on all three.
+// a reload that started before the event cannot cover it, so it leaves it for the next one
+let removalsReceived = 0;
+let removalsCovered = 0;
 
 // pages with alerts of their own, so they keep up with the bell. each change carries unreadCount and one of
 // newAlerts (with outOfStep, set when the count moved for some other reason), readIds, readUpToId (null for all)
@@ -192,9 +230,10 @@ async function refresh() {
     const thisRefresh = latestRefresh;
     const session = saveSession;
     const thisHistoryRevision = historyRevision;
+    const removalsAtStart = removalsReceived;
 
     try {
-        const page = await api.alerts({ size: 20 });
+        const page = await api.alerts({ size: BELL_PAGE_SIZE });
         const switchedAccount = state.userId !== userId;   // logged out or switched account while waiting
         const isOutdated = thisRefresh !== latestRefresh;   // a newer refresh has started since
         const savingStarted = savesRunning > 0;             // this may be from before the save, the reload after it is not
@@ -203,13 +242,22 @@ async function refresh() {
         clearTimeout(historyRetryTimer);
         historyRetryTimer = null;
         const countBefore = state.unreadCount;
-        const isFirstLoad = state.seenIds == null;
+        const isFirstLoad = state.seenKeys == null;
         const loadedAlerts = page?.content ?? [];
         const loadedCount = page?.unreadCount ?? 0;
 
+        const coversRemoval = removalsAtStart > removalsCovered;
+        if (coversRemoval) removalsCovered = removalsAtStart;
+
+        // alerts deleted or replaced on the server, eg after a trip edit. a replacement can come back with the
+        // same id, read state and count as the alert it replaced, so this looks at what each alert says too
+        const lostAlerts = !isFirstLoad && hasLostAlerts(state.alerts, loadedAlerts);
+        const removedOnServer = coversRemoval || lostAlerts;
+
         // most checks find nothing new, and redrawing anyway would make screen readers read the bell out again
         const sameCount = loadedCount === countBefore;
-        const nothingChanged = !isFirstLoad && sameCount && isSameList(state.alerts, loadedAlerts);
+        const sameAlerts = sameCount && isSameList(state.alerts, loadedAlerts);
+        const nothingChanged = !isFirstLoad && !removedOnServer && sameAlerts;
 
         const listChanged = !isSameList(state.alerts, loadedAlerts);
         state.alerts = loadedAlerts;
@@ -226,7 +274,7 @@ async function refresh() {
         const expectedCount = countBefore + newAlerts.length;
         const historyInvalidated = thisHistoryRevision !== refreshedHistoryRevision;
         const outOfStep = historyInvalidated
-            || !isFirstLoad && (state.unreadCount !== expectedCount || listChanged && !newAlerts.length);
+            || !isFirstLoad && (removedOnServer || state.unreadCount !== expectedCount || listChanged && !newAlerts.length);
         refreshedHistoryRevision = thisHistoryRevision;
         if (newAlerts.length || countChanged || outOfStep) tellListeners({ newAlerts, outOfStep });
     } catch (error) {
@@ -272,6 +320,12 @@ const retryHistory = () => {
     }, HISTORY_RETRY_MS);
 };
 
+// counted before waiting, so the reload after the burst knows it has to redraw whatever it finds
+const refreshAfterRemoval = () => {
+    removalsReceived += 1;
+    refreshAfterBurst();
+};
+
 const canStream = () => Boolean(api.alertStreamUrl) && typeof EventSource !== "undefined";
 
 // While disconnected, recover saved alerts and reconnect a closed stream.
@@ -311,6 +365,9 @@ function connectStream() {
     });
     stream.addEventListener("alert", () => {
         if (state.stream === stream) refreshAfterBurst();
+    });
+    stream.addEventListener("alerts-changed", () => {
+        if (state.stream === stream) refreshAfterRemoval();
     });
     stream.addEventListener("error", () => {
         if (state.stream !== stream) return;
@@ -527,13 +584,14 @@ function draw() {
 
 // new since the last load. the first load only remembers what is there,
 // so logging in or reloading never pops up alerts that were already waiting
+// a replacement alert that reused a deleted one's id still counts as new, since its key differs
 function findNewAlerts() {
-    const isFirstLoad = state.seenIds == null;
-    const seenIds = state.seenIds ?? new Set();
+    const isFirstLoad = state.seenKeys == null;
+    const seenKeys = state.seenKeys ?? new Set();
 
-    const unseen = state.alerts.filter(alert => !seenIds.has(alert.id));
-    for (const alert of state.alerts) seenIds.add(alert.id);
-    state.seenIds = seenIds;
+    const unseen = state.alerts.filter(alert => !seenKeys.has(alertKey(alert)));
+    for (const alert of state.alerts) seenKeys.add(alertKey(alert));
+    state.seenKeys = seenKeys;
 
     if (isFirstLoad) return [];
     return unseen.filter(isUnread);
@@ -716,7 +774,11 @@ export function stopAlerts() {
     state.stream = null;
     state.pollTimer = null;
     state.isOpen = false;
-    state.seenIds = null;
+    state.seenKeys = null;
     state.toastAlerts = [];
+
+    // the next account starts with nothing to cover
+    removalsReceived = 0;
+    removalsCovered = 0;
     state.toastTimer = null;
 }

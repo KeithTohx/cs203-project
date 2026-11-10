@@ -124,6 +124,8 @@ public class ImpactEvaluationJob {
                                 completed++;
                                 judged++;
                                 failures = 0;
+                            } catch (EditedDuringEvaluationException e) {
+                                skipped++;
                             } catch (Exception e) {
                                 skipped++;
                                 if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }
@@ -138,6 +140,8 @@ public class ImpactEvaluationJob {
                                 completed++;
                                 judged++;
                                 failures = 0;
+                            } catch (EditedDuringEvaluationException e) {
+                                skipped++;
                             } catch (Exception e) {
                                 skipped++;
                                 if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }

@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -32,6 +34,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import csd.tripsense.audit.AuditService;
 import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.itinerary.Itinerary;
 import csd.tripsense.itinerary.ItineraryAccess;
@@ -62,6 +65,7 @@ class RecommendationControllerTest {
 
     private RecommendationService recommendationService;
     private ItineraryService itineraryService;
+    private AuditService auditService;
     private RecommendationController controller;
 
     /**
@@ -81,7 +85,8 @@ class RecommendationControllerTest {
         itineraryService = mock(ItineraryService.class);
         // ItineraryAccess only needs the repository for prepareNew, which the controller never calls
         ItineraryAccess access = new ItineraryAccess(mock(UserRepository.class));
-        controller = new RecommendationController(recommendationService, itineraryService, access);
+        auditService = mock(AuditService.class);
+        controller = new RecommendationController(recommendationService, itineraryService, access, auditService);
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 
@@ -345,5 +350,74 @@ class RecommendationControllerTest {
         verifyNoInteractions(recommendationService);
     }
 
-    
+    // ===== AUDIT TRAIL FOR OVERRIDES =====
+
+    // advice on john's trip, as the service would hand it back once john decided on it
+    private Recommendation adviceOnJohnsTrip(long id, RecommendationStatus status) {
+        Impact impact = new Impact();
+        impact.setId(30L);
+        impact.setItinerary(ownedBy(1L, ITINERARY_ID));
+
+        Recommendation recommendation = new Recommendation();
+        recommendation.setId(id);
+        recommendation.setImpact(impact);
+        recommendation.setSeverity(Severity.HIGH);
+        recommendation.setAction(Action.REPLACE);
+        recommendation.setAdvice("Try the museum instead");
+        recommendation.setStatus(status);
+        return recommendation;
+    }
+
+    @Test
+    @DisplayName("Should record who dismissed the AI advice, and what it said")
+    void decide_dismissal_isAudited() {
+        Recommendation dismissed = adviceOnJohnsTrip(5L, RecommendationStatus.DISMISSED);
+        when(recommendationService.decide(5L, RecommendationStatus.DISMISSED, john)).thenReturn(dismissed);
+
+        controller.decide(5L, new StatusRequest(RecommendationStatus.DISMISSED), john);
+
+        verify(auditService).record(eq(AuditService.RECOMMENDATION_DISMISSED), eq(1L), eq("john@example.com"),
+                eq(1L), contains("Try the museum instead"));
+    }
+
+    @Test
+    @DisplayName("Should record accepting and reopening advice as their own actions")
+    void decide_acceptAndReopen_areAudited() {
+        Recommendation accepted = adviceOnJohnsTrip(5L, RecommendationStatus.ACCEPTED);
+        Recommendation reopened = adviceOnJohnsTrip(5L, RecommendationStatus.PENDING);
+        when(recommendationService.decide(5L, RecommendationStatus.ACCEPTED, john)).thenReturn(accepted);
+        when(recommendationService.decide(5L, RecommendationStatus.PENDING, john)).thenReturn(reopened);
+
+        controller.decide(5L, new StatusRequest(RecommendationStatus.ACCEPTED), john);
+        controller.decide(5L, new StatusRequest(RecommendationStatus.PENDING), john);
+
+        verify(auditService).record(eq(AuditService.RECOMMENDATION_ACCEPTED), eq(1L), eq("john@example.com"),
+                eq(1L), contains("recommendation 5"));
+        verify(auditService).record(eq(AuditService.RECOMMENDATION_REOPENED), eq(1L), eq("john@example.com"),
+                eq(1L), contains("recommendation 5"));
+    }
+
+    @Test
+    @DisplayName("Should record which advice was turned down and what replaced it")
+    void regenerate_isAudited() {
+        Recommendation fresh = adviceOnJohnsTrip(6L, RecommendationStatus.PENDING);
+        when(recommendationService.regenerate(5L, john)).thenReturn(fresh);
+
+        controller.regenerate(5L, john);
+
+        verify(auditService).record(eq(AuditService.RECOMMENDATION_REGENERATED), eq(1L), eq("john@example.com"),
+                eq(1L), contains("turned down recommendation 5, offered instead recommendation 6"));
+    }
+
+    @Test
+    @DisplayName("Should record nothing when the decision is refused")
+    void decide_refused_isNotAudited() {
+        when(recommendationService.decide(5L, RecommendationStatus.DISMISSED, bob))
+                .thenThrow(new ItineraryNotFoundException(ITINERARY_ID));
+
+        assertThatThrownBy(() -> controller.decide(5L, new StatusRequest(RecommendationStatus.DISMISSED), bob))
+                .isInstanceOf(ItineraryNotFoundException.class);
+
+        verifyNoInteractions(auditService);
+    }
 }

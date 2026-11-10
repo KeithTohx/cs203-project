@@ -10,6 +10,16 @@ public class PendingEvaluationRequest {
     private Long targetId;
     private boolean activity;
     private Instant requestedAt;
+    @Lob private String extraArticleIds;
+    public java.util.Set<Long> extraArticles() {
+        if (extraArticleIds==null || extraArticleIds.isBlank()) return java.util.Set.of();
+        return java.util.Arrays.stream(extraArticleIds.split(",")).map(Long::valueOf)
+                .collect(java.util.stream.Collectors.toSet());
+    }
+    public void include(java.util.Set<Long> ids) {
+        var all=new java.util.TreeSet<Long>(extraArticles()); all.addAll(ids);
+        extraArticleIds=all.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+    }
     protected PendingEvaluationRequest() {}
     PendingEvaluationRequest(Long targetId, boolean activity) {
         this.id = key(targetId, activity);

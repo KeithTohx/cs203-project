@@ -2,11 +2,16 @@ package csd.tripsense.itinerary;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.time.LocalDateTime;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.context.ApplicationEventPublisher;
+
+import csd.tripsense.activity.Activity;
+import csd.tripsense.country.Country;
 
 @Service
 public class ItineraryServiceImpl implements ItineraryService {
@@ -72,43 +77,77 @@ public class ItineraryServiceImpl implements ItineraryService {
     }
 
     @Override
-    @org.springframework.transaction.annotation.Transactional
+    @Transactional
     public Itinerary addItinerary(Itinerary itinerary){
         Itinerary saved = itineraries.save(itinerary);
         events.publishEvent(new ItineraryCreatedEvent(saved.getId()));
         return saved;
     }
 
-    @Override 
-    @org.springframework.transaction.annotation.Transactional
+    // one transaction, so the new revisions, the activities' country, the cleared verdicts and the
+    // itinerary itself are saved together, and the re-evaluation only starts once all of it has
+    // committed
+    @Override
+    @Transactional
     public Itinerary updateItinerary(Long id, Itinerary newItineraryInfo){
         return itineraries.findById(id).map(itinerary -> {
-            Long oldCountry = itinerary.getCountry() == null ? null : itinerary.getCountry().getId();
-            Long newCountry = newItineraryInfo.getCountry() == null ? null : newItineraryInfo.getCountry().getId();
-            boolean countryChanged = !java.util.Objects.equals(oldCountry, newCountry);
-            boolean changed = countryChanged
-                    || !java.util.Objects.equals(itinerary.getName(), newItineraryInfo.getName())
-                    || !java.util.Objects.equals(itinerary.getDateStart(), newItineraryInfo.getDateStart())
-                    || !java.util.Objects.equals(itinerary.getDateEnd(), newItineraryInfo.getDateEnd());
+            Long oldCountryId = countryId(itinerary.getCountry());
+            String oldName = itinerary.getName();
+            LocalDateTime oldStart = itinerary.getDateStart();
+            LocalDateTime oldEnd = itinerary.getDateEnd();
+
             itinerary.setCountry(newItineraryInfo.getCountry());
             itinerary.setName(newItineraryInfo.getName());
             itinerary.setDateStart(newItineraryInfo.getDateStart());
             itinerary.setDateEnd(newItineraryInfo.getDateEnd());
-            if (changed) itinerary.reviseAssessment();
-            if (countryChanged && itinerary.getActivities() != null) {
-                for (var activity : itinerary.getActivities()) {
-                    activity.setCountry(itinerary.getCountry());
-                    activity.reviseAssessment();
-                }
+
+            boolean countryChanged = !Objects.equals(oldCountryId, countryId(itinerary.getCountry()));
+            boolean renamed = !Objects.equals(oldName, itinerary.getName());
+            boolean datesChanged = !Objects.equals(oldStart, itinerary.getDateStart())
+                    || !Objects.equals(oldEnd, itinerary.getDateEnd());
+
+            // the whole trip prompt shows the model the trip's name, country and dates
+            boolean judgedDetailsChanged = countryChanged || renamed || datesChanged;
+            if (judgedDetailsChanged) {
+                itinerary.bumpRevision();
             }
+
+            // activities keep their own copy of the country, and the news job matches on it
+            if (countryChanged) {
+                moveActivitiesTo(itinerary);
+            }
+
             Itinerary saved = itineraries.save(itinerary);
-            if (changed) events.publishEvent(new ItineraryEditedEvent(saved.getId()));
+            if (judgedDetailsChanged) {
+                events.publishEvent(new ItineraryEditedEvent(saved.getId()));
+            }
             return saved;
         }).orElseThrow(() -> new ItineraryNotFoundException(id));
     }
 
+    // the activities are managed inside the transaction, so setting the fields is enough to save
+    // them. each one gets a new revision too, since its verdicts were about news from the old country
+    private static void moveActivitiesTo(Itinerary itinerary) {
+        List<Activity> itsActivities = itinerary.getActivities();
+        if (itsActivities == null) {
+            return;
+        }
+
+        for (Activity activity : itsActivities) {
+            activity.setCountry(itinerary.getCountry());
+            activity.bumpRevision();
+        }
+    }
+
+    private static Long countryId(Country country) {
+        if (country == null) {
+            return null;
+        }
+        return country.getId();
+    }
+
     @Override 
-    @org.springframework.transaction.annotation.Transactional
+    @Transactional
     public void deleteItinerary(Long id){
         if (!itineraries.existsById(id)) {
             throw new ItineraryNotFoundException(id);
@@ -133,5 +172,10 @@ public class ItineraryServiceImpl implements ItineraryService {
         public List<Itinerary> getItinerariesPendingForNews(Long newsId, Long countryId, LocalDateTime now) {
             return itineraries.findPendingForNews(newsId, countryId, now);
         }
+
+    @Override
+    public Optional<Long> findRevision(Itinerary itinerary) {
+        return itineraries.findRevision(itinerary.getId(), itinerary.getIdentityKey());
+    }
 
 }

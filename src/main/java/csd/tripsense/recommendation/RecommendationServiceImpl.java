@@ -13,8 +13,11 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionOperations;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.auth.CurrentUser;
@@ -46,6 +49,8 @@ import csd.tripsense.user.preference.UserPreference;
 @Service
 public class RecommendationServiceImpl implements RecommendationService {
 
+    private static final Logger log = LoggerFactory.getLogger(RecommendationServiceImpl.class);
+
     // matches @Column(length = 500) on Recommendation.advice, a longer string fails the insert
     private static final int ADVICE_MAX = 500;
 
@@ -62,6 +67,7 @@ public class RecommendationServiceImpl implements RecommendationService {
     private final ChatService chatService;
     private final PreferenceService preferenceService;
     private final ItineraryAccess access;
+    private final TransactionOperations transactions;
     private final RecommendationWriteGuard writeGuard;
 
     public RecommendationServiceImpl(RecommendationRepository recommendations,
@@ -69,7 +75,8 @@ public class RecommendationServiceImpl implements RecommendationService {
                                      ImpactService impactService,
                                      ItineraryService itineraryService,
                                      ChatService chatService,
-                                     PreferenceService preferenceService, ItineraryAccess access, RecommendationWriteGuard writeGuard) {
+                                     PreferenceService preferenceService, ItineraryAccess access,
+                                     TransactionOperations transactions, RecommendationWriteGuard writeGuard) {
         this.recommendations = recommendations;
         this.options = options;
         this.impactService = impactService;
@@ -77,7 +84,8 @@ public class RecommendationServiceImpl implements RecommendationService {
         this.chatService = chatService;
         this.preferenceService = preferenceService;
         this.access = access;
-        this.writeGuard = writeGuard;
+        this.transactions = transactions;
+        this.writeGuard=writeGuard;
     }
 
     /** the shape we ask the model to answer in */
@@ -110,7 +118,10 @@ public class RecommendationServiceImpl implements RecommendationService {
 
         List<Recommendation> made = new ArrayList<>();
         for (Impact impact : impactService.findImpacted(userId, itineraryId)) {
-            made.add(forImpact(itinerary, impact, prefs, version));
+            // empty when the verdict changed while the model was writing, see saveIfImpactUnchanged.
+            // the edit that changed it has queued its own evaluation, and the next generate covers it
+            Optional<Recommendation> recommendation = forImpact(itinerary, impact, prefs, version);
+            recommendation.ifPresent(made::add);
         }
         markStale(made, prefs);
         return sorted(made);
@@ -177,7 +188,14 @@ public class RecommendationServiceImpl implements RecommendationService {
 
         UserPreference prefs = preferenceService.getPreferences(impact.getItinerary().getUser().getId());
         Instant version = prefs.getUpdatedAt();
-        return store(new Recommendation(), impact, draft(impact.getItinerary(), impact, prefs, seen), version);
+        Draft draft = draft(impact.getItinerary(), impact, prefs, seen);
+
+        // same guard as generate. the traveller asked for this one, so they are told it was not saved
+        Optional<Recommendation> fresh = transactions.execute(status -> {
+            Optional<Impact> current = impactService.findUnchanged(impact);
+            return current.map(unchanged -> store(new Recommendation(), unchanged, draft, version));
+        });
+        return fresh.orElseThrow(() -> new AdviceOutdatedException(impact.getId()));
     }
 
     @Override
@@ -211,24 +229,56 @@ public class RecommendationServiceImpl implements RecommendationService {
      *
      * Work out the replacement before writing, then update only the newest attempt in place.
      * Older attempts and the traveller's decision remain available as history.
+     *
+     * Empty when the impact changed while the model was writing, so the draft was thrown away.
      */
-    private Recommendation forImpact(Itinerary itinerary, Impact impact, UserPreference prefs,
-                                     Instant version) {
+    private Optional<Recommendation> forImpact(Itinerary itinerary, Impact impact, UserPreference prefs,
+                                               Instant version) {
         Optional<Recommendation> cached = recommendations.findFirstByImpactIdOrderByIdDesc(impact.getId());
         if (cached.isPresent() && !isStale(cached.get(), prefs)) {
-            return cached.get();
+            return cached;
         }
 
         // slow (it calls the model) and writes nothing
         Draft draft = draft(itinerary, impact, prefs);
 
         try {
-            // the existing row when there is one, otherwise a new one
-            return store(cached.orElseGet(Recommendation::new), impact, draft, version);
+            return transactions.execute(status -> saveIfImpactUnchanged(impact, draft, prefs, version));
         } catch (DataIntegrityViolationException e) {
             // Preserve the previous attempt if a constrained save fails.
-            return recommendations.findFirstByImpactIdOrderByIdDesc(impact.getId()).orElseThrow(() -> e);
+            Optional<Recommendation> previous = recommendations.findFirstByImpactIdOrderByIdDesc(impact.getId());
+            return Optional.of(previous.orElseThrow(() -> e));
         }
+    }
+
+    // runs inside one transaction, so nothing can change between the checks and the save.
+    //
+    // the model takes seconds, and in that time the traveller can edit the activity. the edit deletes
+    // the impact (StaleVerdictCleaner), and sqlite may give its id to the verdict judged on the new
+    // details, so saving by id would attach advice about the old plans to the new verdict.
+    // findUnchanged compares the verdict key as well, and the draft is dropped if it does not match.
+    //
+    // the newest attempt is read again here too, rather than saving the copy loaded before the model
+    // ran. the traveller may have accepted or dismissed it meanwhile, and saving the old copy would
+    // quietly undo that decision
+    private Optional<Recommendation> saveIfImpactUnchanged(Impact impact, Draft draft, UserPreference prefs,
+                                                           Instant version) {
+        Optional<Impact> current = impactService.findUnchanged(impact);
+        if (current.isEmpty()) {
+            log.info("Impact {} changed while its advice was being written, draft discarded", impact.getId());
+            return Optional.empty();
+        }
+
+        Optional<Recommendation> newest = recommendations.findFirstByImpactIdOrderByIdDesc(impact.getId());
+        boolean refreshedMeanwhile = newest.isPresent() && !isStale(newest.get(), prefs);
+        if (refreshedMeanwhile) {
+            // another request already wrote advice for these preferences
+            return newest;
+        }
+
+        // the existing row when there is one, otherwise a new one
+        Recommendation target = newest.orElseGet(Recommendation::new);
+        return Optional.of(store(target, current.get(), draft, version));
     }
 
     /**

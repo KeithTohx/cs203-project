@@ -11,8 +11,8 @@
  * <ul>
  * <li>GET /api/alerts?beforeId=&amp;size=20&amp;unreadOnly=false: saved history, newest first, and
  * unreadCount. Send the response's nextBeforeId back as beforeId to load older alerts.</li>
- * <li>GET /api/alerts/stream: ready/alert SSE events, session cookie required. Fetch history
- * on every ready event to recover any missed messages. Streams expire after 30 minutes
+ * <li>GET /api/alerts/stream: ready/alert/alerts-changed SSE events, session cookie required. Fetch history
+ * on every ready event and alerts-changed event to recover any missed messages. Streams expire after 30 minutes
  * and clients can reconnect; heartbeats are sent every 15 seconds. If the live-delivery queue
  * overflows, affected streams receive another ready event on their next heartbeat so clients
  * reload saved history even while the connection remains healthy. Each connection has at most

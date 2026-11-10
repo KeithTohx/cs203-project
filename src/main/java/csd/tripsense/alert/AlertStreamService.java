@@ -99,6 +99,30 @@ public class AlertStreamService {
         }
     }
 
+    // a removal is never followed by an alert event of its own, so without this a connected browser
+    // keeps showing the deleted alert and its unread count. it stops polling while the stream is up
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onRemoved(AlertsRemovedEvent event) {
+        try {
+            delivery.execute(() -> deliverRemoval(event));
+        } catch (RejectedExecutionException exception) {
+            Set<Connection> recipients = connections.get(event.userId());
+            if (recipients != null) recipients.forEach(connection -> connection.historyRefreshRequired.set(true));
+            log.warn("Live alert delivery busy; history refresh requested for user {}", event.userId());
+        }
+    }
+
+    // package private for the same reason as deliver
+    void deliverRemoval(AlertsRemovedEvent event) {
+        Set<Connection> recipients = connections.get(event.userId());
+        if (recipients == null) {
+            return;
+        }
+        for (Connection connection : recipients) {
+            send(connection, SseEmitter.event().name("alerts-changed").data("GET /api/alerts for the current list"));
+        }
+    }
+
     void heartbeat() {
         try {
             connections.values().forEach(set -> set.forEach(connection -> write(connection, () -> {

@@ -13,8 +13,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionOperations;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityCategory;
@@ -44,6 +46,10 @@ class RecommendationServiceImplMainTest {
 
     @Mock private csd.tripsense.user.preference.PreferenceService preferenceService;
 
+    // a real one that runs the guarded save straight away, there is no database to open a
+    // transaction on. a spy so @InjectMocks passes it to the constructor
+    @Spy private TransactionOperations transactions = TransactionOperations.withoutTransaction();
+
     @InjectMocks
     private RecommendationServiceImpl recommendationService;
 
@@ -66,6 +72,9 @@ class RecommendationServiceImplMainTest {
         lenient().when(writeGuard.saveIfCurrent(any(),any())).thenAnswer(inv ->
                 ((java.util.function.Supplier<Recommendation>)inv.getArgument(1)).get());
         lenient().when(preferenceService.getPreferences(anyLong())).thenReturn(new csd.tripsense.user.preference.UserPreference(null));
+        // the impact is never edited while the model answers in these tests
+        lenient().when(impactService.findUnchanged(any(Impact.class)))
+                .thenAnswer(invocation -> Optional.of(invocation.getArgument(0)));
         User traveller = new User("traveller@example.com", "traveller", "hash", "USER");
         ReflectionTestUtils.setField(traveller, "id", 7L);
 

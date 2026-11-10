@@ -56,7 +56,7 @@
                 openPanel: () => { state.isOpen=true; },
                 disconnect: () => { state.stream.readyState=0; state.stream.listeners.error(); },
                 closeStream: () => { state.stream.readyState=2; state.stream.listeners.error(); },
-                checkAgain, incomingAlert:()=>state.stream.listeners.alert(), advance,
+                checkAgain, incomingAlert:()=>state.stream.listeners.alert(), removed:()=>state.stream.listeners["alerts-changed"](), advance,
                 scheduledRetries:()=>timers.size+intervals,
                 hold: promise => queueSave(() => promise), setUser: id => { state.userId=id; } };
         `);
@@ -302,6 +302,15 @@
         assert(changes.length===1 && changes[0].outOfStep===true,
             "A server invalidation must refresh older history even if the newest page and unread count are unchanged");
         passed.push("reload older history after a server invalidation from another device");
+    }
+    {
+        const history={promise:Promise.resolve(readHistory())}, f=fixture(null,history);
+        f.alerts.mount(); await settle(); f.alerts.connect(); f.alerts.ready(); await settle();
+        const changes=[]; f.alerts.onAlertsChanged(change=>changes.push(change));
+        f.alerts.removed(); await f.alerts.advance(500); await settle();
+        assert(changes.length===1 && changes[0].outOfStep===true,
+            "A removal event must invalidate older history even when the bell has identical ids and counts");
+        passed.push("reload older history after alerts-changed from an edit");
     }
     globalThis.alertSessionTestResults = { ok: true, passed };
     globalThis.console?.log(`${passed.length} alert session tests passed`);

@@ -1,6 +1,7 @@
 package csd.tripsense.alert;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 
@@ -400,6 +401,14 @@ class AlertStreamServiceTest {
             return sent.stream().filter(part -> part instanceof String text && text.contains("event:ready")).count();
         }
 
+        // the event name goes out as text ahead of the data, eg "event:alerts-changed"
+        boolean received(String eventName) {
+            return sent.stream()
+                    .filter(String.class::isInstance)
+                    .map(String.class::cast)
+                    .anyMatch(part -> part.contains("event:" + eventName + "\n"));
+        }
+
         // the ready message is sent as plain text, so only the alert payloads are kept
         List<Object> alerts() {
             return sent.stream()
@@ -417,4 +426,37 @@ class AlertStreamServiceTest {
         assertEquals(2,emitters.get(1).readyEvents());
         assertEquals(1,emitters.get(2).readyEvents());
     }
+    @Test
+    @DisplayName("Should tell every session of the owner that alerts were removed, and no one else")
+    void deliverRemoval_ShouldReachOnlyOwner() {
+        // Arrange
+        streamService.subscribe(1L, loggedInSession(1L));
+        streamService.subscribe(1L, loggedInSession(1L));
+        streamService.subscribe(2L, loggedInSession(2L));
+
+        // Act
+        streamService.deliverRemoval(new AlertsRemovedEvent(1L));
+
+        // Assert
+        assertTrue(emitters.get(0).received("alerts-changed"));
+        assertTrue(emitters.get(1).received("alerts-changed"));
+        assertFalse(emitters.get(2).received("alerts-changed"));
+        // nothing about the deleted alerts is sent, the browser asks for the list again
+        assertTrue(emitters.get(0).alerts().isEmpty());
+    }
+
+    @Test
+    @DisplayName("Should do nothing when the owner has no open stream")
+    void deliverRemoval_ShouldDoNothing_WhenOwnerNotConnected() {
+        // Arrange
+        streamService.subscribe(2L, loggedInSession(2L));
+
+        // Act
+        streamService.deliverRemoval(new AlertsRemovedEvent(1L));
+
+        // Assert
+        assertFalse(emitters.getFirst().received("alerts-changed"));
+        assertFalse(emitters.getFirst().isClosed());
+    }
+
 }

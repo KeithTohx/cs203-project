@@ -1,0 +1,257 @@
+# Country names as GDELT writes them in the GKG location column, one per line: Name|FIPS code (case ignored).
+# GkgParser only treats a country-level (type 1) location as a place in the headline if its name is listed here,
+# which keeps nationalities such as 'Polish' or 'Venezuelan' (GDELT lists them as locations too) from counting.
+# The code lets a headline that uses a different spelling from the location rows (Myanmar vs Burma, England,
+# Bharat) still name its country. A name with no code is shared by several countries (Congo, Korea, Palestine);
+# it only counts if a location row gives the code. 'Name|-' is a region that is not a country (South America):
+# it is skipped when looking for places so it does not match as 'America'.
+# Add a name here if GDELT or a headline uses a spelling that is missing.
+Afghanistan|AF
+Albania|AL
+Algeria|AG
+American Samoa|AQ
+America|US
+Andorra|AN
+Angola|AO
+Anguilla|AV
+Antigua and Barbuda|AC
+Argentina|AR
+Armenia|AM
+Aruba|AA
+Australia|AS
+Austria|AU
+Azerbaijan|AJ
+Bahamas|BF
+Bahrain|BA
+Bangladesh|BG
+Barbados|BB
+Belarus|BO
+Belgium|BE
+Belize|BH
+Benin|BN
+Bermuda|BD
+Bharat|IN
+Bhutan|BT
+Bolivia|BL
+Bosnia and Herzegovina|BK
+Botswana|BC
+Brazil|BR
+Britain|UK
+Brunei|BX
+Bulgaria|BU
+Burkina Faso|UV
+Burma|BM
+Burundi|BY
+Cambodia|CB
+Cameroon|CM
+Canada|CA
+Cape Verde|CV
+Cayman Islands|CJ
+Central African Republic|CT
+Central America|-
+Chad|CD
+Chile|CI
+China|CH
+Colombia|CO
+Comoros|CN
+Congo
+Cook Islands|CW
+Costa Rica|CS
+Croatia|HR
+Cuba|CU
+Curacao|UC
+Curaçao|UC
+Cyprus|CY
+Czech Republic|EZ
+Czechia|EZ
+Democratic Republic of the Congo|CG
+Denmark|DA
+Djibouti|DJ
+Dominican Republic|DR
+Dominica|DO
+East Timor|TT
+Ecuador|EC
+Egypt|EG
+El Salvador|ES
+England|UK
+Equatorial Guinea|EK
+Eritrea|ER
+Estonia|EN
+Eswatini|WZ
+Ethiopia|ET
+Faroe Islands|FO
+Federated States of Micronesia|FM
+Fiji|FJ
+Finland|FI
+France|FR
+French Polynesia|FP
+Gabon|GB
+Gambia|GA
+Gaza Strip|GZ
+Gaza|GZ
+Georgia|GG
+Germany|GM
+Ghana|GH
+Gibraltar|GI
+Greece|GR
+Greenland|GL
+Grenada|GJ
+Guadeloupe|GP
+Guam|GQ
+Guatemala|GT
+Guernsey|GK
+Guinea-Bissau|PU
+Guinea|GV
+Guyana|GY
+Haiti|HA
+Holland|NL
+Honduras|HO
+Hong Kong|HK
+Hungary|HU
+Iceland|IC
+India|IN
+Indonesia|ID
+Iran|IR
+Iraq|IZ
+Ireland|EI
+Isle of Man|IM
+Israel|IS
+Italy|IT
+Ivory Coast|IV
+Jamaica|JM
+Japan|JA
+Jersey|JE
+Jordan|JO
+Kazakhstan|KZ
+Kenya|KE
+Kingdom of the Netherlands|NL
+Kiribati|KR
+Korea
+Kosovo|KV
+Kuwait|KU
+Kyrgyzstan|KG
+Laos|LA
+Latin America|-
+Latvia|LG
+Lebanon|LE
+Lesotho|LT
+Liberia|LI
+Libya|LY
+Liechtenstein|LS
+Lithuania|LH
+Luxembourg|LU
+Macau|MC
+Macedonia|MK
+Madagascar|MA
+Malawi|MI
+Malaysia|MY
+Maldives|MV
+Mali|ML
+Malta|MT
+Marshall Islands|RM
+Martinique|MB
+Mauritania|MR
+Mauritius|MP
+Mexico|MX
+Moldova|MD
+Monaco|MN
+Mongolia|MG
+Montenegro|MJ
+Morocco|MO
+Mozambique|MZ
+Myanmar|BM
+Namibia|WA
+Nauru|NR
+Nepal|NP
+Netherlands|NL
+New Caledonia|NC
+New Zealand|NZ
+Nicaragua|NU
+Nigeria|NI
+Niger|NG
+Niue|NE
+North America|-
+North Korea|KN
+North Macedonia|MK
+Norway|NO
+Oman|MU
+Pakistan|PK
+Palau|PS
+Palestine
+Panama|PM
+Papua New Guinea|PP
+Paraguay|PA
+People's Republic of China|CH
+Peru|PE
+Philippines|RP
+Poland|PL
+Portugal|PO
+Puerto Rico|RQ
+Qatar|QA
+Republic of the Congo|CF
+Reunion|RE
+Romania|RO
+Russia|RS
+Rwanda|RW
+Saint Kitts and Nevis|SC
+Saint Lucia|ST
+Saint Vincent and the Grenadines|VC
+Samoa|WS
+San Marino|SM
+Saudi Arabia|SA
+Scotland|UK
+Senegal|SG
+Serbia|RI
+Seychelles|SE
+Sierra Leone|SL
+Singapore|SN
+Sint Maarten|NN
+Slovakia|LO
+Slovenia|SI
+Solomon Islands|BP
+Somalia|SO
+South Africa|SF
+South America|-
+South Korea|KS
+South Sudan|OD
+Spain|SP
+Sri Lanka|CE
+Sudan|SU
+Suriname|NS
+Swaziland|WZ
+Sweden|SW
+Switzerland|SZ
+Syria|SY
+São Tomé and Príncipe|TP
+Taiwan|TW
+Tajikistan|TI
+Tanzania|TZ
+Thailand|TH
+The Bahamas|BF
+The Gambia|GA
+Timor-Leste|TT
+Togo|TO
+Tonga|TN
+Trinidad and Tobago|TD
+Tunisia|TS
+Turkey|TU
+Turkmenistan|TX
+Tuvalu|TV
+UAE|AE
+Uganda|UG
+Ukraine|UP
+United Arab Emirates|AE
+United Kingdom|UK
+United States|US
+Uruguay|UY
+Uzbekistan|UZ
+Vanuatu|NH
+Vatican City|VT
+Venezuela|VE
+Vietnam|VM
+Wales|UK
+Wallis and Futuna|WF
+West Bank|WE
+Yemen|YM
+Zambia|ZA
+Zimbabwe|ZI
