@@ -1,6 +1,7 @@
 // admin only: every account, searched and paged on the backend
 import { api } from "../api.js";
-import { createPager, debounce, escapeHtml, flash, formPage, passwordProblem, PASSWORD_MAX, PASSWORD_MIN, showError } from "../util.js";
+import { createPager, debounce, escapeHtml, flash, formPage, loading, noMatches, pageHead,
+         passwordProblem, PASSWORD_MAX, PASSWORD_MIN, showError } from "../util.js";
 
 // same rule as the backend, the "-" is escaped because pattern attributes use the strict "v" regex mode
 const USERNAME_PATTERN = "[A-Za-z0-9_.\\-]+";
@@ -75,12 +76,9 @@ const findById = async search => {
 
 export async function showAdminUsers(root, user, onAuthLost) {
     root.innerHTML = `
-        <div class="row">
-            <h1>Users</h1>
-            <a class="btn" href="#/admin/users/new">New user</a>
-        </div>
+        ${pageHead("Users", `<a class="btn" href="#/admin/users/new">New user</a>`)}
         <div class="card">
-            <div class="row">
+            <div class="row filters">
                 <label for="user-search" class="sr-only">Search users</label>
                 <input id="user-search" type="search" placeholder="Search by ID, username or email" autocomplete="off">
                 <div class="filter">
@@ -88,9 +86,7 @@ export async function showAdminUsers(root, user, onAuthLost) {
                 </div>
             </div>
             <p class="meta" id="user-count" role="status"></p>
-            <div id="user-list">
-                <div class="msg">Loading…</div>
-            </div>
+            <div id="user-list">${loading()}</div>
         </div>
     `;
 
@@ -146,7 +142,7 @@ export async function showAdminUsers(root, user, onAuthLost) {
         const hasAny = showIdMatch || result.content.length > 0;
         userList.innerHTML = hasAny
             ? idMatchSection + pagedList
-            : `<p class="meta">No users match your search.</p>`;
+            : noMatches("No user");
     };
 
     // a new search or page size always starts again from the first page

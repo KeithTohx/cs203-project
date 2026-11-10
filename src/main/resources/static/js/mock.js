@@ -114,6 +114,9 @@ const IMPACTS = {
 // same shape as RecommendationResponse, the onsen and universal studios start without one
 const makeRecommendation = (id, impact, severity, action, advice, option = null) => ({
     id, severity, action, advice,
+    status: "PENDING",
+    decidedAt: null,
+    stale: false,
     impactId: impact.id,
     reason: impact.reason,
     itineraryId: Number(Object.keys(IMPACTS).find(key => IMPACTS[key].includes(impact))),
@@ -1160,10 +1163,60 @@ export const mockApi = {
         return respondWith(impact);
     },
     // stored ones only, including rows for impacts rejected later
-    itineraryRecommendations: id => {
+    itineraryRecommendations: (id, includeDismissed = false) => {
         if (requireLogin() || !myItinerary(id)) return requireLogin() || fail(404, "Itinerary not found.");
-        return respondWith(worstFirst(RECOMMENDATIONS[id] ?? []));
+
+        // only the newest attempt per impact, so the earlier tries stay as history
+        const newest = new Map();
+        for (const recommendation of RECOMMENDATIONS[id] ?? []) newest.set(recommendation.impactId, recommendation);
+        const shown = [...newest.values()].filter(recommendation => includeDismissed || recommendation.status !== "DISMISSED");
+        return respondWith(worstFirst(shown));
     },
+    // accepting or dismissing, and back to pending to undo it
+    decideRecommendation: (id, status) => {
+        if (requireLogin()) return requireLogin();
+
+        for (const itineraryId of Object.keys(RECOMMENDATIONS)) {
+            if (!myItinerary(itineraryId)) continue;
+            const found = RECOMMENDATIONS[itineraryId].find(recommendation => recommendation.id === Number(id));
+            if (!found) continue;
+
+            found.status = status;
+            // kept as a full instant so it reads back in the browser's own timezone
+            found.decidedAt = status === "PENDING" ? null : new Date().toISOString();
+            return respondWith(found);
+        }
+        return fail(404, "Recommendation not found.");
+    },
+    // a fresh attempt for the same impact, offering somewhere not suggested before
+    regenerateRecommendation: id => {
+        if (requireLogin()) return requireLogin();
+
+        const itineraryId = Object.keys(RECOMMENDATIONS)
+            .find(key => RECOMMENDATIONS[key].some(recommendation => recommendation.id === Number(id)));
+        const itinerary = itineraryId && myItinerary(itineraryId);
+        if (!itinerary) return fail(404, "Recommendation not found.");
+
+        const stored = RECOMMENDATIONS[itineraryId];
+        const previous = stored.find(recommendation => recommendation.id === Number(id));
+        const alreadyOffered = new Set(stored
+            .filter(recommendation => recommendation.impactId === previous.impactId)
+            .map(recommendation => recommendation.optionId));
+        const option = (OPTIONS[itinerary.countryName] ?? []).find(place => !alreadyOffered.has(place.id)) ?? null;
+
+        const impact = (IMPACTS[itineraryId] ?? []).find(each => each.id === previous.impactId);
+        const made = makeRecommendation(nextRecommendationId++, impact, previous.severity,
+            option ? "RELOCATE" : "MONITOR",
+            option
+                ? `(mock alternative) ${option.name} in ${option.area} is open and close by, so go there instead.`
+                : "(mock alternative) Nothing else nearby fits, so keep an eye on local updates.",
+            option);
+        stored.push(made);
+        return new Promise(resolve => setTimeout(resolve, 1500)).then(() => respondWith(made));
+    },
+    // every attempt for one impact, oldest first, since the ids only go up
+    impactRecommendations: impactId => requireLogin() || respondWith(Object.values(RECOMMENDATIONS).flat()
+        .filter(recommendation => recommendation.impactId === Number(impactId))),
     // one per current impact, reusing any already made, and slow like the real model
     generateRecommendations: itineraryId => {
         const itinerary = myItinerary(itineraryId);
@@ -1174,7 +1227,8 @@ export const mockApi = {
         const options = OPTIONS[itinerary.countryName] ?? [];
 
         const current = currentImpacts.map(impact => {
-            const existing = stored.find(recommendation => recommendation.impactId === impact.id);
+            // the newest attempt, so regenerating does not bring an earlier one back
+            const existing = stored.findLast(recommendation => recommendation.impactId === impact.id);
             if (existing) return existing;
 
             const answer = MOCK_ANSWERS[impact.id];

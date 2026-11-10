@@ -204,7 +204,7 @@ class AlertIntegrationTest {
             // an impacted answer has to name a kind or the service overrules it
             Class<?> kind = constructor.getParameterTypes()[1];
             return constructor.newInstance(reason,
-                    Enum.valueOf((Class<Enum>) kind, affected ? "DISASTER" : "NONE"), affected);
+                    Enum.valueOf((Class<Enum>) kind, affected ? "DISASTER" : "NONE"), 90, affected);
         });
     }
 

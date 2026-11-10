@@ -89,6 +89,10 @@ public class ActivityServiceImpl implements ActivityService {
             activity.setAddress(newActivityInfo.getAddress());
             activity.setDateStart(newActivityInfo.getDateStart());
             activity.setDateEnd(newActivityInfo.getDateEnd());
+            // without this an edit wiped the category, and no category means no shortlist,
+            // so the advice could never name a replacement. not a judged field, the model is
+            // never told the category, so it does not bump the revision
+            activity.setCategory(newActivityInfo.getCategory());
 
             // the model was asked about the name, address and start. a move to another trip also
             // counts, since its verdicts still point at the old itinerary and may be about news

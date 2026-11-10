@@ -3,7 +3,9 @@
 
 [Unit]
 Description=TripSense API
-After=network.target ollama.service
+# ollama is only the fallback now, so it is wanted rather than required
+After=network.target
+Wants=ollama.service
 
 [Service]
 User=ubuntu
@@ -11,7 +13,7 @@ WorkingDirectory=/opt/tripsense
 EnvironmentFile=/etc/tripsense.env
 # lets a non-root process bind port 80, no proxy and no running as root
 AmbientCapabilities=CAP_NET_BIND_SERVICE
-# quarter of the 4GB VM is about 1GB heap, rest is for ollama and the OS
+# quarter of the 8GB VM is about 2GB heap, rest is for the OS and the ollama fallback
 ExecStart=/usr/bin/java -XX:MaxRAMPercentage=25 -jar target/app.jar
 Restart=always
 RestartSec=5

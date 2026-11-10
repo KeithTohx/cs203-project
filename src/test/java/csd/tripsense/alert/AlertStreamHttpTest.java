@@ -156,7 +156,7 @@ class AlertStreamHttpTest {
             // an impacted answer has to name a kind or the service overrules it
             Class<?> kind = constructor.getParameterTypes()[1];
             return constructor.newInstance("Resort closed after earthquake",
-                    Enum.valueOf((Class<Enum>) kind, "DISASTER"), true);
+                    Enum.valueOf((Class<Enum>) kind, "DISASTER"), 90, true);
         });
     }
 

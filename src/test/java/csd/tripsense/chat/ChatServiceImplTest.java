@@ -7,6 +7,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.prompt.ChatOptions;
 
 // unit tests for ChatServiceImpl, the one class that talks to the model
 // ChatClient is used as a chain (prompt().user().call().content()), so it is mocked with deep stubs,
@@ -26,7 +27,61 @@ class ChatServiceImplTest {
         chatClient = mock(ChatClient.class, RETURNS_DEEP_STUBS);
         ChatClient.Builder builder = mock(ChatClient.Builder.class);
         when(builder.build()).thenReturn(chatClient);
-        chatService = new ChatServiceImpl(builder);
+        // 0 turns the rate limiter off, so the tests do not wait
+        chatService = new ChatServiceImpl(builder, 0, "");
+    }
+
+    // ===== FALLING BACK TO ANOTHER MODEL =====
+
+    private ChatServiceImpl withModels(String models) {
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        when(builder.build()).thenReturn(chatClient);
+        return new ChatServiceImpl(builder, 0, models);
+    }
+
+    // with a model list the service names the model, so the stub has to go through options()
+    private org.mockito.stubbing.OngoingStubbing<String> whenAskedWithAModel(String prompt) {
+        return when(chatClient.prompt().user(prompt).options(any(ChatOptions.Builder.class))
+                .call().content());
+    }
+
+    @Test
+    @DisplayName("Should ask the next model when the first has used up its budget")
+    void ask_ShouldFallBack_WhenFirstModelIsOutOfBudget() {
+        ChatServiceImpl service = withModels("big-model,small-model");
+        whenAskedWithAModel("Is Niseko open?")
+                .thenThrow(new RuntimeException("429: Rate limit reached on tokens per day (TPD)"))
+                .thenReturn("Yes, the lifts are running.");
+
+        String answer = service.ask("Is Niseko open?");
+
+        assertEquals("Yes, the lifts are running.", answer);
+    }
+
+    @Test
+    @DisplayName("Should say so when every model has used up its budget")
+    void ask_ShouldReportFailure_WhenEveryModelIsOutOfBudget() {
+        ChatServiceImpl service = withModels("big-model,small-model");
+        whenAskedWithAModel("Is Niseko open?")
+                .thenThrow(new RuntimeException("429: Rate limit reached on tokens per day (TPD)"));
+
+        String answer = service.ask("Is Niseko open?");
+
+        assertTrue(answer.startsWith("Could not reach the model"));
+    }
+
+    @Test
+    @DisplayName("Should not try another model when the failure is not about budget")
+    void ask_ShouldNotFallBack_WhenTheFailureIsSomethingElse() {
+        ChatServiceImpl service = withModels("big-model,small-model");
+        whenAskedWithAModel("Is Niseko open?")
+                .thenThrow(new RuntimeException("connection refused"))
+                .thenReturn("should never be reached");
+
+        String answer = service.ask("Is Niseko open?");
+
+        // a broken connection is not fixed by asking a different model
+        assertTrue(answer.contains("connection refused"));
     }
 
     // ===== PLAIN TEXT ANSWERS =====
@@ -85,5 +140,40 @@ class ChatServiceImplTest {
         RuntimeException error = assertThrows(RuntimeException.class,
                 () -> chatService.ask("Judge this", Verdict.class));
         assertEquals("Connection refused", error.getMessage());
+    }
+
+    @Test
+    @DisplayName("Should let calls straight through when the rate limit is off")
+    void ask_ShouldNotWait_WhenRateLimitIsZero() {
+        when(chatClient.prompt().user(anyString()).call().content()).thenReturn("ok");
+        ChatServiceImpl noLimit = new ChatServiceImpl(builderFor(chatClient), 0, "");
+
+        long start = System.currentTimeMillis();
+        for (int call = 0; call < 20; call++) {
+            noLimit.ask("anything");
+        }
+
+        assertTrue(System.currentTimeMillis() - start < 1000, "no limit should mean no waiting");
+    }
+
+    @Test
+    @DisplayName("Should allow up to the limit without waiting, so a small run is not slowed down")
+    void ask_ShouldNotWait_UntilTheLimitIsReached() {
+        when(chatClient.prompt().user(anyString()).call().content()).thenReturn("ok");
+        ChatServiceImpl limited = new ChatServiceImpl(builderFor(chatClient), 5, "");
+
+        long start = System.currentTimeMillis();
+        for (int call = 0; call < 5; call++) {
+            limited.ask("anything");
+        }
+
+        // the sixth would block for the rest of the minute, so it is deliberately not made here
+        assertTrue(System.currentTimeMillis() - start < 1000, "the first five should go straight out");
+    }
+
+    private static ChatClient.Builder builderFor(ChatClient client) {
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        when(builder.build()).thenReturn(client);
+        return builder;
     }
 }

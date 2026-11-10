@@ -478,7 +478,8 @@ class AdminDataServiceImplTest {
         assertThat(created.getActivity()).isSameAs(activity);
         assertThat(created.getNews()).isSameAs(article);
         assertThat(created.getReason()).isEqualTo("Lifts are closed");
-        assertThat(created.getRejected()).isFalse();
+        // the admin sent no rejected flag, so it stays unanswered rather than reading as confirmed
+        assertThat(created.getRejected()).isNull();
         assertThat(created.getAlertEligible()).isFalse();
         verify(events, never()).publishEvent(any(Object.class));
     }

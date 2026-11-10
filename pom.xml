@@ -42,10 +42,18 @@
 
     <dependencies>
 
-        <!-- Spring AI: used from Phase 4 onwards to assess disruptions -->
+        <!-- Spring AI: used from Phase 4 onwards to assess disruptions.
+             Both starters are here on purpose: spring.ai.model.chat picks one at runtime,
+             so the app falls back to a local model if the hosted key or quota runs out -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-ollama</artifactId>
+        </dependency>
+
+        <!-- Groq speaks the OpenAI api, so it needs no library of its own -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-openai</artifactId>
         </dependency>
 
         <!-- Spring AI: persists chatbot conversations in the database -->

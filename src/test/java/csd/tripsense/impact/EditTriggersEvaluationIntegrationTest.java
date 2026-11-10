@@ -170,14 +170,16 @@ class EditTriggersEvaluationIntegrationTest {
         constructor.setAccessible(true);
         // an impacted answer has to name a kind, NONE is what the service overrules
         Class<?> kind = constructor.getParameterTypes()[1];
+        // 90 days so the window always reaches the trips these tests build
         return constructor.newInstance(reason,
-                Enum.valueOf((Class<Enum>) kind, impacted ? "DISASTER" : "NONE"), impacted);
+                Enum.valueOf((Class<Enum>) kind, impacted ? "DISASTER" : "NONE"), 90, impacted);
     }
 
-    // the recommendation service asks for its own private record: severity, action, option, advice
+    // the recommendation service asks for its own private record, the evaluator asks for Verdict.
+    // both have four parts now, so they are told apart by name and not by counting
     private static boolean isAdviceCall(InvocationOnMock invocation) {
         Class<?> answerType = invocation.getArgument(1);
-        return answerType.getDeclaredConstructors()[0].getParameterCount() == 4;
+        return "Suggestion".equals(answerType.getSimpleName());
     }
 
     private static Object advice(InvocationOnMock invocation, String text) throws Exception {

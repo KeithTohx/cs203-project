@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -77,6 +78,12 @@ class ImpactServiceImplTest {
     /** Verdict is a private record, so build it by reflection from whatever type is requested. */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private void givenModelAnswers(boolean impacted, String reason) {
+        givenModelAnswers(impacted, reason, 90);
+    }
+
+    // the days the model claims the trouble lasts, which the service caps and checks against the trip
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void givenModelAnswers(boolean impacted, String reason, int lastsDays) {
         when(chatService.ask(anyString(), any(Class.class))).thenAnswer(inv -> {
             Class<?> type = inv.getArgument(1);
             var constructor = type.getDeclaredConstructors()[0];
@@ -84,7 +91,7 @@ class ImpactServiceImplTest {
             // an impacted answer has to name a kind, NONE is what the service overrules
             Class<?> kind = constructor.getParameterTypes()[1];
             return constructor.newInstance(reason,
-                    Enum.valueOf((Class<Enum>) kind, impacted ? "DISASTER" : "NONE"), impacted);
+                    Enum.valueOf((Class<Enum>) kind, impacted ? "DISASTER" : "NONE"), lastsDays, impacted);
         });
     }
 
@@ -96,8 +103,31 @@ class ImpactServiceImplTest {
             var constructor = type.getDeclaredConstructors()[0];
             constructor.setAccessible(true);
             Class<?> kind = constructor.getParameterTypes()[1];
-            return constructor.newInstance(reason, Enum.valueOf((Class<Enum>) kind, "NONE"), true);
+            return constructor.newInstance(reason, Enum.valueOf((Class<Enum>) kind, "NONE"), 0, true);
         });
+    }
+
+    // same as above but naming the kind, since the cap that applies depends on it
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void givenModelAnswers(String kindName, String reason, int lastsDays) {
+        when(chatService.ask(anyString(), any(Class.class))).thenAnswer(inv -> {
+            Class<?> type = inv.getArgument(1);
+            var constructor = type.getDeclaredConstructors()[0];
+            constructor.setAccessible(true);
+            Class<?> kind = constructor.getParameterTypes()[1];
+            return constructor.newInstance(reason, Enum.valueOf((Class<Enum>) kind, kindName),
+                    lastsDays, true);
+        });
+    }
+
+    // the window is measured from when we first saw the story
+    private void givenNewsSeenNow() {
+        news.setPublishedAt(LocalDateTime.now());
+    }
+
+    private void givenNoStoredItineraryVerdict() {
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.empty());
     }
 
     private void givenSaveEchoes() {
@@ -764,5 +794,107 @@ class ImpactServiceImplTest {
         // the same row is updated, a second row for the pair would be re-asked forever
         assertEquals(42L, result.getId());
         assertEquals("Lifts are shut.", result.getReason());
+    }
+
+    // ===== the event window =====
+
+    @Test
+    @DisplayName("Should not impact a trip when the trouble is over long before it starts")
+    void evaluateItineraryForNews_ShouldNotImpact_WhenTroubleEndsBeforeTheTrip() {
+        givenNoStoredItineraryVerdict();
+        givenNewsSeenNow();
+        itinerary.setDateStart(LocalDateTime.now().plusDays(60));
+        givenModelAnswers("TRANSPORT", "Flights cancelled by the storm", 7);
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateItineraryForNews(itinerary, news);
+
+        // a week of cancellations cannot reach a trip two months out
+        assertFalse(result.getImpacted());
+    }
+
+    @Test
+    @DisplayName("Should impact a trip when the trouble plausibly lasts into it")
+    void evaluateItineraryForNews_ShouldImpact_WhenTroubleLastsIntoTheTrip() {
+        givenNoStoredItineraryVerdict();
+        givenNewsSeenNow();
+        itinerary.setDateStart(LocalDateTime.now().plusDays(30));
+        givenModelAnswers("DISASTER", "Quake damaged the rail line", 90);
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateItineraryForNews(itinerary, news);
+
+        assertTrue(result.getImpacted());
+    }
+
+    @Test
+    @DisplayName("Should cap the days the model asks for at what its kind really lasts")
+    void evaluateItineraryForNews_ShouldCapTheModelsEstimate() {
+        givenNoStoredItineraryVerdict();
+        givenNewsSeenNow();
+        itinerary.setDateStart(LocalDateTime.now().plusDays(100));
+        // a strike does not shut a country for a year, whatever the model says
+        givenModelAnswers("TRANSPORT", "Rail strike", 365);
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateItineraryForNews(itinerary, news);
+
+        assertFalse(result.getImpacted());
+    }
+
+    @Test
+    @DisplayName("Should fall back to the cap when the model gives no number of days")
+    void evaluateItineraryForNews_ShouldUseTheCap_WhenNoDaysGiven() {
+        givenNoStoredItineraryVerdict();
+        givenNewsSeenNow();
+        itinerary.setDateStart(LocalDateTime.now().plusDays(30));
+        givenModelAnswers("DISASTER", "Quake near the resort", 0);
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateItineraryForNews(itinerary, news);
+
+        // no answer must not mean no impact, the cap stands in
+        assertTrue(result.getImpacted());
+    }
+
+    @Test
+    @DisplayName("Should keep the verdict when the trip has no dates to compare")
+    void evaluateItineraryForNews_ShouldKeepVerdict_WhenTripHasNoDates() {
+        givenNoStoredItineraryVerdict();
+        news.setPublishedAt(LocalDateTime.now().minusDays(400));
+        givenModelAnswers("DISASTER", "Quake near the resort", 5);
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateItineraryForNews(itinerary, news);
+
+        assertTrue(result.getImpacted());
+    }
+
+    @Test
+    @DisplayName("Should not impact an activity when the trouble is over before it")
+    void evaluateActivityForNews_ShouldNotImpact_WhenTroubleEndsBeforeIt() {
+        when(impactRepository.findFirstByNewsIdAndActivityId(5L, 10L)).thenReturn(Optional.empty());
+        givenNewsSeenNow();
+        activity.setDateStart(LocalDateTime.now().plusDays(45));
+        givenModelAnswers("UNREST", "Protests in the city centre", 30);
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateActivityForNews(activity, news);
+
+        assertFalse(result.getImpacted());
+    }
+
+    @Test
+    @DisplayName("Should judge an activity with no date of its own against the trip dates")
+    void evaluateActivityForNews_ShouldUseTripDates_WhenActivityHasNoDate() {
+        when(impactRepository.findFirstByNewsIdAndActivityId(5L, 10L)).thenReturn(Optional.empty());
+        givenNewsSeenNow();
+        itinerary.setDateStart(LocalDateTime.now().plusDays(60));
+        givenModelAnswers("TRANSPORT", "Airport closed by snow", 14);
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateActivityForNews(activity, news);
+
+        assertFalse(result.getImpacted());
     }
 }

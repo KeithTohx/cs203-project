@@ -1,4 +1,5 @@
 :root {
+    /* ---- colour. unchanged, this part was already consistent ---- */
     --bg: #f7f9fc;
     --panel: #ffffff;
     --text: #14233a;
@@ -8,19 +9,69 @@
     --accent: #d3e4fb;
     --on-accent: #1655a8;
     --link: #2a73d3;
+    --on-link: #ffffff;
     --bad: #c0392b;
     --bad-bg: #fcecea;
     --on-bad: #ffffff;
+    --on-ok: #ffffff;
     --ok: #2e7a4f;
     --ok-bg: #e7f3ec;
     --warn: #8a5a00;
     --warn-bg: #fcf2db;
+
+    /* surfaces worked out from the theme, so they follow it instead of being picked twice */
+    --raised: color-mix(in srgb, var(--text) 4%, var(--panel));
+    --sunken: color-mix(in srgb, var(--text) 7%, var(--panel));
+
+    /* ---- spacing. the 4px grid the old px values were already using ---- */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+    --space-7: 48px;
+
+    /* ---- type ---- */
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --text-xs: 12px;
+    --text-sm: 13px;
+    --text-base: 15px;
+    --text-md: 16px;
+    --text-lg: 18px;
+    --text-xl: 22px;
+    --text-2xl: 28px;
+    --leading-tight: 1.25;
+    --leading-normal: 1.5;
+
+    /* ---- shape ---- */
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --radius-pill: 99px;
+
+    /* shadows carry the theme's own shade, so they still read in dark mode */
+    --shade: 220 40% 8%;
+    --shadow-sm: 0 1px 2px hsl(var(--shade) / 8%);
+    --shadow-md: 0 4px 12px hsl(var(--shade) / 10%);
+    --shadow-lg: 0 8px 24px hsl(var(--shade) / 16%);
+
+    /* ---- the rest ---- */
+    --z-sticky: 30;
+    --z-panel: 40;
+    --z-toast: 50;
+    --ease: cubic-bezier(.2, .7, .3, 1);
+    --fast: .15s;
+    --slow: .3s;
+    --gutter: clamp(16px, 4vw, 48px);
+    --focus-ring: 3px solid var(--link);
     /* 14px padding either side of the 36px bell, plus the border */
     --nav-height: 65px;
 }
 
+/* the palette for dark, kept in one place so it can be applied by preference or by choice */
 @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
         --bg: #0d1520;
         --panel: #141e2c;
         --text: #e4ebf4;
@@ -30,14 +81,46 @@
         --accent: #1f3d63;
         --on-accent: #d3e4fb;
         --link: #8fbcf5;
+        --on-link: #0d1520;
         --bad: #f28b7f;
         --bad-bg: #2f1a18;
         --on-bad: #1c0b09;
+        --on-ok: #0c1a12;
         --ok: #7fcf9f;
         --ok-bg: #15291e;
         --warn: #f2c46d;
         --warn-bg: #33270f;
+        /* black shadows vanish on a dark panel, so lift the opacity and the shade */
+        --shade: 220 60% 2%;
+        --shadow-sm: 0 1px 2px hsl(var(--shade) / 40%);
+        --shadow-md: 0 4px 12px hsl(var(--shade) / 50%);
+        --shadow-lg: 0 8px 24px hsl(var(--shade) / 60%);
     }
+}
+
+:root[data-theme="dark"] {
+    --bg: #0d1520;
+    --panel: #141e2c;
+    --text: #e4ebf4;
+    --muted: #9eaec2;
+    --border: #273649;
+    --tag: #223246;
+    --accent: #1f3d63;
+    --on-accent: #d3e4fb;
+    --link: #8fbcf5;
+    --on-link: #0d1520;
+    --bad: #f28b7f;
+    --bad-bg: #2f1a18;
+    --on-bad: #1c0b09;
+    --on-ok: #0c1a12;
+    --ok: #7fcf9f;
+    --ok-bg: #15291e;
+    --warn: #f2c46d;
+    --warn-bg: #33270f;
+    --shade: 220 60% 2%;
+    --shadow-sm: 0 1px 2px hsl(var(--shade) / 40%);
+    --shadow-md: 0 4px 12px hsl(var(--shade) / 50%);
+    --shadow-lg: 0 8px 24px hsl(var(--shade) / 60%);
 }
 
 /* ===== Base ===== */
@@ -49,11 +132,11 @@ body {
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font: 16px/1.5 system-ui, sans-serif;
+    font: var(--text-md) / var(--leading-normal) var(--font);
 }
 
 :focus-visible {
-    outline: 3px solid var(--link);
+    outline: var(--focus-ring);
     outline-offset: 2px;
 }
 
@@ -61,9 +144,22 @@ a {
     color: var(--link);
 }
 
+/* every heading level has one size, so an h2 means the same thing wherever it lands */
 h1,
+h2,
+h3 {
+    margin: 0 0 var(--space-3);
+    line-height: var(--leading-tight);
+}
+
+h1 {
+    font-size: var(--text-2xl);
+    letter-spacing: -.015em;
+}
+
 h2 {
-    margin: 0 0 12px;
+    font-size: var(--text-xl);
+    letter-spacing: -.01em;
 }
 
 /* ===== Layout ===== */
@@ -102,7 +198,7 @@ nav a[aria-current] {
 }
 
 main {
-    max-width: 860px;
+    max-width: 1100px;
     margin: 0 auto;
     padding: 24px clamp(16px, 4vw, 48px);
 }
@@ -135,13 +231,20 @@ main:has(.login-panel) {
 }
 
 /* why the login screen is showing, e.g. "please log in to continue" */
+/* one callout shape for every tinted, edge-marked block in the app.
+   the accent and the tint are set per variant, nothing else changes */
+.notice,
+.imp,
+.advice {
+    margin: 0 0 var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border-left: 4px solid var(--callout-accent, var(--link));
+    background: var(--callout-bg, var(--sunken));
+    border-radius: var(--radius-sm);
+}
+
 .notice {
-    margin: 0 0 4px;
-    padding: 8px 12px;
-    border-left: 4px solid var(--link);
-    background: var(--bg);
-    border-radius: 4px;
-    font-size: 14px;
+    font-size: var(--text-base);
 }
 
 .narrow {
@@ -249,15 +352,15 @@ h1:has(+ .itinerary-form) {
 }
 
 /* Activities: the same timeline as the itinerary card */
-.timeline.activity-editor li {
+.timeline.activity-editor > li {
     padding: 8px 0 12px;
 }
 
-.timeline.activity-editor li::before {
+.timeline.activity-editor > li::before {
     top: 18px;
 }
 
-.timeline.activity-editor li + li {
+.timeline.activity-editor > li + li {
     border-top: 1px dashed var(--border);
 }
 
@@ -295,7 +398,7 @@ button.ghost.icon-button[data-confirming] {
     font-size: 14px;
 }
 
-.timeline.activity-editor li.removing {
+.timeline.activity-editor > li.removing {
     background: var(--bad-bg);
     border-radius: 6px;
 }
@@ -363,113 +466,90 @@ fieldset:disabled label.check {
     color: var(--muted);
 }
 
-/* outlined by default, the main action of a page or form adds "primary" */
-button {
-    font: inherit;
-    font-weight: 600;
-    cursor: pointer;
-    border-radius: 6px;
-    margin-top: 14px;
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text);
-    padding: 9px 14px;
-}
-
-button:hover {
-    border-color: var(--text);
-}
-
-button.primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--on-accent);
-}
-
-button.primary:hover {
-    border-color: var(--link);
-}
-
-button:disabled {
-    opacity: .6;
-    cursor: not-allowed;
-}
-
-button.ghost {
-    background: transparent;
-    color: var(--text);
-    border-color: var(--border);
-    margin-top: 0;
-}
-
-button.ghost:hover {
-    border-color: var(--text);
-    filter: none;
-}
-
+/* one ladder for both <button> and a.btn, so a link and a button of the same kind look the same.
+   no margin here on purpose: spacing belongs to the row that holds them */
+button,
 .btn {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
     white-space: nowrap;
     text-decoration: none;
+    font: inherit;
     font-weight: 600;
-    border-radius: 6px;
-    padding: 8px 14px;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
     border: 1px solid var(--border);
+    background: var(--panel);
     color: var(--text);
+    /* 40px tall, big enough to hit without aiming */
+    padding: var(--space-2) var(--space-4);
+    min-height: 40px;
+    transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease);
 }
 
+button:hover,
 .btn:hover {
     border-color: var(--text);
+    background: var(--raised);
 }
 
+button.primary,
 .btn.primary {
     background: var(--accent);
     border-color: var(--accent);
     color: var(--on-accent);
 }
 
+button.primary:hover,
 .btn.primary:hover {
     border-color: var(--link);
+    background: var(--accent);
 }
 
-/* Page title with a button beside it */
-.page-head {
-    flex-wrap: wrap;
-    margin-bottom: 12px;
+button:disabled {
+    /* a token rather than opacity, which drags muted text under the contrast minimum */
+    color: var(--muted);
+    background: var(--sunken);
+    border-color: var(--border);
+    cursor: not-allowed;
 }
 
-.page-head h1 {
-    margin: 0;
+button.ghost,
+.btn.ghost {
+    background: transparent;
+    border-color: transparent;
 }
 
+button.ghost:hover,
+.btn.ghost:hover {
+    border-color: var(--border);
+    background: var(--raised);
+}
+
+button.small,
 .btn.small {
-    font-size: 14px;
-    padding: 4px 10px;
+    font-size: var(--text-sm);
+    padding: var(--space-1) var(--space-3);
+    min-height: 32px;
 }
 
-/* a link that leads to something destructive: red outline, filled only on hover */
+/* leads somewhere destructive: red outline, filled only on hover */
+button.danger,
 .btn.danger {
     color: var(--bad);
     border-color: var(--bad);
+    background: transparent;
 }
 
+button.danger:hover,
 .btn.danger:hover {
     background: var(--bad-bg);
-}
-
-button.danger {
-    color: var(--bad);
-    border-color: var(--bad);
-    margin-left: auto;
-}
-
-button.danger:hover {
-    background: var(--bad-bg);
     border-color: var(--bad);
 }
 
-/* the main button of a form that removes something for good, e.g. "Delete my account" */
+/* the main button of a form that removes something for good, eg "Delete my account" */
 button.destructive {
     color: var(--on-bad);
     background: var(--bad);
@@ -478,10 +558,11 @@ button.destructive {
 
 button.destructive:hover {
     border-color: var(--bad);
-    filter: brightness(1.1);
+    /* a mix rather than a brightness filter, which washes out the light theme */
+    background: color-mix(in srgb, #000 12%, var(--bad));
 }
 
-/* Waiting for the second click (confirmTwice): solid red, for both "Delete itinerary?" and "Remove?" */
+/* waiting for the second click (confirmTwice): solid red */
 button.ghost.danger[data-confirming],
 button.ghost.icon-button[data-confirming] {
     color: var(--on-bad);
@@ -489,44 +570,69 @@ button.ghost.icon-button[data-confirming] {
     border-color: var(--bad);
 }
 
-.row {
+/* page title with its action beside it */
+.page-head {
+    flex-wrap: wrap;
+    margin-bottom: var(--space-5);
+}
+
+.page-head h1 {
+    margin: 0;
+}
+
+/* one flex row for every "things side by side" container in the app */
+.row,
+.actions,
+.heading-actions,
+.filters,
+.more-row,
+.suggest-row,
+.advice-actions,
+.imp-head,
+.advice-head,
+.news-head,
+.trip-meta,
+.pager {
     display: flex;
-    justify-content: space-between;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-2) var(--space-3);
+}
+
+.row {
+    justify-content: space-between;
 }
 
 .actions {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    margin-top: 14px;
-}
-
-.actions button {
-    margin-top: 0;
-}
-
-/* buttons beside a card heading, like the role and status buttons on an admin's user page */
-.heading-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+    margin-top: var(--space-4);
 }
 
 /* ===== Cards and content ===== */
-.card {
+/* one panel surface. .news-item and .login-panel are the same box, they just pad differently */
+.card,
+.news-item,
+.login-panel {
     background: var(--panel);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 12px;
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    margin-bottom: var(--space-3);
+}
+
+/* a card you can click into gets a hover lift, the rest stay still */
+.card.linkable {
+    transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+
+.card.linkable:hover {
+    border-color: var(--link);
+    box-shadow: var(--shadow-md);
 }
 
 /* settings that cannot be undone, like deleting the account: set apart from the everyday cards
    above with extra space and a red outline, but no red fill so it does not shout */
 .card.danger-zone {
-    margin-top: 32px;
+    margin-top: var(--space-6);
     border-color: var(--bad);
 }
 
@@ -534,23 +640,28 @@ button.ghost.icon-button[data-confirming] {
     color: var(--bad);
 }
 
+/* a finished trip reads quieter, but through its own colours so the text keeps its contrast */
 .card.past {
-    opacity: .7;
+    background: var(--sunken);
+    border-style: dashed;
 }
 
 .meta {
     color: var(--muted);
-    font-size: 14px;
+    font-size: var(--text-base);
     margin: 0;
 }
 
 .tag {
-    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--text-sm);
     font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 99px;
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-pill);
     background: var(--tag);
-    margin-left: 8px;
+    margin-left: var(--space-2);
 }
 
 .tag.bad {
@@ -560,14 +671,16 @@ button.ghost.icon-button[data-confirming] {
 
 /* "Upcoming" / "Past" headings on the itineraries page */
 h2.section {
-    margin-top: 28px;
+    margin-top: var(--space-6);
     color: var(--muted);
-    font-size: 18px;
+    font-size: var(--text-base);
+    text-transform: uppercase;
+    letter-spacing: .06em;
 }
 
 h3 {
-    font-size: 16px;
-    margin: 14px 0 6px;
+    font-size: var(--text-md);
+    margin: var(--space-4) 0 var(--space-2);
 }
 
 /* Activities on an itinerary card: a vertical line with a dot per activity */
@@ -578,12 +691,12 @@ h3 {
     border-left: 2px solid var(--border);
 }
 
-.timeline li {
+.timeline > li {
     position: relative;
     padding: 6px 0;
 }
 
-.timeline li::before {
+.timeline > li::before {
     content: "";
     position: absolute;
     left: -27px;
@@ -595,7 +708,7 @@ h3 {
     border: 2px solid var(--link);
 }
 
-.timeline li.hit::before {
+.timeline > li.hit::before {
     border-color: var(--bad);
     background: var(--bad);
 }
@@ -642,22 +755,21 @@ summary {
 
 /* ===== Impacts, messages, chat ===== */
 .imp {
-    margin-top: 8px;
-    padding: 10px 12px;
-    border-left: 4px solid var(--ok);
-    background: var(--ok-bg);
-    border-radius: 4px;
+    --callout-accent: var(--ok);
+    --callout-bg: var(--ok-bg);
+    margin-top: var(--space-2);
 }
 
 .imp.hit {
-    border-color: var(--bad);
-    background: var(--bad-bg);
+    --callout-accent: var(--bad);
+    --callout-bg: var(--bad-bg);
 }
 
 /* news the user marked as not relevant: kept visible so it can be restored, but no longer alarming */
-.imp.dismissed {
-    border-color: var(--border);
-    background: transparent;
+.imp.dismissed,
+.advice.dismissed {
+    --callout-accent: var(--border);
+    --callout-bg: transparent;
     color: var(--muted);
 }
 
@@ -668,12 +780,41 @@ summary {
     align-items: center;
     justify-content: space-between;
     gap: 4px 8px;
-    margin: 4px 0;
+    margin: 2px 0;
 }
 
 button.impact-action {
     font-size: 13px;
     padding: 2px 8px;
+}
+
+/* why the model thinks the news matters. folded away so a long list stays scannable */
+details.reason {
+    margin: 0 0 4px;
+}
+
+details.reason > summary {
+    font-weight: 400;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+details.reason > p {
+    margin: 2px 0 0 14px;
+    font-size: 13px;
+}
+
+/* asks for the next page of a long list, with how much is still hidden */
+.more-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    margin: 10px 0 2px;
+}
+
+.more-row button {
+    margin-top: 0;
 }
 
 /* the error line under a card takes no space until something goes wrong */
@@ -744,7 +885,7 @@ a.source-bubble:hover {
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 8px;
-    box-shadow: 0 6px 20px rgb(0 0 0 / 15%);
+    box-shadow: var(--shadow-md);
 }
 
 .source-popover > :first-child {
@@ -769,9 +910,9 @@ a.source-bubble:hover {
 }
 
 .msg {
-    padding: 14px;
+    padding: var(--space-4);
     border: 1px dashed var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     color: var(--muted);
 }
 
@@ -800,7 +941,7 @@ a.source-bubble:hover {
 }
 
 .chat-panel::backdrop {
-    background: rgb(0 0 0 / .3);
+    background: hsl(var(--shade) / 45%);
 }
 
 .chat-panel-body {
@@ -1149,12 +1290,18 @@ dl + .hint {
 
 /* a neutral edge, so advice does not read as another warning */
 .advice {
-    margin-top: 8px;
-    padding: 10px 12px;
-    border-left: 4px solid var(--link);
-    background: var(--panel);
-    border-radius: 4px;
+    --callout-accent: var(--link);
+    --callout-bg: var(--raised);
+    margin-top: var(--space-2);
 }
+
+/* a decision the traveller has made, coloured like the impact sections so the two read the same way */
+.advice.accepted {
+    --callout-accent: var(--ok);
+    --callout-bg: var(--ok-bg);
+}
+
+
 
 .advice p {
     margin: 4px 0 0;
@@ -1193,6 +1340,39 @@ dl + .hint {
 
 .suggest-row button {
     margin-top: 0;
+}
+
+/* accept, dismiss and try another, with the history link last */
+.advice-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+    margin-top: 8px;
+}
+
+.advice-actions button {
+    margin-top: 0;
+}
+
+/* earlier tries for the same impact, oldest first */
+.attempt-list {
+    margin: 8px 0 0;
+    padding-left: 20px;
+}
+
+.attempt {
+    margin-top: 6px;
+    color: var(--muted);
+}
+
+.attempt p {
+    margin: 2px 0 0;
+}
+
+/* the history panel takes no space until it is opened */
+[data-attempts]:empty {
+    display: none;
 }
 
 /* ===== news page ===== */
@@ -1353,7 +1533,7 @@ button.link-button {
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 8px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, .15);
+    box-shadow: var(--shadow-lg);
     text-align: left;
     white-space: normal;
 }
@@ -1580,7 +1760,7 @@ nav a.brand {
     background: var(--panel);
     color: var(--text);
     font-weight: 600;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, .2);
+    box-shadow: var(--shadow-lg);
     animation: toast-in .2s ease-out;
     transition: opacity .4s, transform .4s;
 }
@@ -1648,12 +1828,12 @@ nav a.brand {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
-    padding: 40px 16px;
+    gap: var(--space-2);
+    padding: var(--space-7) var(--space-4);
     text-align: center;
     background: var(--panel);
     border: 1px dashed var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
 }
 
 .empty-state > .icon {
@@ -1721,12 +1901,12 @@ nav a.profile-link[aria-current] {
 
 /* ===== itineraries dashboard: trips on the left, overview on the right ===== */
 main:has(.dashboard) {
-    max-width: 1180px;
+    max-width: 1500px;
 }
 
 .dashboard {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 320px;
+    grid-template-columns: minmax(0, 1fr) 340px;
     gap: 24px;
     align-items: start;
 }
@@ -1800,7 +1980,7 @@ main:has(.dashboard) {
 }
 
 /* narrower screens: one column, with only the summary above the trips */
-@media (max-width: 1099px) {
+@media (max-width: 1199px) {
     .dashboard {
         display: flex;
         flex-direction: column;
@@ -1958,4 +2138,470 @@ h3.trip-heading {
     margin: 8px 0 0 12px;
     padding-left: 12px;
     border-left: 3px solid var(--accent);
+
+/* a form is easier to read narrow, even when the page around it is wide */
+.card.narrow,
+.card.wide {
+    margin-left: 0;
+}
+
+/* ===== home page ===== */
+/* a short line under the title. every list screen opens the same way now */
+.page-intro {
+    margin: calc(var(--space-3) * -1) 0 var(--space-4);
+}
+
+.home-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: var(--space-4);
+    align-items: start;
+}
+
+/* the home grid reuses .card via .side-card, so it needs the box the sidebar got for free */
+.home-grid > .card {
+    margin-bottom: 0;
+    height: 100%;
+}
+
+.quick-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    margin-top: var(--space-5);
+}
+
+/* ===== responsive: the gap between phone and desktop ===== */
+@media (max-width: 899px) {
+    /* two 200px filters plus the gap do not fit a phone's content box */
+    .filters input,
+    .filters select,
+    .filter select {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .page-head {
+        gap: var(--space-2);
+    }
+
+    /* the page action goes full width rather than squeezing beside a wrapped title */
+    .page-head > .btn {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+/* ===== high contrast ===== */
+/* box-shadow and background are both dropped in forced-colors, so anything that
+   carries meaning through them alone needs a real border instead */
+@media (forced-colors: active) {
+    .alert-panel li.is-new a,
+    .alert-item.is-new {
+        border-left: 4px solid Highlight;
+    }
+
+    .inline-edit:focus,
+    .inline-edit:focus-visible,
+    .chat-composer textarea:focus-visible {
+        outline: 3px solid Highlight;
+        outline-offset: 1px;
+    }
+
+    .imp,
+    .advice,
+    .notice,
+    .tag {
+        border: 1px solid CanvasText;
+    }
+}
+
+/* ===== advice, regrouped ===== */
+/* one block per affected thing, so it is obvious what each story hits */
+.plan {
+    margin-top: var(--space-5);
+}
+
+.plan-head {
+    margin-bottom: var(--space-2);
+}
+
+.plan-head h3 {
+    margin: 0;
+}
+
+.news-accordion {
+    margin-top: var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--panel);
+    overflow: hidden;
+}
+
+.news-accordion > summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    background: var(--sunken);
+}
+
+.news-accordion > summary:hover {
+    background: var(--raised);
+}
+
+.news-accordion .advice-list {
+    margin: 0;
+    padding: var(--space-2) var(--space-4) var(--space-4);
+}
+
+/* severity colours the edge, so the worst ones are findable without reading */
+.advice.sev-high {
+    --callout-accent: var(--bad);
+}
+
+.advice.sev-medium {
+    --callout-accent: var(--warn);
+}
+
+.advice.sev-low {
+    --callout-accent: var(--ok);
+}
+
+/* the story on the left, what to do about it on the right */
+.advice-top {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-4);
+}
+
+.advice-main {
+    flex: 1 1 24rem;
+    min-width: 0;
+}
+
+.advice-headline {
+    margin: 0;
+    font-weight: 700;
+    font-size: var(--text-md);
+    line-height: var(--leading-tight);
+}
+
+.advice-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin: var(--space-2) 0 0;
+}
+
+/* the tags carry their own spacing in this row, so the global left margin is dropped */
+.advice-tags .tag {
+    margin-left: 0;
+}
+
+.advice-body {
+    margin: var(--space-2) 0 0;
+}
+
+/* buttons keep their own column and do not wrap under the text until there is no room */
+.advice-actions {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    margin: 0;
+    max-width: 15rem;
+}
+
+@media (max-width: 739px) {
+    .advice-top {
+        flex-direction: column;
+    }
+
+    .advice-actions {
+        justify-content: flex-start;
+        max-width: none;
+    }
+}
+
+/* ===== deciding on advice: green yes, red no, blue try again ===== */
+button.accept {
+    background: var(--ok);
+    border-color: var(--ok);
+    color: var(--on-ok);
+}
+
+button.accept:hover {
+    background: color-mix(in srgb, #000 12%, var(--ok));
+    border-color: var(--ok);
+}
+
+button.reject {
+    background: transparent;
+    border-color: var(--bad);
+    color: var(--bad);
+}
+
+button.reject:hover {
+    background: var(--bad-bg);
+    border-color: var(--bad);
+}
+
+button.retry {
+    background: transparent;
+    border-color: var(--link);
+    color: var(--link);
+}
+
+button.retry:hover {
+    background: var(--accent);
+    border-color: var(--link);
+}
+
+/* ===== the history modal ===== */
+/* a trip can collect dozens of decisions, so the list scrolls inside a fixed-height dialog
+   rather than growing the page behind it */
+.history-panel {
+    width: min(640px, calc(100vw - var(--gutter) * 2));
+    max-height: 80vh;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--panel);
+    color: var(--text);
+    box-shadow: var(--shadow-lg);
+}
+
+/* a dialog is hidden by display none until it opens, so the column layout is set only
+   when it is open, or the panel would sit in the page all the time */
+.history-panel[open] {
+    display: flex;
+    flex-direction: column;
+}
+
+.history-panel::backdrop {
+    background: hsl(var(--shade) / 45%);
+}
+
+.history-head {
+    padding: var(--space-4);
+    border-bottom: 1px solid var(--border);
+}
+
+.history-body {
+    overflow-y: auto;
+    padding: var(--space-4);
+}
+
+/* ===== the news accordion inside the timeline ===== */
+/* it hangs off the activity it belongs to */
+.timeline .news-accordion {
+    margin: var(--space-2) 0 var(--space-3);
+}
+
+.news-accordion > summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: var(--sunken);
+    font-weight: 600;
+    font-size: var(--text-base);
+}
+
+.plan {
+    margin-top: var(--space-5);
+}
+
+.plan-head h3 {
+    margin: 0;
+}
+
+/* ===== the trip's decision log, shown in the history modal ===== */
+.decision-log {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.decision-log li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-2);
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.decision-log li:last-child {
+    border-bottom: 0;
+}
+
+.decision-log .tag {
+    margin-left: 0;
+}
+
+/* advice sits under the story that prompted it, stepped in so the pair reads as one block */
+.advice-list.paired {
+    margin: var(--space-2) 0 0;
+    padding: 0 0 0 var(--space-4);
+    border-left: 2px dashed var(--border);
+}
+
+/* the activity name on the left, what was decided about it on the right */
+.activity-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-2);
+}
+
+.accepted-badge {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-2);
+}
+
+.accepted-badge .tag {
+    margin-left: 0;
+}
+
+/* the ask button sits above the list, so a long run of news cannot push it off screen */
+.news-accordion > .suggest-row {
+    margin: var(--space-3) 0 0;
+    padding: 0 var(--space-3);
+}
+
+/* ===== the news hitting one activity, drawn under it in the timeline ===== */
+.activity-news {
+    list-style: none;
+    margin: var(--space-2) 0;
+    padding: 0;
+    display: grid;
+    gap: var(--space-2);
+}
+
+.activity-news > li {
+    padding: var(--space-2) var(--space-3);
+    border-left: 3px solid var(--warn);
+    border-radius: var(--radius-sm);
+    background: var(--sunken);
+}
+
+/* the headline and where it came from, kept on one run so the buttons stay at the far end */
+.activity-news-head {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.activity-news-head strong {
+    font-weight: 600;
+}
+
+/* the story behind a piece of advice, now that the heading says what to do instead */
+.advice-source {
+    margin-top: var(--space-2);
+}
+
+/* cancelling is the most drastic advice, so the heading says so in the warning colour */
+.advice-headline.drastic {
+    color: var(--bad);
+}
+
+/* an impacted activity with no advice yet: visible, but clearly waiting rather than finished */
+.awaiting-advice {
+    margin: var(--space-2) 0 var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-sm);
+}
+
+/* ===== collapse affordance ===== */
+/* a flex summary drops the browser's own triangle, so the chevron is drawn here and
+   turns when the group opens. it is the only cue that these blocks expand */
+details > summary {
+    list-style: none;
+}
+
+details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.news-accordion > summary::before,
+details[data-section] > summary::before,
+details.reason > summary::before {
+    content: "";
+    flex: none;
+    width: 7px;
+    height: 7px;
+    margin-right: var(--space-1);
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform var(--fast) var(--ease);
+}
+
+.news-accordion[open] > summary::before,
+details[data-section][open] > summary::before,
+details.reason[open] > summary::before {
+    transform: rotate(45deg);
+}
+
+details[data-section] > summary,
+details.reason > summary {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+/* names what the accordion holds, since the rows inside are headlines */
+.group-label {
+    font-weight: 700;
+}
+
+/* the activity's kind sits with its address: it decides what the advice can offer instead */
+select.inline-edit.category {
+    width: auto;
+    min-width: 12rem;
+    max-width: 100%;
+}
+
+/* an activity with no kind yet reads as needing attention, not as finished */
+select.inline-edit.category:invalid {
+    color: var(--muted);
+    border-color: var(--warn);
+}
+
+/* the triage pair is a toggle, not two actions: the one that is not chosen is outlined and the
+   chosen one is filled, so there is never a flat label sitting beside a real button */
+button.accept.impact-action[aria-pressed="false"] {
+    background: transparent;
+    border-color: var(--ok);
+    color: var(--ok);
+}
+
+button.accept.impact-action[aria-pressed="false"]:hover {
+    background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+
+/* the triage buttons are one group: .impact-line spreads its children apart, so they are
+   wrapped to stay side by side at the end of the row */
+.impact-actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.impact-actions .tag {
+    margin-left: 0;
 }

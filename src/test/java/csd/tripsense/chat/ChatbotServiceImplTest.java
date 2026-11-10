@@ -112,8 +112,11 @@ class ChatbotServiceImplTest {
         ChatClient chatClient = ChatClient.builder(model)
                 .defaultAdvisors(MessageChatMemoryAdvisor.builder(chatMemory).build())
                 .build();
-        chatbotService = new ChatbotServiceImpl(chatClient, chatMemory, itineraryService, activityService,
-                impactService, preferenceService, JsonMapper.builder().build(), chatMemoryRepository);
+        // no model list, so the fallback just runs the request as it is given
+        ChatService chatService = new ChatServiceImpl(ChatClient.builder(model), 0, "");
+        chatbotService = new ChatbotServiceImpl(chatClient, chatService, chatMemory, itineraryService,
+                activityService, impactService, preferenceService, JsonMapper.builder().build(),
+                chatMemoryRepository);
 
         Country japan = new Country();
         japan.setName("Japan");

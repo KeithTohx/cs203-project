@@ -1,3 +1,4 @@
+
 package csd.tripsense.recommendation;
 
 import jakarta.validation.constraints.NotNull;
