@@ -16,6 +16,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import csd.tripsense.activity.Activity;
 import csd.tripsense.country.Country;
 import csd.tripsense.user.User;
 
@@ -141,8 +142,8 @@ class ItineraryServiceImplTest {
     }
 
     @Test
-    @DisplayName("Should not publish a created event when an itinerary is updated")
-    void updateItinerary_ShouldNotPublish() {
+    @DisplayName("Should not publish anything when an update changes nothing the trip was judged on")
+    void updateItinerary_ShouldNotPublish_WhenNothingJudgedChanged() {
         Itinerary existing = new Itinerary();
         existing.setId(5L);
         when(itineraryRepository.findById(5L)).thenReturn(Optional.of(existing));
@@ -150,7 +151,57 @@ class ItineraryServiceImplTest {
 
         itineraryService.updateItinerary(5L, new Itinerary());
 
-        verifyNoInteractions(events);   // edits are not re-evaluated, only creation is
+        verifyNoInteractions(events);
+        assertEquals(0, existing.currentRevision());
+    }
+
+    @Test
+    @DisplayName("Should publish an edited event when the name changes, the whole trip prompt includes it")
+    void updateItinerary_ShouldPublish_WhenRenamed() {
+        Itinerary stored = trip(1L, 7L, 1L, "Japan Ski Trip");
+        when(itineraryRepository.findById(1L)).thenReturn(Optional.of(stored));
+        when(itineraryRepository.save(stored)).thenReturn(stored);
+
+        itineraryService.updateItinerary(1L, trip(null, 7L, 1L, "Hokkaido Ski Trip"));
+
+        verify(events).publishEvent(new ItineraryEditedEvent(1L));
+        // so the verdicts judged on the old name can be told apart from new ones
+        assertEquals(1, stored.currentRevision());
+    }
+
+    @Test
+    @DisplayName("Should publish an edited event and move the activities when the country changes")
+    void updateItinerary_ShouldPublishAndMoveActivities_WhenCountryChanges() {
+        Itinerary stored = trip(1L, 7L, 1L, "Ski Trip");
+        Activity skiing = new Activity();
+        skiing.setCountry(stored.getCountry());
+        stored.setActivities(List.of(skiing));
+        when(itineraryRepository.findById(1L)).thenReturn(Optional.of(stored));
+        when(itineraryRepository.save(stored)).thenReturn(stored);
+
+        itineraryService.updateItinerary(1L, trip(null, 7L, 2L, "Ski Trip"));
+
+        verify(events).publishEvent(new ItineraryEditedEvent(1L));
+        // the news job matches activities on their own copy of the country
+        assertEquals(2L, skiing.getCountry().getId());
+        // the activity verdicts were about news from the old country, so they are out of date too
+        assertEquals(1, stored.currentRevision());
+        assertEquals(1, skiing.currentRevision());
+    }
+
+    @Test
+    @DisplayName("Should publish an edited event when the dates change")
+    void updateItinerary_ShouldPublish_WhenDatesChange() {
+        Itinerary stored = trip(1L, 7L, 1L, "Ski Trip");
+        stored.setDateStart(LocalDateTime.of(2027, 1, 8, 0, 0));
+        when(itineraryRepository.findById(1L)).thenReturn(Optional.of(stored));
+        when(itineraryRepository.save(stored)).thenReturn(stored);
+
+        Itinerary changes = trip(null, 7L, 1L, "Ski Trip");
+        changes.setDateStart(LocalDateTime.of(2027, 2, 8, 0, 0));
+        itineraryService.updateItinerary(1L, changes);
+
+        verify(events).publishEvent(new ItineraryEditedEvent(1L));
     }
 
     // ---------------------------------------------------------------- helpers

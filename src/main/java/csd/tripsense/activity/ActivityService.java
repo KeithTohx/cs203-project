@@ -1,6 +1,7 @@
 package csd.tripsense.activity;
 
 import java.util.List;
+import java.util.Optional;
 import java.time.LocalDateTime;
 
 public interface ActivityService {
@@ -58,5 +59,9 @@ public interface ActivityService {
      * @return activities still waiting for an impact decision on this news (empty if none)
      */
     List<Activity> getActivitiesPendingForNews(Long newsId, Long countryId, LocalDateTime now);
+
+    // the activity's revision as it is in the database right now (see Activity.revision), or
+    // empty if this activity has been deleted, including when a new one has since been given its id
+    Optional<Long> findRevision(Activity activity);
 
 }

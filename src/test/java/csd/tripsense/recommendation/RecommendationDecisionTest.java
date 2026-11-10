@@ -20,6 +20,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.support.TransactionOperations;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityCategory;
@@ -81,8 +82,13 @@ class RecommendationDecisionTest {
         PreferenceService preferenceService = mock(PreferenceService.class);
         preferences = new UserPreference(null);
         lenient().when(preferenceService.getPreferences(anyLong())).thenReturn(preferences);
+        // no database here, so the guarded save runs without a transaction
         service = new RecommendationServiceImpl(recommendations, options, impactService,
-                itineraryService, chatService, preferenceService, access);
+                itineraryService, chatService, preferenceService, access,
+                TransactionOperations.withoutTransaction());
+        // the impact is never edited while the model answers, unless a test says otherwise
+        lenient().when(impactService.findUnchanged(any(Impact.class)))
+                .thenAnswer(invocation -> Optional.of(invocation.getArgument(0)));
 
         User owner = mock(User.class);
         when(owner.getId()).thenReturn(karwei.getId());
@@ -224,6 +230,20 @@ class RecommendationDecisionTest {
 
         assertEquals(secondMuseum, fresh.getSuggestedOption());
         assertEquals(RecommendationStatus.PENDING, fresh.getStatus());
+    }
+
+    @Test
+    @DisplayName("Regenerating saves nothing and says so when the impact changed while the model was answering")
+    void regenerate_ShouldConflict_WhenImpactChangedMeanwhile() {
+        Recommendation rejected = stored(1L, RecommendationStatus.DISMISSED, firstMuseum);
+        when(recommendations.findById(1L)).thenReturn(Optional.of(rejected));
+        when(recommendations.findByImpactIdOrderByIdAsc(IMPACT_ID)).thenReturn(List.of(rejected));
+        when(options.findByCountry("Japan")).thenReturn(List.of(firstMuseum, secondMuseum));
+        when(chatService.ask(any(), any())).thenThrow(new RuntimeException("model down"));
+        when(impactService.findUnchanged(any(Impact.class))).thenReturn(Optional.empty());
+
+        assertThrows(AdviceOutdatedException.class, () -> service.regenerate(1L, karwei));
+        verify(recommendations, never()).save(any(Recommendation.class));
     }
 
     @Test

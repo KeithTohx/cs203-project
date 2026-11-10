@@ -135,3 +135,9 @@ UPDATE recommendation SET status = 'PENDING' WHERE status IS NULL;
 UPDATE activity
 SET country_id = (SELECT country_id FROM itinerary WHERE itinerary.id = activity.itinerary_id)
 WHERE country_id IS NULL;
+
+-- Seed rows (and rows saved before identity_key existed) have no identity key, so give each one a
+-- random one. Without it a deleted trip's id going to a new trip could not be told apart from the
+-- old trip (see Itinerary.identityKey). Safe to re-run: it only touches rows still missing a key.
+UPDATE itinerary SET identity_key = lower(hex(randomblob(16))) WHERE identity_key IS NULL;
+UPDATE activity SET identity_key = lower(hex(randomblob(16))) WHERE identity_key IS NULL;

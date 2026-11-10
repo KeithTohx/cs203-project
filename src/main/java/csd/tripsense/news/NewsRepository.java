@@ -37,6 +37,17 @@ public interface NewsRepository extends JpaRepository<News, Long> {
             """)
     List<News> findByCountryIdSince(@Param("countryId") Long countryId,
                                     @Param("since") LocalDateTime since);
+
+    // the articles with these ids that are about one country, however old, newest first
+    @Query("""
+            select n from News n
+            join n.countries c
+            where n.id in :ids
+              and c.id = :countryId
+            order by n.publishedAt desc
+            """)
+    List<News> findByIdInAndCountryId(@Param("ids") Collection<Long> ids,
+                                      @Param("countryId") Long countryId);
 }
 /*
 Spring Data JPA automatically generates implementation methods at runtime, including:

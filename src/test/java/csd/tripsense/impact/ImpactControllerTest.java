@@ -4,6 +4,10 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -23,6 +27,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import csd.tripsense.activity.Activity;
 import csd.tripsense.activity.ActivityService;
+import csd.tripsense.audit.AuditService;
 import csd.tripsense.auth.CurrentUser;
 import csd.tripsense.chat.ChatService;
 import csd.tripsense.itinerary.Itinerary;
@@ -53,6 +58,9 @@ class ImpactControllerTest {
     @Mock
     private ActivityService activityService;
 
+    @Mock
+    private AuditService auditService;
+
     private ImpactController impactController;
 
     private CurrentUser owner;
@@ -64,7 +72,7 @@ class ImpactControllerTest {
     void setUp() {
         ItineraryAccess access = new ItineraryAccess(userRepository);
         impactController = new ImpactController(impactService, chatService, access,
-                itineraryService, activityService);
+                itineraryService, activityService, auditService);
 
         owner = new CurrentUser(1L, "john@example.com", "john", null, "USER");
         otherUser = new CurrentUser(2L, "alice@example.com", "alice", null, "USER");
@@ -175,6 +183,7 @@ class ImpactControllerTest {
 
         verify(impactService, never()).deleteImpact(any());
         verify(impactService, never()).evaluate(any(), any());
+        verifyNoInteractions(auditService);
     }
 
     // ===== UPDATE IMPACT TESTS =====
@@ -242,5 +251,59 @@ class ImpactControllerTest {
 
         assertThrows(ImpactNotFoundException.class,
                 () -> impactController.updateImpact(99L, new ImpactUpdateRequest(true), owner));
+    }
+
+    // ===== AUDIT TRAIL FOR OVERRIDES =====
+
+    @Test
+    @DisplayName("Should record who rejected the AI verdict, and what the AI had said")
+    void updateImpact_ShouldAuditRejection() {
+        testImpact.setReason("Quake closes the ski lifts");
+        Impact rejected = rejectedCopy();
+        rejected.setReason("Quake closes the ski lifts");
+        when(impactService.getImpact(1L)).thenReturn(testImpact);
+        when(impactService.setRejected(1L, true)).thenReturn(rejected);
+
+        impactController.updateImpact(1L, new ImpactUpdateRequest(true), owner);
+
+        verify(auditService).record(eq(AuditService.IMPACT_REJECTED), eq(1L), eq("john@example.com"),
+                eq(1L), contains("Quake closes the ski lifts"));
+    }
+
+    @Test
+    @DisplayName("Should record a restored verdict as its own action")
+    void updateImpact_ShouldAuditRestore() {
+        testImpact.setRejected(true);
+        when(impactService.getImpact(1L)).thenReturn(testImpact);
+        when(impactService.setRejected(1L, false)).thenReturn(testImpact);
+
+        impactController.updateImpact(1L, new ImpactUpdateRequest(false), owner);
+
+        verify(auditService).record(eq(AuditService.IMPACT_RESTORED), eq(1L), eq("john@example.com"),
+                eq(1L), anyString());
+    }
+
+    @Test
+    @DisplayName("Should not record anything when the verdict was already in the state asked for")
+    void updateImpact_ShouldNotAudit_WhenNothingChanged() {
+        testImpact.setRejected(true);
+        when(impactService.getImpact(1L)).thenReturn(testImpact);
+        when(impactService.setRejected(1L, true)).thenReturn(rejectedCopy());
+
+        impactController.updateImpact(1L, new ImpactUpdateRequest(true), owner);
+
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    @DisplayName("Should record a deleted verdict with what it said, read before it was deleted")
+    void deleteImpact_ShouldAuditDeletion() {
+        testImpact.setReason("Strike at the airport");
+        when(impactService.getImpact(1L)).thenReturn(testImpact);
+
+        impactController.deleteImpact(1L, owner);
+
+        verify(auditService).record(eq(AuditService.IMPACT_DELETED), eq(1L), eq("john@example.com"),
+                eq(1L), contains("Strike at the airport"));
     }
 }
