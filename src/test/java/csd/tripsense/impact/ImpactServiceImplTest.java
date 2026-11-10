@@ -75,12 +75,28 @@ class ImpactServiceImplTest {
     // ---------------------------------------------------------------- helpers
 
     /** Verdict is a private record, so build it by reflection from whatever type is requested. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
     private void givenModelAnswers(boolean impacted, String reason) {
         when(chatService.ask(anyString(), any(Class.class))).thenAnswer(inv -> {
             Class<?> type = inv.getArgument(1);
-            var constructor = type.getDeclaredConstructor(boolean.class, String.class);
+            var constructor = type.getDeclaredConstructors()[0];
             constructor.setAccessible(true);
-            return constructor.newInstance(impacted, reason);
+            // an impacted answer has to name a kind, NONE is what the service overrules
+            Class<?> kind = constructor.getParameterTypes()[1];
+            return constructor.newInstance(reason,
+                    Enum.valueOf((Class<Enum>) kind, impacted ? "DISASTER" : "NONE"), impacted);
+        });
+    }
+
+    /** Builds a verdict the model never backs up, so the service should overrule it. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void givenModelAnswersWithoutAKind(String reason) {
+        when(chatService.ask(anyString(), any(Class.class))).thenAnswer(inv -> {
+            Class<?> type = inv.getArgument(1);
+            var constructor = type.getDeclaredConstructors()[0];
+            constructor.setAccessible(true);
+            Class<?> kind = constructor.getParameterTypes()[1];
+            return constructor.newInstance(reason, Enum.valueOf((Class<Enum>) kind, "NONE"), true);
         });
     }
 
@@ -109,6 +125,38 @@ class ImpactServiceImplTest {
         assertSame(stored, result);
         verifyNoInteractions(chatService);
         verify(impactRepository, never()).save(any(Impact.class));
+    }
+
+    @Test
+    @DisplayName("Should overrule an impacted answer the model could not name a kind for")
+    void evaluateItineraryForNews_ShouldNotImpact_WhenNoKindNamed() {
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.empty());
+        givenModelAnswersWithoutAKind("Box office record for a monster film");
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateItineraryForNews(itinerary, news);
+
+        // the model said yes but backed it with nothing, which is how the noise used to get in
+        assertFalse(result.getImpacted());
+        assertFalse(result.getAlertEligible());
+    }
+
+    @Test
+    @DisplayName("Should reuse the verdict already given for the same headline instead of asking again")
+    void evaluateItineraryForNews_ShouldReuseVerdict_WhenSameHeadlineAlreadyJudged() {
+        when(impactRepository.findFirstByNewsIdAndItineraryIdAndActivityIsNull(5L, 1L))
+                .thenReturn(Optional.empty());
+        when(impactRepository.findFirstByItineraryIdAndActivityIsNullAndNewsTitleAndReasonIsNotNull(
+                1L, "Earthquake near Hokkaido"))
+                .thenReturn(Optional.of(storedImpact("Resorts closed")));
+        givenSaveEchoes();
+
+        Impact result = impactService.evaluateItineraryForNews(itinerary, news);
+
+        assertTrue(result.getImpacted());
+        assertEquals("Resorts closed", result.getReason());
+        verifyNoInteractions(chatService);
     }
 
     @Test

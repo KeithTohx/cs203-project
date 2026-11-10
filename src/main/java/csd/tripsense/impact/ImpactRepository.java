@@ -19,6 +19,11 @@ public interface ImpactRepository extends JpaRepository<Impact, Long> {
     // the itinerary-level verdict (no activity) for one news article, if there is one
     Optional<Impact> findFirstByNewsIdAndItineraryIdAndActivityIsNull(Long newsId, Long itineraryId);
 
+    // a verdict already reached on this trip for the same headline, since one story reaches us
+    // from many outlets as separate news rows
+    Optional<Impact> findFirstByItineraryIdAndActivityIsNullAndNewsTitleAndReasonIsNotNull(
+            Long itineraryId, String newsTitle);
+
     // the verdict for one activity and one news article, if there is one
     Optional<Impact> findFirstByNewsIdAndActivityId(Long newsId, Long activityId);
 
