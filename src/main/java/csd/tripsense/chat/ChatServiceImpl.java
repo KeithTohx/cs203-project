@@ -7,6 +7,7 @@ import java.util.Arrays;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
@@ -25,6 +26,8 @@ public class ChatServiceImpl implements ChatService {
 
     // a refused model is left alone for this long rather than asked again on every call
     private static final Duration RESTED = Duration.ofMinutes(30);
+    // a per min refusal clears in secs so it only sits out a min
+    private static final Duration SHORT_REST = Duration.ofMinutes(1);
 
     private final ChatClient chatClient;
     private final int perMinute;
@@ -49,11 +52,31 @@ public class ChatServiceImpl implements ChatService {
                 : Arrays.stream(models.split("\\s*,\\s*")).filter(name -> !name.isBlank()).toList();
     }
 
-    // groq counts tokens per day per model, so a refusal means this model is done for today
-    // while the next one still has room. anything else is a real failure and is rethrown
+    // groq meters each model on its own, so a refusal moves on to the next one
+    // anything else is a real failure and is rethrown
     private static boolean outOfBudget(Exception error) {
         String message = String.valueOf(error.getMessage()).toLowerCase();
         return message.contains("429") || message.contains("rate limit");
+    }
+
+    // groq says which limit it hit, only a per day one means done for today
+    static Duration restFor(Exception error) {
+        return String.valueOf(error.getMessage()).toLowerCase().contains("per day") ? RESTED : SHORT_REST;
+    }
+
+    // every model is resting, if the first is back within a min its cheaper to wait than fail the job
+    private boolean waitForFirstBack() {
+        long waitMs = models.stream().map(restingUntil::get).filter(Objects::nonNull)
+                .mapToLong(until -> Duration.between(Instant.now(), until).toMillis())
+                .min().orElse(0);
+        if (waitMs > SHORT_REST.toMillis()) return false;
+        try {
+            Thread.sleep(Math.max(0, waitMs));
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     private boolean resting(String model) {
@@ -75,18 +98,23 @@ public class ChatServiceImpl implements ChatService {
         }
 
         Exception last = null;
-        for (String model : models) {
-            if (resting(model)) continue;
-            waitForSlot();
-            try {
-                // options() returns the same request, so each attempt just renames the model
-                return call.apply(request.options(ChatOptions.builder().model(model)));
-            } catch (Exception e) {
-                if (!outOfBudget(e)) throw e;
-                log.warn("Model {} is out of budget, resting it for {} min", model, RESTED.toMinutes());
-                restingUntil.put(model, Instant.now().plus(RESTED));
-                last = e;
+        // 2nd pass only happens after waiting out a short rest
+        for (int pass = 0; pass < 2; pass++) {
+            for (String model : models) {
+                if (resting(model)) continue;
+                waitForSlot();
+                try {
+                    // options() returns the same request, so each attempt just renames the model
+                    return call.apply(request.options(ChatOptions.builder().model(model)));
+                } catch (Exception e) {
+                    if (!outOfBudget(e)) throw e;
+                    Duration rest = restFor(e);
+                    log.warn("Model {} refused, resting it for {}s: {}", model, rest.toSeconds(), e.getMessage());
+                    restingUntil.put(model, Instant.now().plus(rest));
+                    last = e;
+                }
             }
+            if (!waitForFirstBack()) break;
         }
         throw new IllegalStateException("Every model is out of budget", last);
     }

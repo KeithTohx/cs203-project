@@ -88,7 +88,11 @@ class NewItemEvaluationListenerTest {
 
     // Drive the production durable worker directly, so no background thread or database is needed.
     private NewItemEvaluationListener listener(boolean enabled, int lookbackDays, int maxCalls) {
-        var queue=new ImpactEvaluationQueue(tasks,itineraries,activities,newsRepository,mock(PendingEvaluationRequestRepository.class),lookbackDays);
+        return listener(enabled, lookbackDays, maxCalls, 200);
+    }
+
+    private NewItemEvaluationListener listener(boolean enabled, int lookbackDays, int maxCalls, int maxArticles) {
+        var queue=new ImpactEvaluationQueue(tasks,itineraries,activities,newsRepository,mock(PendingEvaluationRequestRepository.class),lookbackDays,maxArticles);
         var listener=new NewItemEvaluationListener(queue,tasks,itineraries,activities,newsRepository,impacts,
                 impactService,progress,enabled,maxCalls) {
             @Override public void retryPending() { /* The test explicitly drains persisted work below. */ }
@@ -338,6 +342,22 @@ class NewItemEvaluationListenerTest {
     }
 
     // ===== NEW ITINERARY: CAP =====
+
+    @Test
+    @DisplayName("Should only queue the newest max-articles news, newest first")
+    void onItineraryCreated_ShouldJudgeOnlyTheNewestArticles_NewestFirst() {
+        Itinerary trip = givenActiveTrip();
+        News newest = news(12L), middle = news(11L), oldest = news(10L);
+        givenNews(newest, middle, oldest);   // the repo returns newest first
+        when(activities.findByItineraryIdOrderByDateStart(ITINERARY_ID)).thenReturn(List.of());
+
+        itineraryCreated(listener(true, 5, 200, 2));
+
+        var order = inOrder(impactService);
+        order.verify(impactService).evaluateItineraryForNews(trip, newest);
+        order.verify(impactService).evaluateItineraryForNews(trip, middle);
+        verify(impactService, never()).evaluateItineraryForNews(trip, oldest);
+    }
 
     @Test
     @DisplayName("Should stop after max-calls model calls, counting trip and activities together")

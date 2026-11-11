@@ -6,6 +6,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -89,67 +90,78 @@ public class ImpactEvaluationJob {
 
         List<Long> countryIds = itineraryService.getCountryIdsWithActiveItineraries(now);
         log.info("Impact evaluation: {} countries with active itineraries {}", countryIds.size(), countryIds);
+
+        // newest news first across all countries, so a busy country early in the list cant starve the rest
+        record Item(Long countryId, News news) {}
+        List<Item> items = new ArrayList<>();
         for (Long countryId : countryIds) {
             for (News news : newsService.getNewsByCountrySince(countryId, since)) {
+                items.add(new Item(countryId, news));
+            }
+        }
+        items.sort(Comparator.comparing((Item item) -> item.news().getPublishedAt(),
+                Comparator.nullsLast(Comparator.reverseOrder())));
 
-                var tripTargets = itineraryService.getItinerariesPendingForNews(news.getId(), countryId, now);
-                var activityTargets = activityService.getActivitiesPendingForNews(news.getId(), countryId, now);
-                var pendingTrips = new LinkedHashMap<Long, Itinerary>();
-                var activitiesByTrip = new LinkedHashMap<Long, List<Activity>>();
-                for (Itinerary trip : tripTargets) {
-                    pendingTrips.put(trip.getId(), trip);
-                    activitiesByTrip.put(trip.getId(), new ArrayList<>());
-                }
-                for (Activity activity : activityTargets) {
-                    activitiesByTrip.computeIfAbsent(activity.getItinerary().getId(), id -> new ArrayList<>())
-                            .add(activity);
-                }
+        for (Item item : items) {
+            Long countryId = item.countryId();
+            News news = item.news();
+            var tripTargets = itineraryService.getItinerariesPendingForNews(news.getId(), countryId, now);
+            var activityTargets = activityService.getActivitiesPendingForNews(news.getId(), countryId, now);
+            var pendingTrips = new LinkedHashMap<Long, Itinerary>();
+            var activitiesByTrip = new LinkedHashMap<Long, List<Activity>>();
+            for (Itinerary trip : tripTargets) {
+                pendingTrips.put(trip.getId(), trip);
+                activitiesByTrip.put(trip.getId(), new ArrayList<>());
+            }
+            for (Activity activity : activityTargets) {
+                activitiesByTrip.computeIfAbsent(activity.getItinerary().getId(), id -> new ArrayList<>())
+                        .add(activity);
+            }
 
-                // Start each email window only when this trip's assessments actually begin.
-                // Assess its activities before moving on to another trip.
-                for (var entry : activitiesByTrip.entrySet()) {
-                    if (judged >= maxPerRun) { done(judged, skipped, "cap reached"); return; }
-                    Long tripId = entry.getKey();
-                    Itinerary itinerary = pendingTrips.get(tripId);
-                    List<Activity> activities = entry.getValue();
-                    String batch = progress.begin(tripId, news.getId(), itinerary != null,
-                            activities.stream().map(Activity::getId).toList());
-                    int expected = activities.size() + (itinerary != null ? 1 : 0);
-                    int completed = 0;
-                    try {
-                        if (itinerary != null) {
-                            try {
-                                impactService.evaluateItineraryForNews(itinerary, news);
-                                progress.resolved(tripId, news.getId(), null);
-                                completed++;
-                                judged++;
-                                failures = 0;
-                            } catch (EditedDuringEvaluationException e) {
-                                skipped++;
-                            } catch (Exception e) {
-                                skipped++;
-                                if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }
-                            }
+            // Start each email window only when this trip's assessments actually begin.
+            // Assess its activities before moving on to another trip.
+            for (var entry : activitiesByTrip.entrySet()) {
+                if (judged >= maxPerRun) { done(judged, skipped, "cap reached"); return; }
+                Long tripId = entry.getKey();
+                Itinerary itinerary = pendingTrips.get(tripId);
+                List<Activity> activities = entry.getValue();
+                String batch = progress.begin(tripId, news.getId(), itinerary != null,
+                        activities.stream().map(Activity::getId).toList());
+                int expected = activities.size() + (itinerary != null ? 1 : 0);
+                int completed = 0;
+                try {
+                    if (itinerary != null) {
+                        try {
+                            impactService.evaluateItineraryForNews(itinerary, news);
+                            progress.resolved(tripId, news.getId(), null);
+                            completed++;
+                            judged++;
+                            failures = 0;
+                        } catch (EditedDuringEvaluationException e) {
+                            skipped++;
+                        } catch (Exception e) {
+                            skipped++;
+                            if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }
                         }
-
-                        for (Activity activity : activities) {
-                            if (judged >= maxPerRun) { done(judged, skipped, "cap reached"); return; }
-                            try {
-                                impactService.evaluateActivityForNews(activity, news);
-                                progress.resolved(tripId, news.getId(), activity.getId());
-                                completed++;
-                                judged++;
-                                failures = 0;
-                            } catch (EditedDuringEvaluationException e) {
-                                skipped++;
-                            } catch (Exception e) {
-                                skipped++;
-                                if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }
-                            }
-                        }
-                    } finally {
-                        progress.finish(batch, completed < expected);
                     }
+
+                    for (Activity activity : activities) {
+                        if (judged >= maxPerRun) { done(judged, skipped, "cap reached"); return; }
+                        try {
+                            impactService.evaluateActivityForNews(activity, news);
+                            progress.resolved(tripId, news.getId(), activity.getId());
+                            completed++;
+                            judged++;
+                            failures = 0;
+                        } catch (EditedDuringEvaluationException e) {
+                            skipped++;
+                        } catch (Exception e) {
+                            skipped++;
+                            if (++failures >= MAX_CONSECUTIVE_FAILURES) { done(judged, skipped, "model failing: " + e.getMessage()); return; }
+                        }
+                    }
+                } finally {
+                    progress.finish(batch, completed < expected);
                 }
             }
         }
