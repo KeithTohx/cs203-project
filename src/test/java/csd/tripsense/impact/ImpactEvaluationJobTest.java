@@ -331,6 +331,31 @@ class ImpactEvaluationJobTest {
     }
 
     @Test
+    @DisplayName("Should judge the newest news first across countries, not country by country")
+    void run_ShouldJudgeNewestNewsFirst_AcrossCountries() {
+        Long otherCountry = 2L;
+        News older = news(10L);
+        older.setPublishedAt(LocalDateTime.of(2026, 11, 9, 0, 0));
+        News newer = news(11L);
+        newer.setPublishedAt(LocalDateTime.of(2026, 11, 10, 0, 0));
+        when(itineraryService.getCountryIdsWithActiveItineraries(any(LocalDateTime.class)))
+                .thenReturn(List.of(COUNTRY_ID, otherCountry));
+        when(newsService.getNewsByCountrySince(eq(COUNTRY_ID), any(LocalDateTime.class))).thenReturn(List.of(older));
+        when(newsService.getNewsByCountrySince(eq(otherCountry), any(LocalDateTime.class))).thenReturn(List.of(newer));
+        Itinerary trip = itinerary(2L);
+        when(itineraryService.getItinerariesPendingForNews(eq(10L), eq(COUNTRY_ID), any(LocalDateTime.class)))
+                .thenReturn(List.of(itinerary(1L)));
+        when(itineraryService.getItinerariesPendingForNews(eq(11L), eq(otherCountry), any(LocalDateTime.class)))
+                .thenReturn(List.of(trip));
+
+        job(true, 1).run();
+
+        // the cap of 1 goes to the newer story even though its country comes 2nd
+        verify(impactService).evaluateItineraryForNews(trip, newer);
+        verify(impactService, never()).evaluateItineraryForNews(any(Itinerary.class), eq(older));
+    }
+
+    @Test
     @DisplayName("Should count itineraries and activities together against the cap")
     void run_ShouldShareTheCap_BetweenItinerariesAndActivities() {
         News n = news(10L);

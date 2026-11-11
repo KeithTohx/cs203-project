@@ -19,14 +19,17 @@ public class ImpactEvaluationQueue {
     private final ActivityRepository activities;
     private final NewsRepository news;
     private final int lookbackDays;
+    private final int maxArticles;
     private final PendingEvaluationRequestRepository requests;
 
     public ImpactEvaluationQueue(PendingImpactEvaluationRepository tasks, ItineraryRepository trips,
             ActivityRepository activities, NewsRepository news, PendingEvaluationRequestRepository requests,
-            @Value("${impact.eval.new-itinerary.news-lookback-days:5}") int lookbackDays) {
+            @Value("${impact.eval.new-itinerary.news-lookback-days:5}") int lookbackDays,
+            @Value("${impact.eval.new-itinerary.max-articles:20}") int maxArticles) {
         this.tasks = tasks; this.trips = trips; this.activities = activities; this.news = news;
         this.requests = requests;
         this.lookbackDays = Math.max(1, lookbackDays);
+        this.maxArticles = Math.max(1, maxArticles);
     }
 
     /** Runs after source commit; a scheduling failure cannot roll back the saved trip/activity. */
@@ -46,10 +49,11 @@ public class ImpactEvaluationQueue {
             requests.deleteById(requestKey);
             return;
         }
-        var articles = new java.util.TreeSet<Long>(news.findByCountryIdSince(trip.getCountry().getId(),
+        // newest first as the query gives it, and only the newest few so a busy country cant queue thousands
+        var articles = new java.util.LinkedHashSet<Long>(news.findByCountryIdSince(trip.getCountry().getId(),
                 LocalDateTime.ofInstant(request.map(PendingEvaluationRequest::getRequestedAt)
                         .orElseGet(Instant::now), ZoneOffset.UTC).minusDays(lookbackDays)).stream()
-                .map(n -> n.getId()).toList());
+                .limit(maxArticles).map(n -> n.getId()).toList());
         if (request.isPresent() && !request.get().extraArticles().isEmpty())
             news.findByIdInAndCountryId(request.get().extraArticles(),trip.getCountry().getId())
                     .forEach(n -> articles.add(n.getId()));

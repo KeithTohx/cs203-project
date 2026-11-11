@@ -71,6 +71,16 @@ class ChatServiceImplTest {
     }
 
     @Test
+    @DisplayName("Should only rest a model for the day when groq says the daily limit is gone")
+    void restFor_ShouldBeShort_ForAPerMinuteLimit() {
+        var perMinute = new RuntimeException("429: Rate limit reached on tokens per minute (TPM)");
+        var perDay = new RuntimeException("429: Rate limit reached on tokens per day (TPD)");
+
+        assertEquals(java.time.Duration.ofMinutes(1), ChatServiceImpl.restFor(perMinute));
+        assertEquals(java.time.Duration.ofMinutes(30), ChatServiceImpl.restFor(perDay));
+    }
+
+    @Test
     @DisplayName("Should not try another model when the failure is not about budget")
     void ask_ShouldNotFallBack_WhenTheFailureIsSomethingElse() {
         ChatServiceImpl service = withModels("big-model,small-model");
